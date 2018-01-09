@@ -1,0 +1,2 @@
+# redispipe
+Pipelining redis client

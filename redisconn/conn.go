@@ -110,7 +110,7 @@ type Connection struct {
 
 type oneconn struct {
 	c       net.Conn
-	futures chan []Future
+	futures chan []future
 	control chan struct{}
 	err     error
 	erronce sync.Once
@@ -119,7 +119,7 @@ type oneconn struct {
 type connShard struct {
 	sync.Mutex
 	buf     []byte
-	futures []Future
+	futures []future
 	_pad    [16]uint64
 }
 
@@ -264,7 +264,7 @@ func (conn *Connection) Send(req Request, cb Callback, n uint64) {
 		conn.dirtyShard <- shardn
 	}
 	shard.buf = buf
-	shard.futures = append(shard.futures, Future{cb, n})
+	shard.futures = append(shard.futures, future{cb, n})
 }
 
 func (conn *Connection) SendBatch(requests []Request, cb Callback, start uint64) {
@@ -313,7 +313,7 @@ func (conn *Connection) SendBatch(requests []Request, cb Callback, start uint64)
 			}(i, err, len(requests))
 			return
 		}
-		futures = append(futures, Future{cb, start + uint64(i)})
+		futures = append(futures, future{cb, start + uint64(i)})
 	}
 
 	if len(shard.buf) == 0 {
@@ -433,7 +433,7 @@ func (conn *Connection) dial() error {
 
 	one := &oneconn{
 		c:       connection,
-		futures: make(chan []Future, conn.opts.Concurrency*8),
+		futures: make(chan []future, conn.opts.Concurrency*8),
 		control: make(chan struct{}),
 	}
 
@@ -576,7 +576,7 @@ func (conn *Connection) reconnect(neterr error, one *oneconn) {
 func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 	var shardn uint32
 	var packet []byte
-	var futures []Future
+	var futures []future
 	defer close(one.futures)
 	round := 1023
 	for {
@@ -646,12 +646,12 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 		capa := 1
 		for ; capa < len(futures); capa *= 2 {
 		}
-		futures = make([]Future, 0, capa)
+		futures = make([]future, 0, capa)
 	}
 }
 
 func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
-	var futures []Future
+	var futures []future
 	var res interface{}
 	var err error
 Outter:

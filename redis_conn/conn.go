@@ -558,13 +558,15 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 	for {
 		select {
 		case shardn = <-conn.dirtyShard:
+		case <-conn.ctx.Done():
+			return
 		case <-one.control:
 			return
 		default:
 			runtime.Gosched()
 			if len(conn.dirtyShard) == 0 {
 				if err := w.Flush(); err != nil {
-					conn.reconnect(err, one)
+					go conn.reconnect(err, one)
 					return
 				}
 			}
@@ -579,15 +581,6 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 
 		shard := &conn.shard[shardn]
 		shard.Lock()
-		if conn.c != one.c {
-			select {
-			case <-conn.ctx.Done():
-				// connection closed
-			default:
-				conn.dirtyShard <- shardn
-				return
-			}
-		}
 		packet, shard.buf = shard.buf, packet
 		futures, shard.futures = shard.futures, futures
 		shard.Unlock()
@@ -603,7 +596,8 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 		case one.futures <- futures:
 		default:
 			if err := w.Flush(); err != nil {
-				conn.reconnect(err, one)
+				one.futures <- futures
+				go conn.reconnect(err, one)
 				return
 			}
 			one.futures <- futures
@@ -611,7 +605,7 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 
 		l, err := w.Write(packet)
 		if err != nil {
-			conn.reconnect(err, one)
+			go conn.reconnect(err, one)
 			return
 		}
 		if l != len(packet) {
@@ -646,7 +640,7 @@ Outter:
 				} else {
 					err = &ConnError{Code: ErrResponse, Wrap: err}
 				}
-				conn.reconnect(err, one)
+				go conn.reconnect(err, one)
 				req.Err = one.err
 				close(req.wait)
 				break Outter

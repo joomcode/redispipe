@@ -131,14 +131,12 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 
 	maxprocs := uint32(runtime.GOMAXPROCS(-1))
 	if opts.Concurrency == 0 || opts.Concurrency > maxprocs*128 {
-		conn.opts.Concurrency = maxprocs * 4
+		opts.Concurrency = maxprocs * 4
 	}
-	for i := uint32(1); ; i *= 2 {
-		if i >= conn.opts.Concurrency {
-			conn.opts.Concurrency = i
-			break
-		}
+	i := uint32(1)
+	for ; i < opts.Concurrency; i *= 2 {
 	}
+	conn.opts.Concurrency = i
 
 	conn.shard = make([]connShard, conn.opts.Concurrency)
 	conn.dirtyShard = make(chan uint32, conn.opts.Concurrency*2)
@@ -243,10 +241,11 @@ func (conn *Connection) Send(req Request) *Future {
 	shardid := atomic.AddUint32(&conn.shardid, 1) & (conn.opts.Concurrency - 1)
 	shard := &conn.shard[shardid]
 
+	res := &Future{}
+
 	shard.Lock()
 	defer shard.Unlock()
 
-	res := &Future{}
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
 		res.Err = &ConnError{Code: ErrContextClosed, Wrap: conn.ctx.Err()}
@@ -281,14 +280,14 @@ func (conn *Connection) SendBatch(requests []Request) []*Future {
 	shardid := atomic.AddUint32(&conn.shardid, 1) & (conn.opts.Concurrency - 1)
 	shard := &conn.shard[shardid]
 
-	shard.Lock()
-	defer shard.Unlock()
-
 	resflat := make([]Future, len(requests))
 	results := make([]*Future, len(requests))
-	for i := range resflat {
+	for i := range results {
 		results[i] = &resflat[i]
 	}
+
+	shard.Lock()
+	defer shard.Unlock()
 
 	var err error
 	switch atomic.LoadUint32(&conn.state) {
@@ -550,6 +549,7 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 	var packet []byte
 	var futures []*Future
 	defer close(one.futures)
+	round := conn.opts.Concurrency*4 - 1
 	for {
 		select {
 		case shardn = <-conn.dirtyShard:
@@ -580,7 +580,7 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 			}
 		}
 		packet, shard.buf = shard.buf, packet
-		futures, shard.futures = shard.futures, make([]*Future, 0, len(shard.futures)*3/2)
+		futures, shard.futures = shard.futures, futures
 		shard.Unlock()
 
 		if len(packet) == 0 {
@@ -609,7 +609,17 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 			panic("Wrong length written")
 		}
 
-		packet = packet[0:0]
+		if round--; round == 0 {
+			// occasionally free buffer
+			round = conn.opts.Concurrency*4 - 1
+			packet = nil
+		} else {
+			packet = packet[0:0]
+		}
+		capa := 1
+		for ; capa < len(futures); capa *= 2 {
+		}
+		futures = make([]*Future, 0, capa)
 	}
 }
 

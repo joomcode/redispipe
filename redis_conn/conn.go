@@ -45,8 +45,10 @@ func (d defaultLogger) Report(event ConnLogKind, conn *Connection, v ...interfac
 	case LogConnecting:
 		log.Printf("redis: connecting to %s", conn.Addr())
 	case LogConnected:
+		localAddr := v[0].(string)
+		remoteAddr := v[1].(string)
 		log.Printf("redis: connected to %s (localAddr: %s, remote addr: %s)",
-			conn.Addr(), conn.LocalAddr(), conn.RemoteAddr())
+			conn.Addr(), localAddr, remoteAddr)
 	case LogConnectFailed:
 		err := v[0].(error)
 		log.Printf("redis: connection to %s failed: %s", conn.Addr(), err.Error())
@@ -213,7 +215,7 @@ func (conn *Connection) LocalAddr() string {
 	if conn.c == nil {
 		return ""
 	}
-	return conn.c.RemoteAddr().String()
+	return conn.c.LocalAddr().String()
 }
 
 func (conn *Connection) Addr() string {
@@ -426,12 +428,14 @@ func (conn *Connection) createConnection(reconnect bool) error {
 		atomic.StoreUint32(&conn.state, connConnecting)
 		err = conn.dial()
 		if err == nil {
-			conn.report(LogConnected)
+			conn.report(LogConnected,
+				conn.c.LocalAddr().String(),
+				conn.c.RemoteAddr().String())
 			atomic.StoreUint32(&conn.state, connConnected)
 			return nil
 		}
 
-		conn.report(LogConnectFailed)
+		conn.report(LogConnectFailed, err)
 		atomic.StoreUint32(&conn.state, connDisconnected)
 		conn.lockShards()
 		conn.dropShardFutures(err)

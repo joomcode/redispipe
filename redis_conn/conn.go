@@ -229,7 +229,7 @@ func (conn *Connection) Ping() error {
 		return req.Err
 	}
 	if str, ok := req.Result.(string); !ok || str != "PONG" {
-		return &ConnError{Code: ErrPing, Msg: fmt.Sprintf("Ping response mismatch: %+v", str)}
+		return &ConnError{Code: ErrPing, Msg: fmt.Sprintf("Ping response mismatch: %#v", req.Result)}
 	}
 	return nil
 }
@@ -514,23 +514,26 @@ func (conn *Connection) control() {
 		}
 		if err := conn.Ping(); err != nil {
 			if cer, ok := err.(*ConnError); ok && cer.Code == ErrPing {
-				conn.mutex.Lock()
-				conn.closeConnection(err, false)
-				conn.mutex.Unlock()
+				// that states about serious error in our code
+				panic(err)
 			}
 		}
 	}
 }
 
-func (conn *Connection) reconnect(neterr error, one *oneconn) {
+func (one *oneconn) setErr(neterr error, conn *Connection) {
 	one.erronce.Do(func() {
 		close(one.control)
 		if atomic.LoadUint32(&conn.state) == connClosed {
 			one.err = conn.closeErr
+		} else {
+			one.err = neterr
 		}
-		one.err = neterr
 	})
+	go conn.reconnect(neterr, one)
+}
 
+func (conn *Connection) reconnect(neterr error, one *oneconn) {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 	if atomic.LoadUint32(&conn.state) == connClosed {
@@ -563,7 +566,7 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 			runtime.Gosched()
 			if len(conn.dirtyShard) == 0 {
 				if err := w.Flush(); err != nil {
-					go conn.reconnect(err, one)
+					one.setErr(err, conn)
 					return
 				}
 			}
@@ -594,7 +597,7 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 		default:
 			if err := w.Flush(); err != nil {
 				one.futures <- futures
-				go conn.reconnect(err, one)
+				one.setErr(err, conn)
 				return
 			}
 			one.futures <- futures
@@ -602,7 +605,7 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 
 		l, err := w.Write(packet)
 		if err != nil {
-			go conn.reconnect(err, one)
+			one.setErr(err, conn)
 			return
 		}
 		if l != len(packet) {
@@ -637,7 +640,7 @@ Outter:
 				} else {
 					err = &ConnError{Code: ErrResponse, Wrap: err}
 				}
-				go conn.reconnect(err, one)
+				one.setErr(err, conn)
 				req.Err = one.err
 				close(req.wait)
 				break Outter

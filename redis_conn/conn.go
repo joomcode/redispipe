@@ -515,7 +515,9 @@ func (conn *Connection) control() {
 		}
 		if err := conn.Ping(); err != nil {
 			if cer, ok := err.(*ConnError); ok && cer.Code == ErrPing {
+				conn.mutex.Lock()
 				conn.closeConnection(err, false)
+				conn.mutex.Unlock()
 			}
 		}
 	}

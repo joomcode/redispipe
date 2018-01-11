@@ -28,6 +28,8 @@ func (e ConnError) Error() string {
 		typ = "ErrContextIsNil"
 	case ErrContextClosed:
 		typ = "ErrContextClosed"
+	case ErrDisconnected:
+		typ = "ErrDisconnected"
 	case ErrDial:
 		typ = "ErrDial"
 	case ErrIO:
@@ -36,6 +38,14 @@ func (e ConnError) Error() string {
 		typ = "ErrAuth"
 	case ErrPing:
 		typ = "ErrPing"
+	case ErrArgumentType:
+		typ = "ErrArgumentType"
+	case ErrResponse:
+		typ = "ErrResponse"
+	case ErrBatchFailed:
+		typ = "ErrBatchFailed"
+	default:
+		typ = fmt.Sprintf("ErrUnknown%d", e.Code)
 	}
 	if e.Msg != "" {
 		return fmt.Sprintf("%s (%s)", e.Msg, typ)

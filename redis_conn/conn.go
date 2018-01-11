@@ -460,10 +460,10 @@ func (conn *Connection) createConnection(reconnect bool) error {
 		atomic.StoreUint32(&conn.state, connConnecting)
 		err = conn.dial()
 		if err == nil {
+			atomic.StoreUint32(&conn.state, connConnected)
 			conn.report(LogConnected,
 				conn.c.LocalAddr().String(),
 				conn.c.RemoteAddr().String())
-			atomic.StoreUint32(&conn.state, connConnected)
 			return nil
 		}
 

@@ -630,8 +630,8 @@ Outter:
 	for futures = range one.futures {
 		for i, req := range futures {
 			req.Result, err = resp.Read(r)
+			futures[i] = nil
 			if err != nil {
-				futures = futures[i+1:]
 				if ioerr, ok := err.(resp.IOError); ok {
 					err = &ConnError{Code: ErrIO, Wrap: ioerr}
 				} else {
@@ -647,8 +647,10 @@ Outter:
 		futures = nil
 	}
 	for _, req := range futures {
-		req.Err = one.err
-		close(req.wait)
+		if req != nil {
+			req.Err = one.err
+			close(req.wait)
+		}
 	}
 	for futures := range one.futures {
 		for _, req := range futures {

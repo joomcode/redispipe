@@ -2,7 +2,6 @@ package resp
 
 import (
 	"bufio"
-	"errors"
 	"io"
 )
 
@@ -21,7 +20,7 @@ func Read(b *bufio.Reader) (interface{}, error) {
 	case '+':
 		return string(line[1:]), nil
 	case '-':
-		return errors.New(string(line[1:])), nil
+		return ResponseError{string(line[1:])}, nil
 	case ':':
 		return parseInt(line[1:])
 	case '$':

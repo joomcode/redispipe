@@ -397,8 +397,8 @@ func (conn *Connection) dial() error {
 		return err
 	}
 	var res interface{}
+	// Password response
 	if conn.opts.Password != "" {
-		// Password response
 		if res, err = resp.Read(r); err != nil {
 			connection.Close()
 			return err

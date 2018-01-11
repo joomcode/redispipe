@@ -132,12 +132,8 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 
 	maxprocs := uint32(runtime.GOMAXPROCS(-1))
 	if opts.Concurrency == 0 || opts.Concurrency > maxprocs*128 {
-		opts.Concurrency = maxprocs * 4
+		conn.opts.Concurrency = maxprocs * 2
 	}
-	i := uint32(1)
-	for ; i < opts.Concurrency; i *= 2 {
-	}
-	conn.opts.Concurrency = i
 
 	conn.shard = make([]connShard, conn.opts.Concurrency)
 	conn.dirtyShard = make(chan uint32, conn.opts.Concurrency*2)
@@ -238,12 +234,15 @@ func (conn *Connection) Ping() error {
 	return nil
 }
 
-func (conn *Connection) Send(req Request) *Future {
-	shardid := atomic.AddUint32(&conn.shardid, 1) & (conn.opts.Concurrency - 1)
-	shard := &conn.shard[shardid]
+func (conn *Connection) getShard() (uint32, *connShard) {
+	shardn := atomic.AddUint32(&conn.shardid, 1) % conn.opts.Concurrency
+	return shardn, &conn.shard[shardn]
+}
 
+func (conn *Connection) Send(req Request) *Future {
 	res := &Future{}
 
+	shardn, shard := conn.getShard()
 	shard.Lock()
 	defer shard.Unlock()
 
@@ -267,7 +266,7 @@ func (conn *Connection) Send(req Request) *Future {
 	res.wait = make(chan struct{})
 
 	if len(shard.buf) == 0 {
-		conn.dirtyShard <- shardid
+		conn.dirtyShard <- shardn
 	}
 	shard.buf = buf
 	shard.futures = append(shard.futures, res)
@@ -278,15 +277,13 @@ func (conn *Connection) SendBatch(requests []Request) []*Future {
 	if len(requests) == 0 {
 		return nil
 	}
-	shardid := atomic.AddUint32(&conn.shardid, 1) & (conn.opts.Concurrency - 1)
-	shard := &conn.shard[shardid]
-
 	resflat := make([]Future, len(requests))
 	results := make([]*Future, len(requests))
 	for i := range results {
 		results[i] = &resflat[i]
 	}
 
+	shardn, shard := conn.getShard()
 	shard.Lock()
 	defer shard.Unlock()
 
@@ -326,7 +323,7 @@ func (conn *Connection) SendBatch(requests []Request) []*Future {
 	}
 
 	if len(shard.buf) == 0 {
-		conn.dirtyShard <- shardid
+		conn.dirtyShard <- shardn
 	}
 	shard.buf = buf
 	shard.futures = append(shard.futures, results...)
@@ -410,7 +407,7 @@ func (conn *Connection) dial() error {
 
 	one := &oneconn{
 		c:       connection,
-		futures: make(chan []*Future, conn.opts.Concurrency*4),
+		futures: make(chan []*Future, conn.opts.Concurrency*8),
 		control: make(chan struct{}),
 	}
 
@@ -554,7 +551,7 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 	var packet []byte
 	var futures []*Future
 	defer close(one.futures)
-	round := conn.opts.Concurrency*4 - 1
+	round := 1023
 	for {
 		select {
 		case shardn = <-conn.dirtyShard:
@@ -614,7 +611,7 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 
 		if round--; round == 0 {
 			// occasionally free buffer
-			round = conn.opts.Concurrency*4 - 1
+			round = 1023
 			packet = nil
 		} else {
 			packet = packet[0:0]

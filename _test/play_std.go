@@ -14,12 +14,12 @@ func main() {
 			panic(err)
 		}
 	}
-	p, err := pool.New("tcp", "localhost:6379", 1024)
+	p, err := pool.New("tcp", "localhost:6379", 8)
 	check(err)
 
 	start := time.Now()
 	var wg sync.WaitGroup
-	N, K := 400, 400
+	N, K := 800, 8000
 	wg.Add(N)
 	for i := 0; i < N; i++ {
 		go func() {
@@ -28,12 +28,12 @@ func main() {
 				check(err)
 				res, err := conn.Cmd("GET", "asdf").Str()
 				check(err)
+				p.Put(conn)
 
 				//if !bytes.Equal(fut.Result.([]byte), []byte{49}) {
 				if res != "1" {
 					panic("mismatch")
 				}
-				p.Put(conn)
 			}
 			wg.Done()
 		}()

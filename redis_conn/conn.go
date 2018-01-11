@@ -72,6 +72,8 @@ type Opts struct {
 	// DialTimeout is timeout for net.Dialer
 	// If not set, then ReconnectPause/2 is used (unless ReconnectPause < 0)
 	DialTimeout time.Duration
+	// DB - database number
+	DB int
 	// Password for AUTH
 	Password string
 	// Handle is returned with Connection.Handle()
@@ -381,13 +383,22 @@ func (conn *Connection) dial() error {
 	dc := newDeadlineIO(connection, conn.opts.IOTimeout)
 	r := bufio.NewReaderSize(dc, 128*1024)
 	w := bufio.NewWriterSize(dc, 128*1024)
+
+	var req []byte
 	if conn.opts.Password != "" {
-		req, _ := resp.AppendRequest(nil, "AUTH", []interface{}{conn.opts.Password})
-		if _, err = dc.Write(req); err != nil {
-			connection.Close()
-			return err
-		}
-		var res interface{}
+		req, _ = resp.AppendRequest(req, "AUTH", []interface{}{conn.opts.Password})
+	}
+	req, _ = resp.AppendRequest(req, "PING", nil)
+	if conn.opts.DB != 0 {
+		req, _ = resp.AppendRequest(req, "SELECT", []interface{}{conn.opts.DB})
+	}
+	if _, err = dc.Write(req); err != nil {
+		connection.Close()
+		return err
+	}
+	var res interface{}
+	if conn.opts.Password != "" {
+		// Password response
 		if res, err = resp.Read(r); err != nil {
 			connection.Close()
 			return err
@@ -398,6 +409,29 @@ func (conn *Connection) dial() error {
 				return &ConnError{Code: ErrAuth, Msg: err.Error()}
 			}
 			return err
+		}
+	}
+	// PING Response
+	if res, err = resp.Read(r); err != nil {
+		connection.Close()
+		return err
+	}
+	if str, ok := res.(string); !ok || str != "PONG" {
+		connection.Close()
+		return &ConnError{Code: ErrPing, Msg: fmt.Sprintf("Ping response mismatch: %#v", res)}
+	}
+	// SELECT DB Response
+	if conn.opts.DB != 0 {
+		if res, err = resp.Read(r); err != nil {
+			connection.Close()
+			return err
+		}
+		if str, ok := res.(string); !ok || str != "OK" {
+			connection.Close()
+			if err, ok := res.(error); ok {
+				return &ConnError{Code: ErrResponse, Wrap: err}
+			}
+			return &ConnError{Code: ErrResponse, Msg: fmt.Sprintf("SELECT %d response mismatch: %#v", res)}
 		}
 	}
 

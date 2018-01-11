@@ -12,10 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joomcode/redispipe/redis_conn"
+	"github.com/joomcode/redispipe/redisconn"
+	"github.com/joomcode/redispipe/rediswrap"
 )
 
-type Req = redis_conn.Request
+type Req = rediswrap.Request
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile `file`")
 var memprofile = flag.String("memprofile", "", "write memory profile to `file`")
@@ -39,24 +40,24 @@ func main() {
 		}
 	}
 	ctx, _ := context.WithTimeout(context.Background(), 10000*time.Second)
-	opts := redis_conn.Opts{
+	opts := redisconn.Opts{
 		IOTimeout: 1 * time.Second,
 	}
-	conn, err := redis_conn.Connect(ctx, "localhost:6379", opts)
+	conn, err := redisconn.Connect(ctx, "localhost:6379", opts)
 	check(err)
+	syncconn := rediswrap.Sync{conn}
 
 	start := time.Now()
 	var wg sync.WaitGroup
-	N, K := 800, 800
+	N, K := 800, 80000
 	wg.Add(N)
 	for i := 0; i < N; i++ {
 		go func() {
 			for j := 0; j < K; j++ {
-				fut := conn.Send(Req{"GET", []interface{}{"asdf"}})
-				<-fut.Done()
-				if fut.Err != nil {
-					if rand.Intn(300000) == 0 {
-						log.Println(fut.Err)
+				res := syncconn.Send(Req{"GET", []interface{}{"asdf"}})
+				if err := res.AnyError(); err != nil {
+					if rand.Intn(300) == 0 {
+						log.Println(err)
 					}
 				} else {
 					if rand.Intn(300000) == 0 {

@@ -1,4 +1,4 @@
-package redis_conn
+package redisconn
 
 import (
 	"bufio"
@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/joomcode/redispipe/rediswrap"
 	"github.com/joomcode/redispipe/resp"
 )
 
@@ -109,7 +110,7 @@ type Connection struct {
 
 type oneconn struct {
 	c       net.Conn
-	futures chan []*Future
+	futures chan []Future
 	control chan struct{}
 	err     error
 	erronce sync.Once
@@ -118,7 +119,7 @@ type oneconn struct {
 type connShard struct {
 	sync.Mutex
 	buf     []byte
-	futures []*Future
+	futures []Future
 	_pad    [16]uint64
 }
 
@@ -225,13 +226,12 @@ func (conn *Connection) Handle() interface{} {
 }
 
 func (conn *Connection) Ping() error {
-	req := conn.Send(Request{"PING", nil})
-	<-req.Done()
-	if req.Err != nil {
-		return req.Err
+	res := rediswrap.Sync{conn}.Send(Request{"PING", nil})
+	if err := res.AnyError(); err != nil {
+		return err
 	}
-	if str, ok := req.Result.(string); !ok || str != "PONG" {
-		return &ConnError{Code: ErrPing, Msg: fmt.Sprintf("Ping response mismatch: %#v", req.Result)}
+	if str, ok := res.Value().(string); !ok || str != "PONG" {
+		return &ConnError{Code: ErrPing, Msg: fmt.Sprintf("Ping response mismatch: %#v", res.Value())}
 	}
 	return nil
 }
@@ -241,48 +241,35 @@ func (conn *Connection) getShard() (uint32, *connShard) {
 	return shardn, &conn.shard[shardn]
 }
 
-func (conn *Connection) Send(req Request) *Future {
-	res := &Future{}
-
+func (conn *Connection) Send(req Request, cb Callback, n uint64) {
 	shardn, shard := conn.getShard()
 	shard.Lock()
 	defer shard.Unlock()
 
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		res.Err = &ConnError{Code: ErrContextClosed, Wrap: conn.ctx.Err()}
+		go cb(nil, &ConnError{Code: ErrContextClosed, Wrap: conn.ctx.Err()}, n)
+		return
 	case connDisconnected:
-		res.Err = &ConnError{Code: ErrDisconnected, Msg: "connection is broken at the moment"}
-	}
-	if res.Err != nil {
-		res.wait = closedChan
-		return res
+		go cb(nil, &ConnError{Code: ErrDisconnected, Msg: "connection is broken at the moment"}, n)
+		return
 	}
 	var buf []byte
 	var err error
 	if buf, err = resp.AppendRequest(shard.buf, req.Cmd, req.Args); err != nil {
-		res.Err = &ConnError{Code: ErrArgumentType, Wrap: err}
-		res.wait = closedChan
-		return res
+		go cb(nil, &ConnError{Code: ErrArgumentType, Wrap: err}, n)
+		return
 	}
-	res.wait = make(chan struct{})
-
 	if len(shard.buf) == 0 {
 		conn.dirtyShard <- shardn
 	}
 	shard.buf = buf
-	shard.futures = append(shard.futures, res)
-	return res
+	shard.futures = append(shard.futures, Future{cb, n})
 }
 
-func (conn *Connection) SendBatch(requests []Request) []*Future {
+func (conn *Connection) SendBatch(requests []Request, cb Callback, start uint64) {
 	if len(requests) == 0 {
-		return nil
-	}
-	resflat := make([]Future, len(requests))
-	results := make([]*Future, len(requests))
-	for i := range results {
-		results[i] = &resflat[i]
+		return
 	}
 
 	shardn, shard := conn.getShard()
@@ -297,39 +284,44 @@ func (conn *Connection) SendBatch(requests []Request) []*Future {
 		err = &ConnError{Code: ErrDisconnected, Msg: "connection is broken at the moment"}
 	}
 	if err != nil {
-		for _, res := range results {
-			res.Err = err
-			res.wait = closedChan
-		}
-		return results
+		go func(n int) {
+			for i := 0; i < n; i++ {
+				cb(nil, err, start+uint64(i))
+			}
+		}(len(requests))
+		return
 	}
 	buf := shard.buf
+	futures := shard.futures
 	for i, req := range requests {
-		if buf, err = resp.AppendRequest(shard.buf, req.Cmd, req.Args); err != nil {
-			results[i].Err = &ConnError{Code: ErrArgumentType, Wrap: err}
-			err = &ConnError{Code: ErrBatchFailed, Msg: fmt.Sprintf("encoding of %d command %+v failed", i, req)}
-			break
+		buf, err = resp.AppendRequest(shard.buf, req.Cmd, req.Args)
+		if err != nil {
+			go func(i int, err error, n int) {
+				var common_err, i_err error
+				common_err = &ConnError{
+					Code: ErrBatchFailed,
+					Msg:  fmt.Sprintf("encoding of %d command %+v failed", i, req),
+				}
+				i_err = &ConnError{Code: ErrArgumentType, Wrap: err}
+				for j := 0; j < n; j++ {
+					if j == i {
+						cb(nil, i_err, start+uint64(i))
+					} else {
+						cb(nil, common_err, start+uint64(j))
+					}
+				}
+			}(i, err, len(requests))
+			return
 		}
-	}
-	if err != nil {
-		for _, res := range results {
-			if res.Err == nil {
-				res.Err = err
-			}
-			res.wait = closedChan
-		}
-		return results
-	}
-	for _, res := range results {
-		res.wait = make(chan struct{})
+		futures = append(futures, Future{cb, start + uint64(i)})
 	}
 
 	if len(shard.buf) == 0 {
 		conn.dirtyShard <- shardn
 	}
 	shard.buf = buf
-	shard.futures = append(shard.futures, results...)
-	return results
+	shard.futures = futures
+	return
 }
 
 /********** private api **************/
@@ -441,7 +433,7 @@ func (conn *Connection) dial() error {
 
 	one := &oneconn{
 		c:       connection,
-		futures: make(chan []*Future, conn.opts.Concurrency*8),
+		futures: make(chan []Future, conn.opts.Concurrency*8),
 		control: make(chan struct{}),
 	}
 
@@ -497,10 +489,8 @@ Loop:
 	}
 	for i := range conn.shard {
 		sh := &conn.shard[i]
-		for _, r := range sh.futures {
-			r.Result = nil
-			r.Err = err
-			close(r.wait)
+		for _, fut := range sh.futures {
+			fut.Call(nil, err)
 		}
 		sh.buf = sh.buf[:0]
 		sh.futures = sh.futures[:0]
@@ -586,7 +576,7 @@ func (conn *Connection) reconnect(neterr error, one *oneconn) {
 func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 	var shardn uint32
 	var packet []byte
-	var futures []*Future
+	var futures []Future
 	defer close(one.futures)
 	round := 1023
 	for {
@@ -656,18 +646,19 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 		capa := 1
 		for ; capa < len(futures); capa *= 2 {
 		}
-		futures = make([]*Future, 0, capa)
+		futures = make([]Future, 0, capa)
 	}
 }
 
 func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
-	var futures []*Future
+	var futures []Future
+	var res interface{}
 	var err error
 Outter:
 	for futures = range one.futures {
-		for i, req := range futures {
-			req.Result, err = resp.Read(r)
-			futures[i] = nil
+		for i, fut := range futures {
+			res, err = resp.Read(r)
+			futures[i].Callback = nil
 			if err != nil {
 				if ioerr, ok := err.(resp.IOError); ok {
 					err = &ConnError{Code: ErrIO, Wrap: ioerr}
@@ -675,24 +666,19 @@ Outter:
 					err = &ConnError{Code: ErrResponse, Wrap: err}
 				}
 				one.setErr(err, conn)
-				req.Err = one.err
-				close(req.wait)
+				fut.Call(nil, one.err)
 				break Outter
 			}
-			close(req.wait)
+			fut.Call(res, nil)
 		}
 		futures = nil
 	}
-	for _, req := range futures {
-		if req != nil {
-			req.Err = one.err
-			close(req.wait)
-		}
+	for _, fut := range futures {
+		fut.Call(nil, one.err)
 	}
 	for futures := range one.futures {
-		for _, req := range futures {
-			req.Err = one.err
-			close(req.wait)
+		for _, fut := range futures {
+			fut.Call(nil, one.err)
 		}
 	}
 }

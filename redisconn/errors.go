@@ -1,4 +1,4 @@
-package redis_conn
+package redisconn
 
 import "fmt"
 

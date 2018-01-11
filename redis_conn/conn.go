@@ -108,6 +108,7 @@ type Connection struct {
 type oneconn struct {
 	c       net.Conn
 	futures chan []*Future
+	control chan struct{}
 	err     error
 	erronce sync.Once
 }
@@ -410,6 +411,7 @@ func (conn *Connection) dial() error {
 	one := &oneconn{
 		c:       connection,
 		futures: make(chan []*Future, conn.opts.Concurrency*4),
+		control: make(chan struct{}),
 	}
 
 	go conn.writer(w, one)
@@ -525,6 +527,7 @@ func (conn *Connection) control() {
 
 func (conn *Connection) reconnect(neterr error, one *oneconn) {
 	one.erronce.Do(func() {
+		close(one.control)
 		if atomic.LoadUint32(&conn.state) == connClosed {
 			one.err = conn.closeErr
 		}
@@ -555,6 +558,8 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 	for {
 		select {
 		case shardn = <-conn.dirtyShard:
+		case <-one.control:
+			return
 		default:
 			runtime.Gosched()
 			if len(conn.dirtyShard) == 0 {
@@ -566,6 +571,8 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 			select {
 			case shardn = <-conn.dirtyShard:
 			case <-conn.ctx.Done():
+				return
+			case <-one.control:
 				return
 			}
 		}

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"runtime"
 	"strings"
@@ -16,8 +15,6 @@ import (
 	"github.com/joomcode/redispipe/resp"
 )
 
-type ConnLogKind int
-
 const (
 	connDisconnected = 0
 	connConnecting   = 1
@@ -27,42 +24,7 @@ const (
 	defaultReconnectPause = 500 * time.Millisecond
 	defaultKeepAlive      = 300 * time.Millisecond
 	defaultIOTimeout      = 1 * time.Second
-
-	LogConnecting ConnLogKind = iota
-	LogConnected
-	LogConnectFailed
-	LogDisconnected
-	LogContextClosed
 )
-
-type Logger interface {
-	Report(event ConnLogKind, conn *Connection, v ...interface{})
-}
-
-type defaultLogger struct{}
-
-func (d defaultLogger) Report(event ConnLogKind, conn *Connection, v ...interface{}) {
-	switch event {
-	case LogConnecting:
-		log.Printf("redis: connecting to %s", conn.Addr())
-	case LogConnected:
-		localAddr := v[0].(string)
-		remoteAddr := v[1].(string)
-		log.Printf("redis: connected to %s (localAddr: %s, remote addr: %s)",
-			conn.Addr(), localAddr, remoteAddr)
-	case LogConnectFailed:
-		err := v[0].(error)
-		log.Printf("redis: connection to %s failed: %s", conn.Addr(), err.Error())
-	case LogDisconnected:
-		err := v[0].(error)
-		log.Printf("redis: connection to %s broken: %s", conn.Addr(), err.Error())
-	case LogContextClosed:
-		log.Printf("redis: connect to %s explicitly closed", conn.Addr())
-	default:
-		args := append([]interface{}{"redis: unexpected event:"}, event, conn, v)
-		log.Print(args...)
-	}
-}
 
 type Opts struct {
 	// ReconnectPause is a pause after failed connection attempt before next one.
@@ -89,6 +51,8 @@ type Opts struct {
 	TCPKeepAlive time.Duration
 	// Logger
 	Logger Logger
+	// Async - do not establish connection immediately
+	Async bool
 }
 
 type Connection struct {
@@ -105,7 +69,8 @@ type Connection struct {
 	shard      []connShard
 	dirtyShard chan uint32
 
-	opts Opts
+	firstConn chan struct{}
+	opts      Opts
 }
 
 type oneconn struct {
@@ -125,7 +90,7 @@ type connShard struct {
 
 func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err error) {
 	if ctx == nil {
-		return nil, &ConnError{Code: ErrContextIsNil, Msg: "Context should not be nil"}
+		return nil, &Error{Code: ErrContextIsNil, Msg: "Context should not be nil"}
 	}
 	conn = &Connection{
 		addr: addr,
@@ -161,18 +126,32 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 		conn.opts.Logger = defaultLogger{}
 	}
 
-	if err = conn.createConnection(false); err != nil {
-		if opts.ReconnectPause < 0 {
-			return nil, err
+	if !conn.opts.Async {
+		if err = conn.createConnection(false, nil); err != nil {
+			if opts.ReconnectPause < 0 {
+				return nil, err
+			}
+			if cer, ok := err.(*Error); ok && cer.Code == ErrAuth {
+				return nil, err
+			}
 		}
-		if cer, ok := err.(*ConnError); ok && cer.Code == ErrAuth {
-			return nil, err
+	}
+
+	if conn.opts.Async || err != nil {
+		var ch chan struct{}
+		if conn.opts.Async {
+			ch = make(chan struct{})
 		}
 		go func() {
 			conn.mutex.Lock()
 			defer conn.mutex.Unlock()
-			conn.createConnection(true)
+			conn.createConnection(true, ch)
 		}()
+		// in async mode we are still waiting for state to set to connConnecting
+		// so that Send will put requests into queue
+		if conn.opts.Async {
+			<-ch
+		}
 	}
 
 	go conn.control()
@@ -231,7 +210,7 @@ func (conn *Connection) Ping() error {
 		return err
 	}
 	if str, ok := res.Value().(string); !ok || str != "PONG" {
-		return &ConnError{Code: ErrPing, Msg: fmt.Sprintf("Ping response mismatch: %#v", res.Value())}
+		return &Error{Conn: conn, Code: ErrPing, Msg: fmt.Sprintf("Ping response mismatch: %#v", res.Value())}
 	}
 	return nil
 }
@@ -243,21 +222,24 @@ func (conn *Connection) getShard() (uint32, *connShard) {
 
 func (conn *Connection) Send(req Request, cb Callback, n uint64) {
 	shardn, shard := conn.getShard()
+	if cb == nil {
+		cb = func(interface{}, error, uint64) {}
+	}
 	shard.Lock()
 	defer shard.Unlock()
 
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		go cb(nil, &ConnError{Code: ErrContextClosed, Wrap: conn.ctx.Err()}, n)
+		go cb(nil, &Error{Conn: conn, Code: ErrContextClosed, Wrap: conn.ctx.Err()}, n)
 		return
 	case connDisconnected:
-		go cb(nil, &ConnError{Code: ErrDisconnected, Msg: "connection is broken at the moment"}, n)
+		go cb(nil, &Error{Conn: conn, Code: ErrDisconnected, Msg: "connection is broken at the moment"}, n)
 		return
 	}
 	var buf []byte
 	var err error
 	if buf, err = resp.AppendRequest(shard.buf, req.Cmd, req.Args); err != nil {
-		go cb(nil, &ConnError{Code: ErrArgumentType, Wrap: err}, n)
+		go cb(nil, &Error{Conn: conn, Code: ErrArgumentType, Wrap: err}, n)
 		return
 	}
 	if len(shard.buf) == 0 {
@@ -279,9 +261,9 @@ func (conn *Connection) SendBatch(requests []Request, cb Callback, start uint64)
 	var err error
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		err = &ConnError{Code: ErrContextClosed, Wrap: conn.ctx.Err()}
+		err = &Error{Conn: conn, Code: ErrContextClosed, Wrap: conn.ctx.Err()}
 	case connDisconnected:
-		err = &ConnError{Code: ErrDisconnected, Msg: "connection is broken at the moment"}
+		err = &Error{Conn: conn, Code: ErrDisconnected, Msg: "connection is broken at the moment"}
 	}
 	if err != nil {
 		go func(n int) {
@@ -298,11 +280,12 @@ func (conn *Connection) SendBatch(requests []Request, cb Callback, start uint64)
 		if err != nil {
 			go func(i int, err error, n int) {
 				var common_err, i_err error
-				common_err = &ConnError{
+				common_err = &Error{
+					Conn: conn,
 					Code: ErrBatchFailed,
 					Msg:  fmt.Sprintf("encoding of %d command %+v failed", i, req),
 				}
-				i_err = &ConnError{Code: ErrArgumentType, Wrap: err}
+				i_err = &Error{Conn: conn, Code: ErrArgumentType, Wrap: err}
 				for j := 0; j < n; j++ {
 					if j == i {
 						cb(nil, i_err, start+uint64(i))
@@ -326,7 +309,7 @@ func (conn *Connection) SendBatch(requests []Request, cb Callback, start uint64)
 
 /********** private api **************/
 
-func (conn *Connection) report(event ConnLogKind, v ...interface{}) {
+func (conn *Connection) report(event LogKind, v ...interface{}) {
 	conn.opts.Logger.Report(event, conn, v...)
 }
 
@@ -370,7 +353,7 @@ func (conn *Connection) dial() error {
 	}
 	connection, err = dialer.DialContext(conn.ctx, network, address)
 	if err != nil {
-		return &ConnError{Code: ErrDial, Wrap: err}
+		return &Error{Conn: conn, Code: ErrDial, Wrap: err}
 	}
 	dc := newDeadlineIO(connection, conn.opts.IOTimeout)
 	r := bufio.NewReaderSize(dc, 128*1024)
@@ -398,7 +381,7 @@ func (conn *Connection) dial() error {
 		if err, ok := res.(error); ok {
 			connection.Close()
 			if strings.Contains(err.Error(), "password") {
-				return &ConnError{Code: ErrAuth, Msg: err.Error()}
+				return &Error{Conn: conn, Code: ErrAuth, Msg: err.Error()}
 			}
 			return err
 		}
@@ -410,7 +393,7 @@ func (conn *Connection) dial() error {
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
 		connection.Close()
-		return &ConnError{Code: ErrPing, Msg: fmt.Sprintf("Ping response mismatch: %#v", res)}
+		return &Error{Conn: conn, Code: ErrPing, Msg: fmt.Sprintf("Ping response mismatch: %#v", res)}
 	}
 	// SELECT DB Response
 	if conn.opts.DB != 0 {
@@ -421,9 +404,9 @@ func (conn *Connection) dial() error {
 		if str, ok := res.(string); !ok || str != "OK" {
 			connection.Close()
 			if err, ok := res.(error); ok {
-				return &ConnError{Code: ErrResponse, Wrap: err}
+				return &Error{Conn: conn, Code: ErrResponse, Wrap: err}
 			}
-			return &ConnError{Code: ErrResponse, Msg: fmt.Sprintf("SELECT %d response mismatch: %#v", res)}
+			return &Error{Conn: conn, Code: ErrResponse, Msg: fmt.Sprintf("SELECT %d response mismatch: %#v", res)}
 		}
 	}
 
@@ -443,13 +426,17 @@ func (conn *Connection) dial() error {
 	return nil
 }
 
-func (conn *Connection) createConnection(reconnect bool) error {
+func (conn *Connection) createConnection(reconnect bool, ch chan struct{}) error {
 	var err error
 	for conn.c == nil && atomic.LoadUint32(&conn.state) == connDisconnected {
 		conn.report(LogConnecting)
 		now := time.Now()
 		// start accepting requests
 		atomic.StoreUint32(&conn.state, connConnecting)
+		if ch != nil {
+			close(ch)
+			ch = nil
+		}
 		err = conn.dial()
 		if err == nil {
 			atomic.StoreUint32(&conn.state, connConnected)
@@ -471,6 +458,9 @@ func (conn *Connection) createConnection(reconnect bool) error {
 		conn.mutex.Unlock()
 		time.Sleep(now.Add(conn.opts.ReconnectPause).Sub(time.Now()))
 		conn.mutex.Lock()
+	}
+	if ch != nil {
+		close(ch)
 	}
 	if atomic.LoadUint32(&conn.state) == connClosed {
 		err = conn.ctx.Err()
@@ -531,13 +521,13 @@ func (conn *Connection) control() {
 		case <-conn.ctx.Done():
 			conn.mutex.Lock()
 			defer conn.mutex.Unlock()
-			conn.closeErr = &ConnError{Code: ErrContextClosed, Wrap: conn.ctx.Err()}
+			conn.closeErr = &Error{Conn: conn, Code: ErrContextClosed, Wrap: conn.ctx.Err()}
 			conn.closeConnection(conn.closeErr, true)
 			return
 		case <-t.C:
 		}
 		if err := conn.Ping(); err != nil {
-			if cer, ok := err.(*ConnError); ok && cer.Code == ErrPing {
+			if cer, ok := err.(*Error); ok && cer.Code == ErrPing {
 				// that states about serious error in our code
 				panic(err)
 			}
@@ -569,7 +559,7 @@ func (conn *Connection) reconnect(neterr error, one *oneconn) {
 	}
 	if conn.c == one.c {
 		conn.closeConnection(neterr, false)
-		conn.createConnection(true)
+		conn.createConnection(true, nil)
 	}
 }
 
@@ -661,9 +651,9 @@ Outter:
 			futures[i].Callback = nil
 			if err != nil {
 				if ioerr, ok := err.(resp.IOError); ok {
-					err = &ConnError{Code: ErrIO, Wrap: ioerr}
+					err = &Error{Conn: conn, Code: ErrIO, Wrap: ioerr}
 				} else {
-					err = &ConnError{Code: ErrResponse, Wrap: err}
+					err = &Error{Conn: conn, Code: ErrResponse, Wrap: err}
 				}
 				one.setErr(err, conn)
 				fut.Call(nil, one.err)

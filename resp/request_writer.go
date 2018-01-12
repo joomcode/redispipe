@@ -38,6 +38,12 @@ func AppendRequest(buf []byte, cmd string, args []interface{}) ([]byte, error) {
 			buf = appendBulkInt(buf, int64(v))
 		case uint16:
 			buf = appendBulkInt(buf, int64(v))
+		case bool:
+			if v {
+				buf = append(buf, "$1\r\n1"...)
+			} else {
+				buf = append(buf, "$1\r\n0"...)
+			}
 		case float32:
 			str := strconv.FormatFloat(float64(v), 'f', -1, 32)
 			buf = appendHead(buf, '$', int64(len(str)))
@@ -98,4 +104,60 @@ func appendBulkInt(b []byte, i int64) []byte {
 		b[l-3] = byte(li) - 10 + '0'
 	}
 	return b
+}
+
+// returns string representataion of an argument.
+// Used in cluster to determine cluster slot.
+// Have to be in sync with AppendRequest
+func ArgToString(arg interface{}) (string, bool) {
+	var bufarr [20]byte
+	var buf []byte
+	switch v := arg.(type) {
+	case string:
+		return v, true
+	case []byte:
+		return string(v), true
+	case int:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case uint:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case int64:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case uint64:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case int32:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case uint32:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case int8:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case uint8:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case int16:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case uint16:
+		buf = appendInt(bufarr[:0], int64(v))
+		return string(buf), true
+	case bool:
+		if v {
+			return "1", true
+		} else {
+			return "0", true
+		}
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32), true
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64), true
+	default:
+		return "", false
+	}
 }

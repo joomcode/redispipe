@@ -15,13 +15,14 @@ const (
 	ErrBatchFailed
 )
 
-type ConnError struct {
+type Error struct {
 	Code int
 	Msg  string
 	Wrap error
+	Conn *Connection
 }
 
-func (e ConnError) Error() string {
+func (e Error) Error() string {
 	var typ string
 	switch e.Code {
 	case ErrContextIsNil:

@@ -1,13 +1,17 @@
 package rediscluster
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/joomcode/redispipe/rediswrap"
+	"github.com/joomcode/redispipe/redisconn"
+	re "github.com/joomcode/redispipe/rediserror"
+	"github.com/joomcode/redispipe/resp"
 )
 
 type SlotsRange struct {
@@ -16,12 +20,23 @@ type SlotsRange struct {
 	addrs []string
 }
 
+func syncSend(c *redisconn.Connection, r Request) interface{} {
+	var wg sync.WaitGroup
+	var res interface{}
+	wg.Add(1)
+	c.Send(r, func(r interface{}, _ uint64) {
+		res = r
+		wg.Done()
+	}, 0)
+	wg.Wait()
+	return res
+}
+
 func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 	nodes := c.getNodeMap()
 	for _, node := range nodes {
 		for _, conn := range node.conns {
-			sync := rediswrap.Sync{conn}
-			res := sync.Send(Request{"CLUSTER SLOTS", nil})
+			res := syncSend(conn, Request{"CLUSTER", []interface{}{"SLOTS"}})
 			slotsres, err := ParseSlotsInfo(res, c)
 			if err == nil {
 				return slotsres, nil
@@ -30,23 +45,23 @@ func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 		}
 	}
 	c.opts.Logger.Report(LogClusterSlotsError, c)
-	return nil, c.err(ErrClusterSlots).WithMsg("Couldn't retreive slots map")
+	return nil, re.New(re.ErrKindCluster, re.ErrClusterSlots).With("cluster", c)
 }
 
-func ParseSlotsInfo(res Result, cl *Cluster) ([]SlotsRange, error) {
-	if err := res.AnyError(); err != nil {
-		return nil, cl.err(ErrClusterSlots).WithWrap(err)
+func ParseSlotsInfo(res interface{}, cl *Cluster) ([]SlotsRange, error) {
+	if err := resp.Error(res); err != nil {
+		return nil, err
 	}
 
 	errf := func(f string, args ...interface{}) ([]SlotsRange, error) {
-		return nil, cl.err(ErrClusterSlots).
-			WithMsg(fmt.Sprintf("CLUSTER SLOTS "+f, args...))
+		return nil, re.NewMsg(re.ErrKindResponse, re.ErrResponseFormat,
+			fmt.Sprintf(f, args...))
 	}
 
 	var rawranges []interface{}
 	var ok bool
-	if rawranges, ok = res.Value().([]interface{}); !ok {
-		return errf("type is not array: %+v", res.Value())
+	if rawranges, ok = res.([]interface{}); !ok {
+		return errf("type is not array: %+v", res)
 	}
 
 	ranges := make([]SlotsRange, len(rawranges))
@@ -110,26 +125,20 @@ func (c *Cluster) updateMappings(ranges []SlotsRange) {
 	mayclose := make(chan struct{})
 	defer close(mayclose)
 
+	version := atomic.AddUint32(&c.version, 1)
+
 	oldNodes := c.getNodeMap()
 	tmpNodes := make(nodeMap, len(oldNodes))
-	newNodes := make(nodeMap, len(uniqaddrs))
-	var delNodes []*node
 
 	for a, n := range oldNodes {
 		tmpNodes[a] = n
 	}
 	for addr := range uniqaddrs {
 		if node, ok := oldNodes[addr]; ok {
-			newNodes[addr] = node
+			node.copyVersion(c)
 		} else {
 			node = c.newNode(addr)
 			tmpNodes[addr] = node
-			newNodes[addr] = node
-		}
-	}
-	for a, n := range oldNodes {
-		if _, ok := newNodes[a]; !ok {
-			delNodes = append(delNodes, n)
 		}
 	}
 
@@ -144,22 +153,25 @@ func (c *Cluster) updateMappings(ranges []SlotsRange) {
 		tmpShards[shardn] = addrs
 	}
 
-	var random uint32
+	var random uint16
 	for master, addrs := range shards {
-		shardn, ok := func() (uint32, bool) {
-			oldnum, ok := oldMasters[master]
+		var sh *shard
+		shardn, ok := func() (uint16, bool) {
+			var ok bool
+			var oldnum uint16
+			oldnum, ok = oldMasters[master]
 			if !ok {
 				return 0, false
 			}
-			oldaddrs, ok := oldShards[oldnum]
+			sh, ok = oldShards[oldnum]
 			if !ok {
 				return 0, false
 			}
-			if len(addrs) != len(oldaddrs) {
+			if len(addrs) != len(sh.addr) {
 				return 0, false
 			}
 			for i, addr := range addrs {
-				if oldaddrs[i] != addr {
+				if sh.addr[i] != addr {
 					return 0, false
 				}
 			}
@@ -167,15 +179,17 @@ func (c *Cluster) updateMappings(ranges []SlotsRange) {
 		}()
 		if !ok {
 			for {
-				shardn = atomic.AddUint32(&c.nextShard, 1) - 1
+				shardn = c.nextShard
+				c.nextShard++
 				if _, ok := tmpShards[shardn]; !ok {
 					break
 				}
 			}
-			tmpShards[shardn] = addrs
+			sh = &shard{addr: addrs}
+			tmpShards[shardn] = sh
 		}
 		newMasters[master] = shardn
-		newShards[shardn] = addrs
+		newShards[shardn] = sh
 		random = shardn
 	}
 
@@ -185,37 +199,82 @@ func (c *Cluster) updateMappings(ranges []SlotsRange) {
 
 	go c.setConnRoles(newShards)
 
-	prevslot := 0
-	for _, r := range ranges {
-		for i := prevslot; i < r.from; i++ {
-			atomic.StoreUint32(&c.slotMap[i], random)
+	var sh uint32
+	for i := 0; i < NumSlots; i++ {
+		var cur uint32
+		if len(ranges) != 0 && i > ranges[0].to {
+			ranges = ranges[1:]
 		}
-		shardn := newMasters[r.addrs[0]]
-		for i := r.from; i <= r.to; i++ {
-			atomic.StoreUint32(&c.slotMap[i], shardn)
+		if len(ranges) == 0 || i < ranges[0].from {
+			cur = uint32(random)
+		} else {
+			cur = uint32(newMasters[ranges[0].addrs[0]])
 		}
-		prevslot = r.to + 1
-	}
-	for i := prevslot; i < NumSlots; i++ {
-		atomic.StoreUint32(&c.slotMap[i], random)
+		if i&1 == 0 {
+			sh = cur
+		} else {
+			sh |= cur << 16
+			atomic.StoreUint32(&c.slotMap[i/2], sh)
+		}
 	}
 
-	c.shardMap.Store(newShards)
-	c.nodeMap.Store(newNodes)
-
-	go func() {
-		time.Sleep(1)
+	time.AfterFunc(time.Millisecond, func() {
+		newNodes := make(nodeMap, len(tmpNodes))
+		delNodes := make([]*node, 0, len(tmpNodes))
 		c.m.Lock()
-		if c.getShardMap() == tmpShards {
+		if c.version == version {
+			c.shardMap.Store(newShards)
 		}
-		if c.getNodeMap() == tmpNodes {
+		tmpNodes := c.getNodeMap()
+		for a, n := range tmpNodes {
+			if n.isOlder(version) {
+				delNodes = append(delNodes, n)
+			} else {
+				newNodes[a] = n
+			}
 		}
-	}()
+		c.nodeMap.Store(newNodes)
+		c.m.Unlock()
+		for _, n := range delNodes {
+			for _, conn := range n.conns {
+				conn.Close()
+			}
+		}
+	})
+}
+
+func (s *shard) setReplicaInfo(res interface{}, n uint64) {
+	haserr := false
+	if err := resp.Error(res); err != nil {
+		haserr = true
+	} else if n&1 == 0 {
+		str, ok := res.(string)
+		haserr = !(ok && str == "OK")
+	} else if buf, ok := res.([]byte); !ok {
+		haserr = true
+	} else if bytes.Contains(buf, []byte("master_link_status:down")) || bytes.Contains(buf, []byte("loading:1")) {
+		haserr = true
+	}
+	for {
+		oldstate := atomic.LoadUint32(&s.good)
+		newstate := oldstate
+		if haserr {
+			newstate &^= 1 << (n / 2)
+		} else {
+			newstate |= 1 << (n / 2)
+		}
+		if newstate == oldstate {
+			break
+		}
+		if atomic.CompareAndSwapUint32(&s.good, oldstate, newstate) {
+			break
+		}
+	}
 }
 
 func (c *Cluster) setConnRoles(shards shardMap) {
-	for _, addrs := range shards {
-		for i, addr := range addrs {
+	for _, sh := range shards {
+		for i, addr := range sh.addr {
 			node := c.getNode(addr)
 			if node == nil {
 				continue
@@ -224,7 +283,7 @@ func (c *Cluster) setConnRoles(shards shardMap) {
 				if i == 0 {
 					conn.Send(Request{"READWRITE", nil}, nil, 0)
 				} else {
-					conn.Send(Request{"READONLY", nil}, nil, 0)
+					conn.SendBatch([]Request{{"READONLY", nil}, Request{"INFO", nil}}, sh.setReplicaInfo, uint64(i*2))
 				}
 			}
 		}

@@ -14,6 +14,7 @@ const (
 	LogClusterSlotsError
 	LogForceCompaction
 	LogContextClosed
+	LogNoAliveSlotHosts
 )
 
 type Logger interface {
@@ -64,6 +65,9 @@ func (d defaultLogger) Report(event LogKind, cluster *Cluster, v ...interface{})
 		log.Printf("rediscluster %s: force shards compaction", cluster.Name())
 	case LogContextClosed:
 		log.Printf("rediscluster %s: shutting down", cluster.Name())
+	case LogNoAliveSlotHosts:
+		slot := v[0].(uint16)
+		log.Printf("rediscluster %s: no alive host for slot %d", cluster.Name(), slot)
 	}
 }
 

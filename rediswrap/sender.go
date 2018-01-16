@@ -1,11 +1,10 @@
 package rediswrap
 
-type Request struct {
-	Cmd  string
-	Args []interface{}
-}
+import "github.com/joomcode/redispipe/resp"
 
-type Callback func(res interface{}, err error, n uint64)
+type Request = resp.Request
+
+type Callback func(res interface{}, n uint64)
 
 type Sender interface {
 	Send(r Request, cb Callback, n uint64)

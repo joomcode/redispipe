@@ -7,16 +7,16 @@ type Sync struct {
 }
 
 type syncRes struct {
-	r Result
+	r interface{}
 	sync.WaitGroup
 }
 
-func (s *syncRes) set(res interface{}, err error, _ uint64) {
-	s.r.val, s.r.err = res, err
+func (s *syncRes) set(res interface{}, _ uint64) {
+	s.r = res
 	s.Done()
 }
 
-func (s Sync) Send(r Request) Result {
+func (s Sync) Send(r Request) interface{} {
 	var res syncRes
 	res.Add(1)
 	s.S.Send(r, res.set, 0)
@@ -25,19 +25,18 @@ func (s Sync) Send(r Request) Result {
 }
 
 type syncBatch struct {
-	r []Result
+	r []interface{}
 	sync.WaitGroup
 }
 
-func (s *syncBatch) set(res interface{}, err error, i uint64) {
-	el := &s.r[i]
-	el.val, el.err = res, err
+func (s *syncBatch) set(res interface{}, i uint64) {
+	s.r[i] = res
 	s.Done()
 }
 
-func (s Sync) SendBatch(r []Request) []Result {
+func (s Sync) SendBatch(r []Request) []interface{} {
 	res := syncBatch{
-		r: make([]Result, len(r)),
+		r: make([]interface{}, len(r)),
 	}
 	res.Add(len(r))
 	s.S.SendBatch(r, res.set, 0)

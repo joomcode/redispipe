@@ -1,10 +1,11 @@
 package rediscluster
 
 import (
+	"runtime"
 	"sync/atomic"
-	"time"
 
 	"github.com/joomcode/redispipe/redisconn"
+	re "github.com/joomcode/redispipe/rediserror"
 )
 
 func (c *Cluster) getNodeMap() nodeMap {
@@ -20,7 +21,11 @@ func (c *Cluster) getMasterMap() masterMap {
 }
 
 func (c *Cluster) getNode(addr string) *node {
-	return c.getNodeMap()[addr]
+	node := c.getNodeMap()[addr]
+	if node != nil {
+		node.copyVersion(c)
+	}
+	return node
 }
 
 type ClusterHandle struct {
@@ -31,9 +36,9 @@ type ClusterHandle struct {
 
 func (c *Cluster) newNode(addr string) *node {
 	node := &node{
-		opts:  c.opts.HostOpts,
-		addr:  addr,
-		known: 1,
+		opts:    c.opts.HostOpts,
+		addr:    addr,
+		version: atomic.LoadUint32(&c.version),
 	}
 	node.opts.Async = true
 	node.conns = make([]*redisconn.Connection, c.opts.ConnsPerHost)
@@ -50,42 +55,10 @@ func (c *Cluster) newNode(addr string) *node {
 	return node
 }
 
-func (c *Cluster) replaceNodes(addrs []string, mayclose chan struct{}) {
-	old := c.getNodeMap()
-
-	new := make(nodeMap, len(old))
-	for _, addr := range addrs {
-		if node, ok := old[addr]; ok {
-			new[addr] = node
-		}
-	}
-
-	for _, addr := range addrs {
-		if _, ok := new[addr]; ok {
-			continue
-		}
-		new[addr] = c.newNode(addr)
-	}
-	c.nodeMap.Store(new)
-
-	go func() {
-		<-mayclose
-		// Concervatively close unknown nodes
-		time.Sleep(1)
-		for addr, node := range old {
-			if _, ok := new[addr]; ok {
-				continue
-			}
-			for _, conn := range node.conns {
-				conn.Close()
-			}
-		}
-	}()
-}
-
 func (c *Cluster) addNode(addr string) *node {
 	addrs := c.getNodeMap()
 	if node, ok := addrs[addr]; ok {
+		node.copyVersion(c)
 		return node
 	}
 
@@ -94,8 +67,11 @@ func (c *Cluster) addNode(addr string) *node {
 
 	addrs = c.getNodeMap()
 	if node, ok := addrs[addr]; ok {
+		node.copyVersion(c)
 		return node
 	}
+
+	atomic.AddUint32(&c.version, 1)
 
 	new := make(nodeMap, len(addrs))
 	for a, node := range addrs {
@@ -109,56 +85,143 @@ func (c *Cluster) addNode(addr string) *node {
 	return node
 }
 
-// add shard after MOVED response
-// returns shardnum, and was it updated or not
-func (c *Cluster) addShard(addr string, slot uint16) uint32 {
-	oldMasters := c.getMasterMap()
-
-	if shardn, ok := oldMasters[addr]; ok {
-		if atomic.LoadUint32(&c.slotMap[slot]) != shardn {
-			c.m.Lock()
-			defer c.m.Unlock()
-			atomic.StoreUint32(&c.slotMap[slot], shardn)
-		}
-		return shardn
-	}
-
-	c.m.Lock()
-	defer c.m.Unlock()
-
-	oldMasters = c.getMasterMap()
-
-	if shardn, ok := oldMasters[addr]; ok {
-		atomic.StoreUint32(&c.slotMap[slot], shardn)
-		return shardn
-	}
-
-	oldShards := c.getShardMap()
-	newMasters := make(masterMap, len(oldMasters)+1)
-	newShards := make(shardMap, len(oldShards)+1)
-
-	for a, n := range oldMasters {
-		newMasters[a] = n
-	}
-	for n, a := range oldShards {
-		newShards[n] = a
-	}
-
-	var shardn uint32
+func (c *Cluster) connForSlot(slot uint16, policy MasterReplicaPolicyEnum) (*redisconn.Connection, error) {
+	// We are not synchronizing by locks, so we need to spin until we have
+	// consistent configuration, ie for shard number we have a shard in a shardmap
+	// and a node in a nodemap.
+	var conn *redisconn.Connection
+Loop:
 	for {
-		shardn = atomic.AddUint32(&c.nextShard, 1) - 1
-		if _, ok := oldShards[shardn]; !ok {
-			break
+		sh32 := atomic.LoadUint32(&c.slotMap[slot/2])
+		sh16 := uint16((sh32 >> (16 * (slot & 1))) & 0xffff)
+		shards := c.getShardMap()
+		shard := shards[sh16]
+		if shard == nil {
+			runtime.Gosched()
+			continue
 		}
+		nodes := c.getNodeMap()
+		var addr string
+		switch policy {
+		case MasterOnly:
+			addr = shard.addr[0]
+			node := nodes[addr]
+			if node == nil {
+				break /*switch*/
+			}
+			conn := node.getConn(c.opts.ConnHostPolicy, needConnected)
+			if conn == nil {
+				conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
+			}
+			break Loop
+		case MasterAndReplica, PreferReplica:
+			n, a := uint32(len(shard.addr))*3, uint32(0)
+			if policy == PreferReplica {
+				n, a = n-2, 2
+			}
+			v := atomic.AddUint32(&shard.rr, 1) * 0x12345
+			hadall := true
+			for _, needState := range [2]int{needConnected, mayBeConnected} {
+				mask := atomic.LoadUint32(&shard.good)
+				mask |= 1 // always trust master ????
+				for mask != 0 {
+					// LCG
+					v = v*5 + 1
+					k := ((v^v>>16)%n + a) / 3
+					if k != 0 && mask&(1<<k) == 0 {
+						// replica isn't healthy, or already viewed
+						continue
+					}
+					mask &^= 1 << k
+					addr = shard.addr[k]
+					node := nodes[addr]
+					if node == nil {
+						hadall = false
+						continue
+					}
+					conn := node.getConn(c.opts.ConnHostPolicy, needState)
+					if conn != nil {
+						break Loop
+					}
+				}
+			}
+			if hadall {
+				break Loop
+			}
+		}
+		runtime.Gosched()
+	}
+	if conn == nil {
+		c.forceReloading()
+		go c.opts.Logger.Report(LogNoAliveSlotHosts, c, slot)
+		return nil, re.New(re.ErrKindConnection, re.ErrDial).
+			With("cluster", c).With("slot", slot).With("policy", policy)
+	}
+	return conn, nil
+}
+
+func (c *Cluster) connForAddress(addr string) *redisconn.Connection {
+	node := c.getNode(addr)
+	if node == nil {
+		return nil
 	}
 
-	newMasters[addr] = shardn
-	newShards[shardn] = []string{addr}
+	conn := node.getConn(c.opts.ConnHostPolicy, needConnected)
+	if conn == nil {
+		conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
+	}
+	return conn
+}
 
-	c.shardMap.Store(newShards)
-	c.masterMap.Store(newMasters)
+func connHealthy(c *redisconn.Connection, needState int) bool {
+	if needState == needConnected {
+		return c.ConnectedNow()
+	} else if needState == mayBeConnected {
+		return c.MayBeConnected()
+	} else {
+		panic("unknown needState")
+	}
+}
 
-	atomic.StoreUint32(&c.slotMap[slot], shardn)
+func (n *node) getConn(policy ConnHostPolicyEnum, needState int) *redisconn.Connection {
+	if len(n.conns) == 1 {
+		if connHealthy(n.conns[0], needState) {
+			return n.conns[0]
+		}
+		return nil
+	}
 
-	return shardn
+	switch policy {
+	case ConnHostPreferFirst:
+		for _, conn := range n.conns {
+			if connHealthy(conn, needState) {
+				return conn
+			}
+		}
+	case ConnHostRoundRobin:
+		off := int(atomic.AddUint32(&n.rr, 1))
+		l := len(n.conns)
+		for i := 0; i < l; i++ {
+			conn := n.conns[(i+off)%l]
+			if connHealthy(conn, needState) {
+				return conn
+			}
+		}
+	default:
+		panic("unknown ConnHostPolicy")
+	}
+	return nil
+}
+
+func (n *node) copyVersion(c *Cluster) {
+	cver := atomic.LoadUint32(&c.version)
+	nver := atomic.LoadUint32(&n.version)
+	if nver != cver {
+		atomic.StoreUint32(&n.version, cver)
+	}
+}
+
+func (n *node) isOlder(cver uint32) bool {
+	nver := atomic.LoadUint32(&n.version)
+	return (nver-cver)&0x80000000 != 0
 }

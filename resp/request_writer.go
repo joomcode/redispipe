@@ -1,16 +1,22 @@
 package resp
 
 import (
-	"fmt"
 	"strconv"
+
+	re "github.com/joomcode/redispipe/rediserror"
 )
 
-func AppendRequest(buf []byte, cmd string, args []interface{}) ([]byte, error) {
-	buf = appendHead(buf, '*', int64(len(args)+1))
-	buf = appendHead(buf, '$', int64(len(cmd)))
-	buf = append(buf, cmd...)
+type Request struct {
+	Cmd  string
+	Args []interface{}
+}
+
+func AppendRequest(buf []byte, req Request) ([]byte, *re.Error) {
+	buf = appendHead(buf, '*', int64(len(req.Args)+1))
+	buf = appendHead(buf, '$', int64(len(req.Cmd)))
+	buf = append(buf, req.Cmd...)
 	buf = append(buf, '\r', '\n')
-	for _, val := range args {
+	for _, val := range req.Args {
 		switch v := val.(type) {
 		case string:
 			buf = appendHead(buf, '$', int64(len(v)))
@@ -53,7 +59,8 @@ func AppendRequest(buf []byte, cmd string, args []interface{}) ([]byte, error) {
 			buf = appendHead(buf, '$', int64(len(str)))
 			buf = append(buf, str...)
 		default:
-			return nil, fmt.Errorf("resp.AppendRequest() couldn't handle type %t", val)
+			return nil, re.NewMsg(re.ErrKindRequest, re.ErrArgumentType,
+				"resp.AppendRequest() couldn't handle type").With("val", val).With("request", req)
 		}
 		buf = append(buf, '\r', '\n')
 	}

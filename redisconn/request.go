@@ -1,8 +1,11 @@
 package redisconn
 
-import "github.com/joomcode/redispipe/rediswrap"
+import (
+	"github.com/joomcode/redispipe/rediswrap"
+	"github.com/joomcode/redispipe/resp"
+)
 
-type Request = rediswrap.Request
+type Request = resp.Request
 type Callback = rediswrap.Callback
 
 type future struct {
@@ -10,8 +13,8 @@ type future struct {
 	N uint64
 }
 
-func (f future) Call(res interface{}, err error) {
+func (f future) Call(res interface{}) {
 	if f.Callback != nil {
-		f.Callback(res, err, f.N)
+		f.Callback(res, f.N)
 	}
 }

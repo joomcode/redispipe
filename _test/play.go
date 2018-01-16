@@ -14,6 +14,7 @@ import (
 
 	"github.com/joomcode/redispipe/redisconn"
 	"github.com/joomcode/redispipe/rediswrap"
+	"github.com/joomcode/redispipe/resp"
 )
 
 type Req = rediswrap.Request
@@ -55,7 +56,7 @@ func main() {
 		go func() {
 			for j := 0; j < K; j++ {
 				res := syncconn.Send(Req{"GET", []interface{}{"asdf"}})
-				if err := res.AnyError(); err != nil {
+				if err := resp.Error(res); err != nil {
 					if rand.Intn(300) == 0 {
 						log.Println(err)
 					}

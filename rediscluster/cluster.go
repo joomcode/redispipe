@@ -2,29 +2,38 @@ package rediscluster
 
 import (
 	"context"
+	"math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/joomcode/redispipe/redisconn"
+	re "github.com/joomcode/redispipe/rediserror"
+	"github.com/joomcode/redispipe/resp"
 )
 
-type ConnHostPolicyEnum int
+type ConnHostPolicyEnum int8
+type MasterReplicaPolicyEnum int8
 
 const (
 	ConnHostPreferFirst ConnHostPolicyEnum = iota
 	ConnHostRoundRobin
+
+	MasterOnly MasterReplicaPolicyEnum = iota
+	MasterAndReplica
+	PreferReplica
+	ForceMasterAndReplica
+	ForcePreferReplica
 )
 
-type shardOnExistEnum int
-
 const (
-	shardReplaceShorter shardOnExistEnum = iota
-	shardReplaceAlways
-)
+	defaultCheckInterval = 30 * time.Second
+	defaultForceInterval = 100 * time.Millisecond
+	defaultWaitToMigrate = 1 * time.Millisecond
 
-const (
-	defaultCheckInterval = 5 * time.Second
+	needConnected = iota
+	mayBeConnected
 )
 
 type Opts struct {
@@ -42,14 +51,29 @@ type Opts struct {
 	Handle interface{}
 	// Name
 	Name string
-	// Check interval
+	// Check interval - default cluster configuration reloading interval
+	// default: 30 seconds, min: 1 second, max: 10 minutes
 	CheckInterval time.Duration
+	// Force interval - short interval for forcing reloading cluster configuration
+	// default: 100 milliseconds, min: 10 milliseconds, max: 1 second
+	ForceInterval time.Duration
+	// MovedRetries - follow MOVED|ASK redirections this number of times
+	// default: 2, min: 1, max: 10
+	MovedRetries int
+	// WaitToMigrate - wait this time if not all transaction keys were migrating
+	// default: 1 millisecond, min: 100 microseconds, max: 100 milliseconds
+	WaitToMigrate time.Duration
 	// Logger
 	Logger Logger
 }
 
-type shardMap map[uint32][]string
-type masterMap map[string]uint32
+type shard struct {
+	rr   uint32
+	good uint32
+	addr []string
+}
+type shardMap map[uint16]*shard
+type masterMap map[string]uint16
 type nodeMap map[string]*node
 
 type Cluster struct {
@@ -58,9 +82,12 @@ type Cluster struct {
 
 	m sync.Mutex
 
+	forceReload uint32
+	version     uint32
+
 	shardMap  atomic.Value // map[uint32][]string
 	masterMap atomic.Value // map[string]uint32
-	nextShard uint32
+	nextShard uint16
 
 	nodeMap atomic.Value // map[string]*host
 
@@ -71,19 +98,19 @@ type Cluster struct {
 }
 
 type node struct {
-	addr  string
-	rr    uint32
-	known uint32
-	opts  redisconn.Opts
-	conns []*redisconn.Connection
+	addr    string
+	rr      uint32
+	version uint32
+	opts    redisconn.Opts
+	conns   []*redisconn.Connection
 }
 
 func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, error) {
 	if ctx == nil {
-		return nil, &Error{Code: ErrContextIsNil, Msg: "Context should not be nil"}
+		return nil, re.New(re.ErrKindOpts, re.ErrContextIsNil)
 	}
 	if len(init_addrs) == 0 {
-		return nil, &Error{Code: ErrNoAddressProvided, Msg: "no initial addresses given"}
+		return nil, re.New(re.ErrKindOpts, re.ErrNoAddressProvided)
 	}
 	cluster := &Cluster{
 		opts: opts,
@@ -97,12 +124,38 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 		cluster.opts.Logger = defaultLogger{}
 	}
 
+	if cluster.opts.ConnsPerHost <= 1 {
+		cluster.opts.ConnsPerHost = 1
+	}
+
 	if cluster.opts.CheckInterval <= 0 {
-		cluster.opts.CheckInterval = 5 * time.Second
+		cluster.opts.CheckInterval = defaultCheckInterval
 	} else if cluster.opts.CheckInterval < time.Second {
 		cluster.opts.CheckInterval = time.Second
 	} else if cluster.opts.CheckInterval > 10*time.Minute {
 		cluster.opts.CheckInterval = 10 * time.Minute
+	}
+
+	if cluster.opts.ForceInterval <= 0 {
+		cluster.opts.ForceInterval = defaultForceInterval
+	} else if cluster.opts.ForceInterval < 10*time.Millisecond {
+		cluster.opts.ForceInterval = 10 * time.Millisecond
+	} else if cluster.opts.ForceInterval > time.Second {
+		cluster.opts.ForceInterval = time.Second
+	}
+
+	if cluster.opts.MovedRetries <= 0 {
+		cluster.opts.MovedRetries = 2
+	} else if cluster.opts.MovedRetries > 10 {
+		cluster.opts.MovedRetries = 10
+	}
+
+	if cluster.opts.WaitToMigrate <= 0 {
+		cluster.opts.WaitToMigrate = defaultWaitToMigrate
+	} else if cluster.opts.WaitToMigrate < 100*time.Microsecond {
+		cluster.opts.WaitToMigrate = 100 * time.Microsecond
+	} else if cluster.opts.WaitToMigrate > 100*time.Millisecond {
+		cluster.opts.WaitToMigrate = 100 * time.Millisecond
 	}
 
 	nodes := make(nodeMap)
@@ -112,18 +165,20 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	cluster.shardMap.Store(shards)
 	cluster.masterMap.Store(masters)
 
+	cluster.slotMap = make([]uint32, NumSlots/2)
+
 	for _, addr := range init_addrs {
 		if _, ok := masters[addr]; !ok {
 			nodes[addr] = cluster.newNode(addr)
 			masters[addr] = cluster.nextShard
-			shards[cluster.nextShard] = []string{addr}
+			shards[cluster.nextShard] = &shard{addr: []string{addr}}
 			cluster.nextShard++
 		}
 	}
 
-	cluster.slotMap = make([]uint32, NumSlots)
-	for i := range cluster.slotMap {
-		cluster.slotMap[i] = uint32(i) % cluster.nextShard
+	if err := cluster.reloadMapping(); err != nil {
+		cluster.cancel()
+		return nil, err
 	}
 
 	go cluster.checker()
@@ -141,62 +196,374 @@ func (c *Cluster) Handle() interface{} {
 
 func (c *Cluster) checker() {
 	t := time.NewTicker(c.opts.CheckInterval)
+	f := time.NewTicker(c.opts.ForceInterval)
+	defer t.Stop()
+	defer f.Stop()
+
+Loop:
 	for {
 		select {
 		case <-c.ctx.Done():
 			c.opts.Logger.Report(LogContextClosed, c)
 			return
 		case <-t.C:
+		case <-f.C:
+			if atomic.LoadUint32(&c.forceReload) == 0 {
+				continue Loop
+			}
+			atomic.StoreUint32(&c.forceReload, 0)
 		}
 
-		// first, fetch info about cluster slots
-		slotsRanges, err := c.SlotRanges()
-		if err == nil {
-			c.updateMappings(slotsRanges)
-		}
+		c.reloadMapping()
 	}
 }
 
-func (c *Cluster) shardForSlot(slot uint16) (uint32, []string) {
-	// HERE SHOULD BE SPIN LOOP
-	shardn := atomic.LoadUint32(&c.slotMap[slot])
-	return shardn, c.getShardMap()[shardn]
+func (c *Cluster) reloadMapping() error {
+	slotsRanges, err := c.SlotRanges()
+	if err == nil {
+		c.updateMappings(slotsRanges)
+	}
+	return err
 }
 
-func (c *Cluster) SendToAddress(addr string, req Request, cb Callback, off uint64) bool {
-	node := c.getNode(addr)
-	if node == nil {
-		return false
+func (c *Cluster) forceReloading() {
+	atomic.StoreUint32(&c.forceReload, 1)
+}
+
+func reqSlot(req Request) (uint16, bool) {
+	n := 0
+	if req.Cmd == "RANDOMKEY" {
+		return uint16(rand.Intn(NumSlots)), true
+	}
+	if req.Cmd == "EVAL" || req.Cmd == "EVALSHA" || req.Cmd == "BITOP" {
+		n = 1
+	}
+	if len(req.Args) <= n {
+		return 0, false
+	}
+	key, ok := resp.ArgToString(req.Args[1])
+	return Slot(key), ok
+}
+
+func batchSlot(reqs []Request) (uint16, bool) {
+	var slot uint16
+	var set bool
+	for _, req := range reqs {
+		s, ok := reqSlot(req)
+		if !ok {
+			continue
+		}
+		if !set {
+			slot = s
+		} else if slot != s {
+			return 0, false
+		}
+	}
+	return slot, set
+}
+
+var readonly = func() map[string]bool {
+	cmds := "BITCOUNT BITPOS DUMP EXISTS GEOHASH GEOPOS GEODIST " +
+		"GEORADIUS GEORADIUSBYMEMBER GET GETBIT GETRANGE " +
+		"HEXISTS HGET HGETALL HKEYS HLEN HMGET HSTRLEN HVALS " +
+		"KEYS LINDEX LLEN LRANGE PFCOUNT RANDOMKEY SCARD SDIFF " +
+		"SINTER SISMEMBER SMEMBERS SRANDMEMBER STRLEN SUNION " +
+		"ZCARD ZCOUNT ZLEXCOUNT ZRANGE ZRANGEBYLEX ZREVRANGEBYLEX " +
+		"ZRANGEBYSCORE ZRANK ZREVRANGE ZREVRANGEBYSCORE ZREVRANK " +
+		"SCAN SSCAN HSCAN ZSCAN"
+	ro := make(map[string]bool)
+	for _, str := range strings.Split(cmds, " ") {
+		ro[str] = true
+	}
+	return ro
+}()
+
+func fixPolicy(req Request, policy MasterReplicaPolicyEnum) MasterReplicaPolicyEnum {
+	switch policy {
+	case MasterOnly:
+		return MasterOnly
+	case ForceMasterAndReplica:
+		return MasterAndReplica
+	case ForcePreferReplica:
+		return PreferReplica
+	}
+	if readonly[req.Cmd] {
+		return policy
+	}
+	return MasterOnly
+}
+
+func (c *Cluster) Send(req Request, cb Callback, off uint64) {
+	c.SendWithPolicy(MasterOnly, req, cb, off)
+}
+
+func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb Callback, off uint64) {
+	slot, ok := reqSlot(req)
+	if !ok {
+		c.forceReloading()
+		go cb(re.New(re.ErrKindRequest, re.ErrNoSlotKey).With("request", req), off)
+		return
 	}
 
-	if len(node.conns) == 1 {
-		if node.conns[0].MayBeConnected() {
-			node.conns[0].Send(req, cb, off)
-			return true
-		}
-		return false
+	policy = fixPolicy(req, policy)
+
+	conn, err := c.connForSlot(slot, policy)
+	if err != nil {
+		go func() {
+			cb(err, off)
+			c.opts.Logger.Report(LogNoAliveSlotHosts, c, slot)
+		}()
+		return
 	}
 
-	switch c.opts.ConnHostPolicy {
-	case ConnHostPreferFirst:
-		for _, conn := range node.conns {
-			if conn.MayBeConnected() {
-				conn.Send(req, cb, off)
-				return true
-			}
-		}
-	case ConnHostRoundRobin:
-		n := int(atomic.AddUint32(&node.rr, 1))
-		l := len(node.conns)
-		for i := 0; i < l; i++ {
-			conn := node.conns[(i+n)%l]
-			if conn.MayBeConnected() {
-				conn.Send(req, cb, off)
-				return true
-			}
-		}
+	request := &request{
+		c:      c,
+		req:    req,
+		cb:     cb,
+		off:    off,
+		slot:   slot,
+		policy: policy,
+	}
+	conn.Send(req, request.set, 0)
+}
+
+type request struct {
+	c   *Cluster
+	req Request
+	cb  Callback
+
+	off    uint64
+	slot   uint16
+	policy MasterReplicaPolicyEnum
+
+	lastErrIsHard bool
+	try           uint8
+}
+
+func (r *request) set(res interface{}, _ uint64) {
+	err := resp.RedisError(res)
+	if err == nil {
+		r.cb(res, r.off)
+		return
+	}
+
+	// do not retry if cluster is closed
+	select {
+	case <-r.c.ctx.Done():
+		r.cb(res, r.off)
+		return
 	default:
-		panic("unknown ConnHostPolicy")
 	}
-	return false
+	err = err.With("cluster", r.c)
+
+	switch err.Kind {
+	case re.ErrKindIO:
+		if r.policy == MasterOnly {
+			// It is not safe to retry read-write operation
+			r.cb(res, r.off)
+			return
+		}
+		fallthrough
+	case re.ErrKindConnection, re.ErrKindContext:
+		// It is safe to retry readonly requests, and if request were
+		// not sent at all.
+		if r.lastErrIsHard {
+			// on second try do no "smart" things,
+			// cause it is likely cluster is in unstable state
+			r.cb(res, r.off)
+			return
+		}
+		r.lastErrIsHard = true
+		conn, err := r.c.connForSlot(r.slot, r.policy)
+		if err != nil {
+			r.cb(err, r.off)
+		} else {
+			conn.Send(r.req, r.set, 0)
+		}
+	case re.ErrKindResult:
+		if err.Code == re.ErrMoved || err.Code == re.ErrLoading {
+			r.c.forceReloading()
+		}
+		if (err.Code == re.ErrMoved || err.Code == re.ErrAsk) && int(r.try) < r.c.opts.MovedRetries {
+			r.try++
+			r.lastErrIsHard = false
+			addr := err.Data.Get("addr").(string)
+			conn := r.c.connForAddress(addr)
+			if conn != nil {
+				conn.SendAsk(r.req, r.set, 0, err.Code == re.ErrAsk)
+				return
+			}
+			go func() {
+				conn, cerr := r.c.newConn(addr)
+				if cerr != nil {
+					r.cb(cerr, r.off)
+					return
+				}
+				conn.SendAsk(r.req, r.set, 0, err.Code == re.ErrAsk)
+			}()
+			return
+		}
+		fallthrough
+	default:
+		r.cb(res, r.off)
+	}
+}
+
+func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
+	if len(reqs) < 3 || reqs[0].Cmd != "MULTI" || reqs[len(reqs)-1].Cmd != "EXEC" {
+		go cb(re.New(re.ErrKindRequest, re.ErrMalformedTransaction).
+			With("cluster", c).
+			With("requests", reqs), off)
+		return
+	}
+	slot, ok := batchSlot(reqs)
+	if !ok {
+		err := re.New(re.ErrKindRequest, re.ErrNoSlotKey).
+			With("cluster", c).
+			With("requests", reqs)
+		go cb(err, off)
+		return
+	}
+
+	conn, err := c.connForSlot(slot, MasterOnly)
+
+	if err != nil {
+		// ? no known alive connection for slot
+		go cb(err, off)
+	}
+
+	t := &transaction{c: c, reqs: reqs, cb: cb, off: off, slot: slot}
+	t.send(conn, false)
+}
+
+type transaction struct {
+	c    *Cluster
+	reqs []Request
+	cb   Callback
+	off  uint64
+
+	r []interface{}
+
+	lastErrIsHard bool
+	slot          uint16
+	try           uint8
+}
+
+func (t *transaction) send(conn *redisconn.Connection, ask bool) {
+	t.r = make([]interface{}, len(t.reqs))
+	conn.SendBatchAsk(t.reqs, t.set, 0, ask)
+}
+
+func (t *transaction) set(res interface{}, n uint64) {
+	t.r[n] = res
+	if int(n) != len(t.reqs)-1 {
+		return
+	}
+
+	execres := t.r[len(t.reqs)-1]
+	err := resp.RedisError(execres)
+	if err == nil {
+		t.cb(execres, t.off)
+		return
+	}
+	err = err.With("cluster", t.c)
+
+	switch err.Kind {
+	case re.ErrKindIO:
+		// redis treats all transactions as read-write, and it is not safe
+		// to retry
+		t.cb(execres, t.off)
+		return
+	case re.ErrKindConnection, re.ErrKindContext:
+		if t.lastErrIsHard {
+			t.cb(execres, t.off)
+			return
+		}
+		t.lastErrIsHard = true
+
+		conn, err := t.c.connForSlot(t.slot, MasterOnly)
+		if err != nil {
+			t.cb(err, t.off)
+		} else {
+			t.send(conn, false)
+		}
+	case re.ErrKindResult:
+		var moved string
+		allmoved := true
+		moving := false
+		asking := false
+		if err.Code == re.ErrMoved {
+			// we occasionally sent transaction to slave
+			moved = err.Data.Get("addr").(string)
+			moving = true
+		} else if strings.HasPrefix(err.Text, "EXECABORT") {
+			// check if all partial responses were ASK or MOVED
+			responses := t.r[1 : len(t.r)-1]
+			for _, r := range responses {
+				err := resp.RedisError(r)
+				if err == nil || err.Code != re.ErrMoved || err.Code != re.ErrAsk {
+					allmoved = false
+					break
+				}
+				moved = err.Data.Get("addr").(string)
+				if err.Code == re.ErrMoved {
+					moving = true
+				} else if err.Code == re.ErrAsk {
+					asking = true
+				}
+			}
+		}
+		if moved != "" && moving != asking && int(t.try) < t.c.opts.MovedRetries {
+			t.try++
+			if moving {
+				t.c.forceReloading()
+			}
+			if !allmoved {
+				if asking {
+					// lets wait a bit for migrating keys
+					time.AfterFunc(t.c.opts.WaitToMigrate, func() {
+						t.sendMoved(moved, asking)
+					})
+				} else {
+					// shit... wtf?
+					t.cb(res, t.off)
+				}
+				return
+			}
+			t.sendMoved(moved, asking)
+			return
+		}
+		fallthrough
+	default:
+		t.cb(execres, t.off)
+		return
+	}
+}
+
+func (t *transaction) sendMoved(addr string, asking bool) {
+	conn := t.c.connForAddress(addr)
+	if conn != nil {
+		t.send(conn, asking)
+		return
+	}
+	go func() {
+		conn, cerr := t.c.newConn(addr)
+		if cerr != nil {
+			t.cb(cerr, t.off)
+			return
+		}
+		t.send(conn, asking)
+	}()
+	return
+}
+
+func (c *Cluster) newConn(addr string) (*redisconn.Connection, error) {
+	node := c.addNode(addr)
+	conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
+	if conn == nil {
+		err := re.New(re.ErrKindConnection, re.ErrDial)
+		err = err.With("cluster", c).With("addr", addr)
+		return nil, err
+	}
+	return conn, nil
 }

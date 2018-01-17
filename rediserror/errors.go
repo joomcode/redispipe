@@ -97,9 +97,6 @@ const (
 	// No key to determine cluster slot
 	// (ErrKindRequest)
 	ErrNoSlotKey
-	// Transaction batch malformed
-	// (ErrKindRequest)
-	ErrMalformedTransaction
 	// Fething slots failed
 	// (ErrKindCluster)
 	ErrClusterSlots
@@ -123,12 +120,35 @@ var typeName = map[int]string{
 	ErrNoSlotKey:      "ErrNoSlotKey",
 	ErrClusterSlots:   "ErrClusterSlots",
 
-	ErrMalformedTransaction: "ErrMalformedTransaction",
-
 	ErrHeaderlineTooLarge: "ErrHeaderlineTooLarge",
 	ErrIntegerParsing:     "ErrIntegerParsing",
 	ErrNoFinalRN:          "ErrNoFinalRN",
 	ErrUnknownHeaderType:  "ErrUnknownHeaderType",
+}
+
+var defMessage = map[int]string{
+	ErrContextIsNil:   "context is not set",
+	ErrContextClosed:  "context is closed",
+	ErrNotConnected:   "connection is not established",
+	ErrDial:           "could not connect",
+	ErrAuth:           "auth is not successful",
+	ErrIO:             "io error",
+	ErrArgumentType:   "command argument type not supported",
+	ErrBatchFormat:    "one of batch command is malformed",
+	ErrResponseFormat: "redis response is malformed",
+	ErrPing:           "ping response doesn't match",
+	ErrMoved:          "slot moved",
+	ErrAsk:            "ask another",
+	ErrLoading:        "host is loading",
+	ErrNoSlotKey:      "no key to determine slot",
+	ErrClusterSlots:   "could not retrieve slots from redis",
+
+	ErrHeaderlineTooLarge: "headerline too large",
+	ErrIntegerParsing:     "integer is not integer",
+	ErrNoFinalRN:          "no final \r\n in response",
+	ErrUnknownHeaderType:  "header type is not known",
+
+	//ErrResult:         "",
 }
 
 func New(kind, code int) *Error {
@@ -175,7 +195,10 @@ func (e Error) Error() string {
 		msg = e.Cause.Error()
 	}
 	if msg == "" {
-		msg = "generic "
+		msg = defMessage[e.Code]
+		if msg == "" {
+			msg = "generic "
+		}
 	}
 	if e.Data != nil {
 		return fmt.Sprintf("%s (%s %s)", msg, typ, e.Data)

@@ -83,7 +83,7 @@ func Read(b *bufio.Reader) interface{} {
 			return re.NewWrap(re.ErrKindIO, re.ErrIO, err)
 		}
 		if buf[v] != '\r' || buf[v+1] != '\n' {
-			return re.NewMsg(re.ErrKindResponse, re.ErrNoFinalRN, "no final \\r\\n")
+			return re.New(re.ErrKindResponse, re.ErrNoFinalRN)
 		}
 		return buf[:v:v]
 	case '*':

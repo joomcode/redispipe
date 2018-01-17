@@ -109,7 +109,7 @@ Loop:
 			if node == nil {
 				break /*switch*/
 			}
-			conn := node.getConn(c.opts.ConnHostPolicy, needConnected)
+			conn = node.getConn(c.opts.ConnHostPolicy, needConnected)
 			if conn == nil {
 				conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
 			}
@@ -119,16 +119,16 @@ Loop:
 			if policy == PreferReplica {
 				n, a = n-2, 2
 			}
-			v := atomic.AddUint32(&shard.rr, 1) * 0x12345
+			off := atomic.AddUint32(&shard.rr, 1)
 			hadall := true
-			for _, needState := range [2]int{needConnected, mayBeConnected} {
+			for _, needState := range []int{needConnected, mayBeConnected} {
 				mask := atomic.LoadUint32(&shard.good)
 				mask |= 1 // always trust master ????
 				for mask != 0 {
 					// LCG
-					v = v*5 + 1
-					k := ((v^v>>16)%n + a) / 3
-					if k != 0 && mask&(1<<k) == 0 {
+					off = off*5 + 1
+					k := ((off^off>>16)%n + a) / 3
+					if mask&(1<<k) == 0 {
 						// replica isn't healthy, or already viewed
 						continue
 					}
@@ -139,7 +139,7 @@ Loop:
 						hadall = false
 						continue
 					}
-					conn := node.getConn(c.opts.ConnHostPolicy, needState)
+					conn = node.getConn(c.opts.ConnHostPolicy, needState)
 					if conn != nil {
 						break Loop
 					}
@@ -148,12 +148,14 @@ Loop:
 			if hadall {
 				break Loop
 			}
+		default:
+			panic("unknown policy")
 		}
 		runtime.Gosched()
 	}
 	if conn == nil {
 		c.forceReloading()
-		go c.opts.Logger.Report(LogNoAliveSlotHosts, c, slot)
+		re.Do(func() { c.opts.Logger.Report(LogNoAliveSlotHosts, c, slot) })
 		return nil, re.New(re.ErrKindConnection, re.ErrDial).
 			With("cluster", c).With("slot", slot).With("policy", policy)
 	}
@@ -199,10 +201,17 @@ func (n *node) getConn(policy ConnHostPolicyEnum, needState int) *redisconn.Conn
 			}
 		}
 	case ConnHostRoundRobin:
-		off := int(atomic.AddUint32(&n.rr, 1))
-		l := len(n.conns)
-		for i := 0; i < l; i++ {
-			conn := n.conns[(i+off)%l]
+		off := atomic.AddUint32(&n.rr, 1)
+		l := uint32(len(n.conns))
+		mask := uint32(1)<<uint(l) - 1
+		for mask != 0 {
+			off = off*5 + 1
+			k := (off ^ off>>16) % l
+			if mask&(1<<k) == 0 {
+				continue
+			}
+			mask &^= 1 << k
+			conn := n.conns[k]
 			if connHealthy(conn, needState) {
 				return conn
 			}

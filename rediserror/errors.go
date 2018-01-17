@@ -216,7 +216,7 @@ func (kv *KV) ToMap() map[string]interface{} {
 func (kv *KV) String() string {
 	parts := []string{}
 	for kv != nil {
-		parts = append(parts, fmt.Sprintf("%s: %s", kv.Name, kv.Value))
+		parts = append(parts, fmt.Sprintf("%s: %v", kv.Name, kv.Value))
 		kv = kv.Next
 	}
 	return "{" + strings.Join(parts, ", ") + "}"

@@ -10,6 +10,7 @@ const (
 	LogConnectFailed
 	LogDisconnected
 	LogContextClosed
+	LogMAX
 )
 
 type Logger interface {

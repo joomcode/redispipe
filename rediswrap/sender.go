@@ -8,5 +8,5 @@ type Callback func(res interface{}, n uint64)
 
 type Sender interface {
 	Send(r Request, cb Callback, n uint64)
-	SendBatch(r []Request, cb Callback, start uint64)
+	SendTransaction(r []Request, cb Callback, start uint64)
 }

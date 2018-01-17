@@ -12,10 +12,26 @@ type Request struct {
 }
 
 func AppendRequest(buf []byte, req Request) ([]byte, *re.Error) {
-	buf = appendHead(buf, '*', int64(len(req.Args)+1))
-	buf = appendHead(buf, '$', int64(len(req.Cmd)))
-	buf = append(buf, req.Cmd...)
-	buf = append(buf, '\r', '\n')
+	space := -1
+	for i, c := range []byte(req.Cmd) {
+		if c == ' ' {
+			space = i
+		}
+	}
+	if space == -1 {
+		buf = appendHead(buf, '*', int64(len(req.Args)+1))
+		buf = appendHead(buf, '$', int64(len(req.Cmd)))
+		buf = append(buf, req.Cmd...)
+		buf = append(buf, '\r', '\n')
+	} else {
+		buf = appendHead(buf, '*', int64(len(req.Args)+2))
+		buf = appendHead(buf, '$', int64(space))
+		buf = append(buf, req.Cmd[:space]...)
+		buf = append(buf, '\r', '\n')
+		buf = appendHead(buf, '$', int64(len(req.Cmd)-space-1))
+		buf = append(buf, req.Cmd[space+1:]...)
+		buf = append(buf, '\r', '\n')
+	}
 	for _, val := range req.Args {
 		switch v := val.(type) {
 		case string:

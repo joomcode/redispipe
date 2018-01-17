@@ -1,7 +1,5 @@
 package rediswrap
 
-import "sync/atomic"
-
 type ChanFuture struct {
 	r    interface{}
 	wait chan struct{}
@@ -27,6 +25,7 @@ func (f ChanFutures) set(res interface{}, i uint64) {
 	f[i].set(res, i)
 }
 
+/*
 type BatchChanFuture struct {
 	r    []interface{}
 	cnt  uint32
@@ -48,6 +47,7 @@ func (f BatchChanFuture) set(res interface{}, i uint64) {
 		close(f.wait)
 	}
 }
+*/
 
 type ChanFutured struct {
 	S Sender
@@ -59,6 +59,7 @@ func (s ChanFutured) Send(r Request) *ChanFuture {
 	return f
 }
 
+/*
 func (s ChanFutured) SendMany(r []Request) ChanFutures {
 	futures := make(ChanFutures, len(r))
 	for i := range futures {
@@ -76,3 +77,4 @@ func (s ChanFutured) SendBatch(r []Request) *BatchChanFuture {
 	s.S.SendBatch(r, future.set, 0)
 	return future
 }
+*/

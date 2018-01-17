@@ -2,6 +2,7 @@ package redisconn
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -16,6 +17,9 @@ import (
 )
 
 const (
+	DoAsking      = 1
+	DoTransaction = 2
+
 	connDisconnected = 0
 	connConnecting   = 1
 	connConnected    = 2
@@ -239,20 +243,24 @@ func (conn *Connection) Send(req Request, cb Callback, n uint64) {
 }
 
 func (conn *Connection) SendAsk(req Request, cb Callback, n uint64, asking bool) {
-	shardn, shard := conn.getShard()
 	if cb == nil {
 		cb = dumb
 	}
+	if err := conn.doSend(req, cb, n, asking); err != nil {
+		re.Do(func() { cb(err.With("conn", conn), n) })
+	}
+}
+
+func (conn *Connection) doSend(req Request, cb Callback, n uint64, asking bool) *re.Error {
+	shardn, shard := conn.getShard()
 	shard.Lock()
 	defer shard.Unlock()
 
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		go cb(re.NewWrap(re.ErrKindContext, re.ErrContextClosed, conn.ctx.Err()).With("conn", conn), n)
-		return
+		return re.NewWrap(re.ErrKindContext, re.ErrContextClosed, conn.ctx.Err())
 	case connDisconnected:
-		go cb(re.New(re.ErrKindConnection, re.ErrNotConnected).With("conn", conn), n)
-		return
+		return re.New(re.ErrKindConnection, re.ErrNotConnected)
 	}
 	buf := shard.buf
 	futures := shard.futures
@@ -262,8 +270,7 @@ func (conn *Connection) SendAsk(req Request, cb Callback, n uint64, asking bool)
 		futures = append(futures, future{dumb, 0})
 	}
 	if buf, err = resp.AppendRequest(buf, req); err != nil {
-		go cb(err.With("conn", conn), n)
-		return
+		return err
 	}
 	futures = append(futures, future{cb, n})
 	if len(shard.buf) == 0 {
@@ -271,13 +278,14 @@ func (conn *Connection) SendAsk(req Request, cb Callback, n uint64, asking bool)
 	}
 	shard.buf = buf
 	shard.futures = futures
+	return nil
 }
 
 func (conn *Connection) SendBatch(requests []Request, cb Callback, start uint64) {
-	conn.SendBatchAsk(requests, cb, start, false)
+	conn.SendBatchFlags(requests, cb, start, 0)
 }
 
-func (conn *Connection) SendBatchAsk(requests []Request, cb Callback, start uint64, asking bool) {
+func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start uint64, flags int) {
 	if len(requests) == 0 {
 		return
 	}
@@ -295,24 +303,29 @@ func (conn *Connection) SendBatchAsk(requests []Request, cb Callback, start uint
 		err = re.New(re.ErrKindConnection, re.ErrNotConnected).With("conn", conn)
 		return
 	}
+	n := len(requests)
 	if err != nil {
-		go func(n int) {
+		re.Do(func() {
 			for i := 0; i < n; i++ {
 				cb(err, start+uint64(i))
 			}
-		}(len(requests))
+		})
 		return
 	}
 	buf := shard.buf
 	futures := shard.futures
-	if asking {
-		buf, _ = resp.AppendRequest(buf, Request{"ASKING", nil})
+	if flags&DoAsking != 0 {
+		buf = append(buf, resp.AskingReq...)
+		futures = append(futures, future{dumb, 0})
+	}
+	if flags&DoTransaction != 0 {
+		buf = append(buf, resp.MultiReq...)
 		futures = append(futures, future{dumb, 0})
 	}
 	for i, req := range requests {
-		buf, err = resp.AppendRequest(shard.buf, req)
+		buf, err = resp.AppendRequest(buf, req)
 		if err != nil {
-			go func(i int, err *re.Error, n int) {
+			re.Do(func() {
 				var common_err error
 				err = err.With("conn", conn).With("request", requests[i])
 				common_err = re.NewWrap(re.ErrKindRequest, re.ErrBatchFormat, err).
@@ -326,10 +339,14 @@ func (conn *Connection) SendBatchAsk(requests []Request, cb Callback, start uint
 						cb(common_err, start+uint64(j))
 					}
 				}
-			}(i, err, len(requests))
+			})
 			return
 		}
 		futures = append(futures, future{cb, start + uint64(i)})
+	}
+	if flags&DoTransaction != 0 {
+		buf = append(buf, resp.ExecReq...)
+		futures = append(futures, future{cb, start + uint64(len(requests))})
 	}
 
 	if len(shard.buf) == 0 {
@@ -341,12 +358,13 @@ func (conn *Connection) SendBatchAsk(requests []Request, cb Callback, start uint
 }
 
 func (conn *Connection) SendTransaction(reqs []Request, cb Callback, off uint64) {
-	if len(reqs) < 3 || reqs[0].Cmd != "MULTI" || reqs[len(reqs)-1].Cmd != "EXEC" {
-		go cb(re.New(re.ErrKindRequest, re.ErrMalformedTransaction).
-			With("conn", conn).
-			With("requests", reqs), off)
-		return
+	l := uint64(len(reqs))
+	tcb := func(res interface{}, n uint64) {
+		if n == l {
+			cb(res, off)
+		}
 	}
+	conn.SendBatchFlags(reqs, tcb, 0, DoTransaction)
 }
 
 func (conn *Connection) String() string {
@@ -407,11 +425,11 @@ func (conn *Connection) dial() error {
 
 	var req []byte
 	if conn.opts.Password != "" {
-		req, _ = resp.AppendRequest(req, Request{"AUTH", []interface{}{conn.opts.Password}})
+		req = append(req, resp.AuthReq...)
 	}
-	req, _ = resp.AppendRequest(req, Request{"PING", nil})
+	req = append(req, resp.PingReq...)
 	if conn.opts.DB != 0 {
-		req, _ = resp.AppendRequest(req, Request{"SELECT", []interface{}{conn.opts.DB}})
+		req = append(req, resp.SelectReq...)
 	}
 	if _, err = dc.Write(req); err != nil {
 		connection.Close()

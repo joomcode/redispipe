@@ -36,7 +36,7 @@ func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 	nodes := c.getNodeMap()
 	for _, node := range nodes {
 		for _, conn := range node.conns {
-			res := syncSend(conn, Request{"CLUSTER", []interface{}{"SLOTS"}})
+			res := syncSend(conn, Request{"CLUSTER SLOTS", nil})
 			slotsres, err := ParseSlotsInfo(res, c)
 			if err == nil {
 				return slotsres, nil
@@ -55,7 +55,7 @@ func ParseSlotsInfo(res interface{}, cl *Cluster) ([]SlotsRange, error) {
 
 	errf := func(f string, args ...interface{}) ([]SlotsRange, error) {
 		return nil, re.NewMsg(re.ErrKindResponse, re.ErrResponseFormat,
-			fmt.Sprintf(f, args...))
+			fmt.Sprintf(f, args...)).With("results", res)
 	}
 
 	var rawranges []interface{}
@@ -67,35 +67,36 @@ func ParseSlotsInfo(res interface{}, cl *Cluster) ([]SlotsRange, error) {
 	ranges := make([]SlotsRange, len(rawranges))
 	for i, rawelem := range rawranges {
 		var rawrange []interface{}
+		var ok bool
 		var i64 int64
 		r := SlotsRange{}
-		if rawrange, ok := rawelem.([]interface{}); !ok || len(rawrange) < 3 {
-			return errf("format mismatch: res[%d]=%+v (%+v)", i, rawelem, rawranges)
+		if rawrange, ok = rawelem.([]interface{}); !ok || len(rawrange) < 3 {
+			return errf("format mismatch: res[%d]=%+v", i, rawelem)
 		}
-		if i64, ok := rawrange[0].(int64); !ok || i64 < 0 || i64 >= NumSlots {
-			return errf("format mismatch: res[%d][0]=%+v (%+v)", i, rawrange[0], rawranges)
+		if i64, ok = rawrange[0].(int64); !ok || i64 < 0 || i64 >= NumSlots {
+			return errf("format mismatch: res[%d][0]=%+v", i, rawrange[0])
 		}
 		r.from = int(i64)
-		if i64, ok := rawrange[1].(int64); !ok || i64 < 0 || i64 >= NumSlots {
-			return errf("format mismatch: res[%d][1]=%+v (%+v)", i, rawrange[1], rawranges)
+		if i64, ok = rawrange[1].(int64); !ok || i64 < 0 || i64 >= NumSlots {
+			return errf("format mismatch: res[%d][1]=%+v", i, rawrange[1])
 		}
 		r.to = int(i64)
 		if r.from > r.to {
-			return errf("range wrong: res[%d]=%+v (%+v)", i, rawrange, rawranges)
+			return errf("range wrong: res[%d]=%+v (%+v)", i, rawrange)
 		}
 		for j := 2; j < len(rawrange); j++ {
 			rawaddr, ok := rawrange[j].([]interface{})
 			if !ok || len(rawaddr) < 2 {
-				return errf("address format mismatch: res[%d][%d] = %+v (%+v)",
+				return errf("address format mismatch: res[%d][%d] = %+v",
 					i, j, rawrange[j])
 			}
-			host, ok := rawaddr[0].(string)
+			host, ok := rawaddr[0].([]byte)
 			port, ok2 := rawaddr[1].(int64)
 			if !ok || !ok2 || port <= 0 || port+10000 > 65535 {
-				return errf("address format mismatch: res[%d][%d] = %+v (%+v)",
+				return errf("address format mismatch: res[%d][%d] = %+v",
 					i, j, rawaddr)
 			}
-			r.addrs = append(r.addrs, host+":"+strconv.Itoa(int(port)))
+			r.addrs = append(r.addrs, string(host)+":"+strconv.Itoa(int(port)))
 		}
 		sort.Strings(r.addrs[1:])
 		ranges[i] = r
@@ -185,7 +186,7 @@ func (c *Cluster) updateMappings(ranges []SlotsRange) {
 					break
 				}
 			}
-			sh = &shard{addr: addrs}
+			sh = &shard{addr: addrs, good: (uint32(1) << uint(len(addrs))) - 1}
 			tmpShards[shardn] = sh
 		}
 		newMasters[master] = shardn

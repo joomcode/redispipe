@@ -34,6 +34,7 @@ func (s *syncBatch) set(res interface{}, i uint64) {
 	s.Done()
 }
 
+/*
 func (s Sync) SendBatch(r []Request) []interface{} {
 	res := syncBatch{
 		r: make([]interface{}, len(r)),
@@ -43,3 +44,4 @@ func (s Sync) SendBatch(r []Request) []interface{} {
 	res.Wait()
 	return res.r
 }
+*/

@@ -2,6 +2,7 @@ package rediscluster
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"strings"
 	"sync"
@@ -19,7 +20,9 @@ type MasterReplicaPolicyEnum int8
 const (
 	ConnHostPreferFirst ConnHostPolicyEnum = iota
 	ConnHostRoundRobin
+)
 
+const (
 	MasterOnly MasterReplicaPolicyEnum = iota
 	MasterAndReplica
 	PreferReplica
@@ -45,6 +48,7 @@ type Opts struct {
 	ConnsPerHost int
 	// ConnHostPolicy - either prefer to send to first connection until it is disconnected, or
 	//					send to all connections in round robin maner
+	// default: ConnHostPreferFirst
 	ConnHostPolicy ConnHostPolicyEnum
 	// Handle is returned with Cluster.Handle()
 	// Also it is part of per-connection handle
@@ -121,7 +125,7 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 		cluster.opts.HostOpts.Logger = defaultConnLogger{cluster}
 	}
 	if cluster.opts.Logger == nil {
-		cluster.opts.Logger = defaultLogger{}
+		cluster.opts.Logger = DefaultLogger{}
 	}
 
 	if cluster.opts.ConnsPerHost <= 1 {
@@ -170,9 +174,6 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	for _, addr := range init_addrs {
 		if _, ok := masters[addr]; !ok {
 			nodes[addr] = cluster.newNode(addr)
-			masters[addr] = cluster.nextShard
-			shards[cluster.nextShard] = &shard{addr: []string{addr}}
-			cluster.nextShard++
 		}
 	}
 
@@ -184,6 +185,10 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	go cluster.checker()
 
 	return cluster, nil
+}
+
+func (c *Cluster) String() string {
+	return fmt.Sprintf("*rediscluster.Cluster{Name: %s}", c.opts.Name)
 }
 
 func (c *Cluster) Name() string {
@@ -241,7 +246,7 @@ func reqSlot(req Request) (uint16, bool) {
 	if len(req.Args) <= n {
 		return 0, false
 	}
-	key, ok := resp.ArgToString(req.Args[1])
+	key, ok := resp.ArgToString(req.Args[n])
 	return Slot(key), ok
 }
 
@@ -301,7 +306,9 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 	slot, ok := reqSlot(req)
 	if !ok {
 		c.forceReloading()
-		go cb(re.New(re.ErrKindRequest, re.ErrNoSlotKey).With("request", req), off)
+		re.Do(func() {
+			cb(re.New(re.ErrKindRequest, re.ErrNoSlotKey).With("request", req), off)
+		})
 		return
 	}
 
@@ -309,10 +316,10 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 
 	conn, err := c.connForSlot(slot, policy)
 	if err != nil {
-		go func() {
+		re.Do(func() {
 			cb(err, off)
 			c.opts.Logger.Report(LogNoAliveSlotHosts, c, slot)
-		}()
+		})
 		return
 	}
 
@@ -393,14 +400,14 @@ func (r *request) set(res interface{}, _ uint64) {
 				conn.SendAsk(r.req, r.set, 0, err.Code == re.ErrAsk)
 				return
 			}
-			go func() {
+			re.Do(func() {
 				conn, cerr := r.c.newConn(addr)
 				if cerr != nil {
 					r.cb(cerr, r.off)
 					return
 				}
 				conn.SendAsk(r.req, r.set, 0, err.Code == re.ErrAsk)
-			}()
+			})
 			return
 		}
 		fallthrough
@@ -410,10 +417,7 @@ func (r *request) set(res interface{}, _ uint64) {
 }
 
 func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
-	if len(reqs) < 3 || reqs[0].Cmd != "MULTI" || reqs[len(reqs)-1].Cmd != "EXEC" {
-		go cb(re.New(re.ErrKindRequest, re.ErrMalformedTransaction).
-			With("cluster", c).
-			With("requests", reqs), off)
+	if len(reqs) == 0 {
 		return
 	}
 	slot, ok := batchSlot(reqs)
@@ -421,7 +425,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
 		err := re.New(re.ErrKindRequest, re.ErrNoSlotKey).
 			With("cluster", c).
 			With("requests", reqs)
-		go cb(err, off)
+		re.Do(func() { cb(err, off) })
 		return
 	}
 
@@ -429,7 +433,8 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
 
 	if err != nil {
 		// ? no known alive connection for slot
-		go cb(err, off)
+		re.Do(func() { cb(err, off) })
+		return
 	}
 
 	t := &transaction{c: c, reqs: reqs, cb: cb, off: off, slot: slot}
@@ -450,13 +455,17 @@ type transaction struct {
 }
 
 func (t *transaction) send(conn *redisconn.Connection, ask bool) {
-	t.r = make([]interface{}, len(t.reqs))
-	conn.SendBatchAsk(t.reqs, t.set, 0, ask)
+	t.r = make([]interface{}, len(t.reqs)+1)
+	flags := redisconn.DoTransaction
+	if ask {
+		flags |= redisconn.DoAsking
+	}
+	conn.SendBatchFlags(t.reqs, t.set, 0, flags)
 }
 
 func (t *transaction) set(res interface{}, n uint64) {
 	t.r[n] = res
-	if int(n) != len(t.reqs)-1 {
+	if int(n) != len(t.reqs) {
 		return
 	}
 
@@ -546,14 +555,14 @@ func (t *transaction) sendMoved(addr string, asking bool) {
 		t.send(conn, asking)
 		return
 	}
-	go func() {
+	re.Do(func() {
 		conn, cerr := t.c.newConn(addr)
 		if cerr != nil {
 			t.cb(cerr, t.off)
 			return
 		}
 		t.send(conn, asking)
-	}()
+	})
 	return
 }
 

@@ -3,6 +3,7 @@ package resp
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"io"
 	"strings"
 
@@ -18,7 +19,7 @@ func RedisError(v interface{}) *re.Error {
 	e, _ := v.(*re.Error)
 	if e == nil {
 		if _, ok := v.(error); ok {
-			panic("result should be either *rediserror.Error, or not error at all")
+			panic(fmt.Errorf("result should be either *rediserror.Error, or not error at all, but got %#v", v))
 		}
 	}
 	return e

@@ -100,6 +100,9 @@ const (
 	// Fething slots failed
 	// (ErrKindCluster)
 	ErrClusterSlots
+	// EXEC returns nil (WATCH failed) (it is strange, cause we don't support WATCH)
+	// (ErrKindResult)
+	ErrExecEmpty
 )
 
 var typeName = map[int]string{
@@ -119,6 +122,7 @@ var typeName = map[int]string{
 	ErrLoading:        "ErrLoading",
 	ErrNoSlotKey:      "ErrNoSlotKey",
 	ErrClusterSlots:   "ErrClusterSlots",
+	ErrExecEmpty:      "ErrExecEmpty",
 
 	ErrHeaderlineTooLarge: "ErrHeaderlineTooLarge",
 	ErrIntegerParsing:     "ErrIntegerParsing",
@@ -142,6 +146,7 @@ var defMessage = map[int]string{
 	ErrLoading:        "host is loading",
 	ErrNoSlotKey:      "no key to determine slot",
 	ErrClusterSlots:   "could not retrieve slots from redis",
+	ErrExecEmpty:      "exec failed because of WATCH???",
 
 	ErrHeaderlineTooLarge: "headerline too large",
 	ErrIntegerParsing:     "integer is not integer",

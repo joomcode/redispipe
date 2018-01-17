@@ -41,10 +41,10 @@ func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 			if err == nil {
 				return slotsres, nil
 			}
-			c.opts.Logger.Report(LogClusterSlotsError, c, conn, err)
+			c.report(LogClusterSlotsError, conn, err)
 		}
 	}
-	c.opts.Logger.Report(LogClusterSlotsError, c)
+	c.report(LogClusterSlotsError)
 	return nil, re.New(re.ErrKindCluster, re.ErrClusterSlots).With("cluster", c)
 }
 

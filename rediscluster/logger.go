@@ -14,14 +14,17 @@ type LogKind int
 const (
 	LogHostEvent LogKind = iota
 	LogClusterSlotsError
-	LogForceCompaction
+	LogForceReload
 	LogContextClosed
-	LogNoAliveSlotHosts
 	LogMAX
 )
 
 type Logger interface {
 	Report(event LogKind, conn *Cluster, v ...interface{})
+}
+
+func (c *Cluster) report(event LogKind, v ...interface{}) {
+	c.opts.Logger.Report(event, c, v...)
 }
 
 type DefaultLogger struct{}
@@ -64,13 +67,10 @@ func (d DefaultLogger) Report(event LogKind, cluster *Cluster, v ...interface{})
 			log.Printf("rediscluster %s: no alive nodes to request 'CLUSTER SLOTS'",
 				cluster.Name())
 		}
-	case LogForceCompaction:
-		log.Printf("rediscluster %s: force shards compaction", cluster.Name())
+	case LogForceReload:
+		log.Printf("rediscluster %s: force reloading slots", cluster.Name())
 	case LogContextClosed:
 		log.Printf("rediscluster %s: shutting down", cluster.Name())
-	case LogNoAliveSlotHosts:
-		slot := v[0].(uint16)
-		log.Printf("rediscluster %s: no alive host for slot %d", cluster.Name(), slot)
 	}
 }
 

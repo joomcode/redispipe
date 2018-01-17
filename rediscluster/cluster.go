@@ -209,13 +209,14 @@ Loop:
 	for {
 		select {
 		case <-c.ctx.Done():
-			c.opts.Logger.Report(LogContextClosed, c)
+			c.report(LogContextClosed)
 			return
 		case <-t.C:
 		case <-f.C:
 			if atomic.LoadUint32(&c.forceReload) == 0 {
 				continue Loop
 			}
+			c.report(LogForceReload)
 			atomic.StoreUint32(&c.forceReload, 0)
 		}
 
@@ -316,10 +317,7 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 
 	conn, err := c.connForSlot(slot, policy)
 	if err != nil {
-		re.Do(func() {
-			cb(err, off)
-			c.opts.Logger.Report(LogNoAliveSlotHosts, c, slot)
-		})
+		re.Do(func() { cb(err, off) })
 		return
 	}
 
@@ -372,6 +370,7 @@ func (r *request) set(res interface{}, _ uint64) {
 		}
 		fallthrough
 	case re.ErrKindConnection, re.ErrKindContext:
+		r.c.forceReloading()
 		// It is safe to retry readonly requests, and if request were
 		// not sent at all.
 		if r.lastErrIsHard {
@@ -470,6 +469,14 @@ func (t *transaction) set(res interface{}, n uint64) {
 	}
 
 	execres := t.r[len(t.reqs)-1]
+
+	select {
+	case <-t.c.ctx.Done():
+		t.cb(execres, t.off)
+		return
+	default:
+	}
+
 	err := resp.RedisError(execres)
 	if err == nil {
 		t.cb(execres, t.off)
@@ -484,6 +491,7 @@ func (t *transaction) set(res interface{}, n uint64) {
 		t.cb(execres, t.off)
 		return
 	case re.ErrKindConnection, re.ErrKindContext:
+		t.c.forceReloading()
 		if t.lastErrIsHard {
 			t.cb(execres, t.off)
 			return

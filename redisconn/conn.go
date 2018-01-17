@@ -2,7 +2,6 @@ package redisconn
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -602,7 +601,12 @@ func (conn *Connection) control() {
 func (one *oneconn) setErr(neterr error, conn *Connection) {
 	one.erronce.Do(func() {
 		close(one.control)
-		one.err = neterr
+		rerr, ok := neterr.(*re.Error)
+		if !ok {
+			rerr = re.NewWrap(re.ErrKindIO, re.ErrIO, neterr)
+		}
+		rerr = rerr.With("conn", conn)
+		one.err = rerr
 	})
 	go conn.reconnect(neterr, one)
 }
@@ -709,7 +713,7 @@ Outter:
 			res = resp.Read(r)
 			futures[i].Callback = nil
 			if rerr := resp.RedisError(res); rerr.HardError() {
-				one.setErr(rerr.With("conn", conn), conn)
+				one.setErr(rerr, conn)
 				fut.Call(one.err)
 				break Outter
 			}

@@ -155,7 +155,6 @@ Loop:
 	}
 	if conn == nil {
 		c.forceReloading()
-		re.Do(func() { c.opts.Logger.Report(LogNoAliveSlotHosts, c, slot) })
 		return nil, re.New(re.ErrKindConnection, re.ErrDial).
 			With("cluster", c).With("slot", slot).With("policy", policy)
 	}

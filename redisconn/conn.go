@@ -94,10 +94,10 @@ type connShard struct {
 
 func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err error) {
 	if ctx == nil {
-		return nil, redis.New(redis.ErrKindOpts, redis.ErrContextIsNil)
+		return nil, redis.NewErr(redis.ErrKindOpts, redis.ErrContextIsNil)
 	}
 	if addr == "" {
-		return nil, redis.New(redis.ErrKindOpts, redis.ErrNoAddressProvided)
+		return nil, redis.NewErr(redis.ErrKindOpts, redis.ErrNoAddressProvided)
 	}
 	conn = &Connection{
 		addr: addr,
@@ -226,7 +226,7 @@ func (conn *Connection) Ping() error {
 		return err
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
-		return redis.New(redis.ErrKindResponse, redis.ErrPing).With("conn", conn).With("response", res)
+		return redis.NewErr(redis.ErrKindResponse, redis.ErrPing).With("conn", conn).With("response", res)
 	}
 	return nil
 }
@@ -258,9 +258,9 @@ func (conn *Connection) doSend(req Request, cb Callback, n uint64, asking bool) 
 
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		return redis.NewWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err())
+		return redis.NewErrWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err())
 	case connDisconnected:
-		return redis.New(redis.ErrKindConnection, redis.ErrNotConnected)
+		return redis.NewErr(redis.ErrKindConnection, redis.ErrNotConnected)
 	}
 	buf := shard.buf
 	futures := shard.futures
@@ -297,10 +297,10 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start ui
 	var err *redis.Error
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		err = redis.NewWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err()).With("conn", conn)
+		err = redis.NewErrWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err()).With("conn", conn)
 		return
 	case connDisconnected:
-		err = redis.New(redis.ErrKindConnection, redis.ErrNotConnected).With("conn", conn)
+		err = redis.NewErr(redis.ErrKindConnection, redis.ErrNotConnected).With("conn", conn)
 		return
 	}
 	n := len(requests)
@@ -328,7 +328,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start ui
 			Go(func() {
 				var common_err error
 				err = err.With("conn", conn).With("request", requests[i])
-				common_err = redis.NewWrap(redis.ErrKindRequest, redis.ErrBatchFormat, err).
+				common_err = redis.NewErrWrap(redis.ErrKindRequest, redis.ErrBatchFormat, err).
 					With("requests", requests).
 					With("conn", conn).
 					With("request", requests[i])
@@ -417,7 +417,7 @@ func (conn *Connection) dial() error {
 	}
 	connection, err = dialer.DialContext(conn.ctx, network, address)
 	if err != nil {
-		return redis.NewWrap(redis.ErrKindConnection, redis.ErrDial, err)
+		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrDial, err)
 	}
 	dc := newDeadlineIO(connection, conn.opts.IOTimeout)
 	r := bufio.NewReaderSize(dc, 128*1024)
@@ -442,20 +442,20 @@ func (conn *Connection) dial() error {
 		if err := resp.RedisError(res); err != nil {
 			connection.Close()
 			if strings.Contains(err.Error(), "password") {
-				return redis.NewWrap(redis.ErrKindConnection, redis.ErrAuth, err).With("conn", conn)
+				return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrAuth, err).With("conn", conn)
 			}
-			return redis.NewWrap(redis.ErrKindConnection, redis.ErrConnSetup, err).With("conn", conn)
+			return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err).With("conn", conn)
 		}
 	}
 	// PING Response
 	res = resp.Read(r)
 	if err = resp.Error(res); err != nil {
 		connection.Close()
-		return redis.NewWrap(redis.ErrKindConnection, redis.ErrConnSetup, err)
+		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err)
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
 		connection.Close()
-		return redis.NewMsg(redis.ErrKindConnection, redis.ErrConnSetup, "ping response mismatch").
+		return redis.NewErrMsg(redis.ErrKindConnection, redis.ErrConnSetup, "ping response mismatch").
 			With("conn", conn).With("response", res)
 	}
 	// SELECT DB Response
@@ -463,11 +463,11 @@ func (conn *Connection) dial() error {
 		res = resp.Read(r)
 		if err = resp.Error(res); err != nil {
 			connection.Close()
-			return redis.NewWrap(redis.ErrKindConnection, redis.ErrConnSetup, err).With("conn", conn)
+			return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err).With("conn", conn)
 		}
 		if str, ok := res.(string); !ok || str != "OK" {
 			connection.Close()
-			return redis.NewMsg(redis.ErrKindConnection, redis.ErrConnSetup, "SELECT db response mismatch").
+			return redis.NewErrMsg(redis.ErrKindConnection, redis.ErrConnSetup, "SELECT db response mismatch").
 				With("conn", conn).
 				With("db", conn.opts.DB).With("response", res)
 		}
@@ -584,7 +584,7 @@ func (conn *Connection) control() {
 		case <-conn.ctx.Done():
 			conn.mutex.Lock()
 			defer conn.mutex.Unlock()
-			conn.closeErr = redis.NewWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err()).
+			conn.closeErr = redis.NewErrWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err()).
 				With("conn", conn)
 			conn.closeConnection(conn.closeErr, true)
 			return
@@ -604,7 +604,7 @@ func (one *oneconn) setErr(neterr error, conn *Connection) {
 		close(one.control)
 		rerr, ok := neterr.(*redis.Error)
 		if !ok {
-			rerr = redis.NewWrap(redis.ErrKindIO, redis.ErrIO, neterr)
+			rerr = redis.NewErrWrap(redis.ErrKindIO, redis.ErrIO, neterr)
 		}
 		rerr = rerr.With("conn", conn)
 		one.err = rerr

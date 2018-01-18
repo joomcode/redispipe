@@ -33,5 +33,5 @@ func ScanResponse(res interface{}) ([]byte, []string, error) {
 	return it, strs, nil
 
 wrong:
-	return nil, nil, redis.New(redis.ErrKindResponse, redis.ErrResponseFormat).With("response", res)
+	return nil, nil, redis.NewErr(redis.ErrKindResponse, redis.ErrResponseFormat).With("response", res)
 }

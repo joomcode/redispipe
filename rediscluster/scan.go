@@ -26,7 +26,7 @@ func (c *Cluster) Scanner(opts rediswrap.ScanOpts) rediswrap.Scanner {
 	fmt.Println("addrs", addrs)
 	if len(addrs) == 0 {
 		return &Scanner{
-			err: redis.New(redis.ErrKindCluster, redis.ErrClusterConfigEmpty).With("cluster", c),
+			err: redis.NewErr(redis.ErrKindCluster, redis.ErrClusterConfigEmpty).With("cluster", c),
 		}
 	}
 
@@ -51,7 +51,7 @@ func (s *Scanner) Next(cb func(keys []string, err error)) {
 		conn := s.c.connForAddress(s.addrs[0])
 		s.addrs = s.addrs[1:]
 		if conn == nil {
-			cb(nil, redis.New(redis.ErrKindConnection, redis.ErrNotConnected).
+			cb(nil, redis.NewErr(redis.ErrKindConnection, redis.ErrNotConnected).
 				With("cluster", s.c).With("addr", s.addrs[0]))
 			return
 		}

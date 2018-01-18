@@ -164,14 +164,14 @@ var defMessage = map[int]string{
 	//ErrResult:         "",
 }
 
-func New(kind, code int) *Error {
+func NewErr(kind, code int) *Error {
 	return &Error{
 		Kind: kind,
 		Code: code,
 	}
 }
 
-func NewMsg(kind, code int, msg string) *Error {
+func NewErrMsg(kind, code int, msg string) *Error {
 	return &Error{
 		Kind: kind,
 		Code: code,
@@ -179,7 +179,7 @@ func NewMsg(kind, code int, msg string) *Error {
 	}
 }
 
-func NewWrap(kind, code int, err error) *Error {
+func NewErrWrap(kind, code int, err error) *Error {
 	return &Error{
 		Kind:  kind,
 		Code:  code,

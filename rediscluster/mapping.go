@@ -155,7 +155,7 @@ Loop:
 	}
 	if conn == nil {
 		c.forceReloading()
-		return nil, redis.New(redis.ErrKindConnection, redis.ErrDial).
+		return nil, redis.NewErr(redis.ErrKindConnection, redis.ErrDial).
 			With("cluster", c).With("slot", slot).With("policy", policy)
 	}
 	return conn, nil

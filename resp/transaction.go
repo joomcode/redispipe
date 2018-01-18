@@ -7,7 +7,7 @@ func TransactionResponse(res interface{}, n int) []interface{} {
 		return arr
 	}
 	if res == nil {
-		res = redis.New(redis.ErrKindResult, redis.ErrExecEmpty)
+		res = redis.NewErr(redis.ErrKindResult, redis.ErrExecEmpty)
 	}
 	arr := make([]interface{}, n)
 	for i := range arr {

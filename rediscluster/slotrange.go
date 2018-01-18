@@ -45,7 +45,7 @@ func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 		}
 	}
 	c.report(LogClusterSlotsError)
-	return nil, redis.New(redis.ErrKindCluster, redis.ErrClusterSlots).With("cluster", c)
+	return nil, redis.NewErr(redis.ErrKindCluster, redis.ErrClusterSlots).With("cluster", c)
 }
 
 func ParseSlotsInfo(res interface{}, cl *Cluster) ([]SlotsRange, error) {
@@ -54,7 +54,7 @@ func ParseSlotsInfo(res interface{}, cl *Cluster) ([]SlotsRange, error) {
 	}
 
 	errf := func(f string, args ...interface{}) ([]SlotsRange, error) {
-		return nil, redis.NewMsg(redis.ErrKindResponse, redis.ErrResponseFormat,
+		return nil, redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseFormat,
 			fmt.Sprintf(f, args...)).With("response", res)
 	}
 

@@ -75,7 +75,7 @@ func AppendRequest(buf []byte, req Request) ([]byte, *redis.Error) {
 			buf = appendHead(buf, '$', int64(len(str)))
 			buf = append(buf, str...)
 		default:
-			return nil, redis.NewMsg(redis.ErrKindRequest, redis.ErrArgumentType,
+			return nil, redis.NewErrMsg(redis.ErrKindRequest, redis.ErrArgumentType,
 				"resp.AppendRequest() couldn't handle type").With("val", val).With("request", req)
 		}
 		buf = append(buf, '\r', '\n')

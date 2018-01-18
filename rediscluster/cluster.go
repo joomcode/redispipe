@@ -112,10 +112,10 @@ type node struct {
 
 func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, error) {
 	if ctx == nil {
-		return nil, redis.New(redis.ErrKindOpts, redis.ErrContextIsNil)
+		return nil, redis.NewErr(redis.ErrKindOpts, redis.ErrContextIsNil)
 	}
 	if len(init_addrs) == 0 {
-		return nil, redis.New(redis.ErrKindOpts, redis.ErrNoAddressProvided)
+		return nil, redis.NewErr(redis.ErrKindOpts, redis.ErrNoAddressProvided)
 	}
 	cluster := &Cluster{
 		opts: opts,
@@ -309,7 +309,7 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 	if !ok {
 		c.forceReloading()
 		Go(func() {
-			cb(redis.New(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
+			cb(redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
 		})
 		return
 	}
@@ -422,7 +422,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
 	}
 	slot, ok := batchSlot(reqs)
 	if !ok {
-		err := redis.New(redis.ErrKindRequest, redis.ErrNoSlotKey).
+		err := redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).
 			With("cluster", c).
 			With("requests", reqs)
 		Go(func() { cb(err, off) })
@@ -579,7 +579,7 @@ func (c *Cluster) newConn(addr string) (*redisconn.Connection, error) {
 	node := c.addNode(addr)
 	conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
 	if conn == nil {
-		err := redis.New(redis.ErrKindConnection, redis.ErrDial)
+		err := redis.NewErr(redis.ErrKindConnection, redis.ErrDial)
 		err = err.With("cluster", c).With("addr", addr)
 		return nil, err
 	}

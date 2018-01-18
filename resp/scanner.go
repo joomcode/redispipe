@@ -1,7 +1,7 @@
 package resp
 
 import (
-	re "github.com/joomcode/redispipe/rediserror"
+	"github.com/joomcode/redispipe/redis"
 )
 
 func ScanResponse(res interface{}) ([]byte, []string, error) {
@@ -33,5 +33,5 @@ func ScanResponse(res interface{}) ([]byte, []string, error) {
 	return it, strs, nil
 
 wrong:
-	return nil, nil, re.New(re.ErrKindResponse, re.ErrResponseFormat).With("response", res)
+	return nil, nil, redis.New(redis.ErrKindResponse, redis.ErrResponseFormat).With("response", res)
 }

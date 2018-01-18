@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	re "github.com/joomcode/redispipe/rediserror"
+	"github.com/joomcode/redispipe/redis"
 )
 
 func Error(v interface{}) error {
@@ -15,8 +15,8 @@ func Error(v interface{}) error {
 	return e
 }
 
-func RedisError(v interface{}) *re.Error {
-	e, _ := v.(*re.Error)
+func RedisError(v interface{}) *redis.Error {
+	e, _ := v.(*redis.Error)
 	if e == nil {
 		if _, ok := v.(error); ok {
 			panic(fmt.Errorf("result should be either *rediserror.Error, or not error at all, but got %#v", v))
@@ -28,15 +28,15 @@ func RedisError(v interface{}) *re.Error {
 func Read(b *bufio.Reader) interface{} {
 	line, isPrefix, err := b.ReadLine()
 	if err != nil {
-		return re.NewWrap(re.ErrKindIO, re.ErrIO, err)
+		return redis.NewWrap(redis.ErrKindIO, redis.ErrIO, err)
 	}
 
 	if isPrefix {
-		return re.New(re.ErrKindResponse, re.ErrHeaderlineTooLarge).With("line", line)
+		return redis.New(redis.ErrKindResponse, redis.ErrHeaderlineTooLarge).With("line", line)
 	}
 
 	if len(line) == 0 {
-		return re.New(re.ErrKindResponse, re.ErrHeaderlineEmpty)
+		return redis.New(redis.ErrKindResponse, redis.ErrHeaderlineEmpty)
 	}
 
 	var v int64
@@ -51,24 +51,24 @@ func Read(b *bufio.Reader) interface{} {
 		if moved || ask {
 			parts := bytes.Split(line, []byte(" "))
 			if len(parts) < 3 {
-				return re.New(re.ErrKindResponse, re.ErrResponseFormat).With("line", line)
+				return redis.New(redis.ErrKindResponse, redis.ErrResponseFormat).With("line", line)
 			}
 			slot, err := parseInt(parts[1])
 			if err != nil {
-				return re.New(re.ErrKindResponse, re.ErrResponseFormat).With("line", line)
+				return redis.New(redis.ErrKindResponse, redis.ErrResponseFormat).With("line", line)
 			}
 			if moved {
-				return re.NewMsg(re.ErrKindResult, re.ErrMoved, txt).
+				return redis.NewMsg(redis.ErrKindResult, redis.ErrMoved, txt).
 					With("addr", string(parts[2])).With("slot", slot)
 			} else {
-				return re.NewMsg(re.ErrKindResult, re.ErrAsk, txt).
+				return redis.NewMsg(redis.ErrKindResult, redis.ErrAsk, txt).
 					With("addr", string(parts[2])).With("slot", slot)
 			}
 		}
 		if strings.HasPrefix(txt, "LOADING") {
-			return re.NewMsg(re.ErrKindResult, re.ErrLoading, txt)
+			return redis.NewMsg(redis.ErrKindResult, redis.ErrLoading, txt)
 		}
-		return re.NewMsg(re.ErrKindResult, re.ErrResult, txt)
+		return redis.NewMsg(redis.ErrKindResult, redis.ErrResult, txt)
 	case ':':
 		if v, err = parseInt(line[1:]); err != nil {
 			return err
@@ -84,10 +84,10 @@ func Read(b *bufio.Reader) interface{} {
 		}
 		buf := make([]byte, v+2, v+2)
 		if _, err = io.ReadFull(b, buf); err != nil {
-			return re.NewWrap(re.ErrKindIO, re.ErrIO, err)
+			return redis.NewWrap(redis.ErrKindIO, redis.ErrIO, err)
 		}
 		if buf[v] != '\r' || buf[v+1] != '\n' {
-			return re.New(re.ErrKindResponse, re.ErrNoFinalRN)
+			return redis.New(redis.ErrKindResponse, redis.ErrNoFinalRN)
 		}
 		return buf[:v:v]
 	case '*':
@@ -100,13 +100,13 @@ func Read(b *bufio.Reader) interface{} {
 		result := make([]interface{}, v, v)
 		for i := int64(0); i < v; i++ {
 			result[i] = Read(b)
-			if e, ok := result[i].(*re.Error); ok && e.Kind == re.ErrKindIO {
+			if e, ok := result[i].(*redis.Error); ok && e.Kind == redis.ErrKindIO {
 				return e
 			}
 		}
 		return result
 	default:
-		return re.New(re.ErrKindResponse, re.ErrUnknownHeaderType)
+		return redis.New(redis.ErrKindResponse, redis.ErrUnknownHeaderType)
 	}
 }
 
@@ -118,7 +118,7 @@ func parseInt(buf []byte) (int64, error) {
 	v := int64(0)
 	for _, b := range buf {
 		if b < '0' || b > '9' {
-			return 0, re.New(re.ErrKindResponse, re.ErrIntegerParsing)
+			return 0, redis.New(redis.ErrKindResponse, redis.ErrIntegerParsing)
 		}
 		v *= 10
 		v += int64(b - '0')

@@ -1,13 +1,13 @@
 package resp
 
-import re "github.com/joomcode/redispipe/rediserror"
+import "github.com/joomcode/redispipe/redis"
 
 func TransactionResponse(res interface{}, n int) []interface{} {
 	if arr, ok := res.([]interface{}); ok {
 		return arr
 	}
 	if res == nil {
-		res = re.New(re.ErrKindResult, re.ErrExecEmpty)
+		res = redis.New(redis.ErrKindResult, redis.ErrExecEmpty)
 	}
 	arr := make([]interface{}, n)
 	for i := range arr {

@@ -9,8 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	. "github.com/joomcode/redispipe/internal"
+	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
-	re "github.com/joomcode/redispipe/rediserror"
 	"github.com/joomcode/redispipe/resp"
 )
 
@@ -111,10 +112,10 @@ type node struct {
 
 func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, error) {
 	if ctx == nil {
-		return nil, re.New(re.ErrKindOpts, re.ErrContextIsNil)
+		return nil, redis.New(redis.ErrKindOpts, redis.ErrContextIsNil)
 	}
 	if len(init_addrs) == 0 {
-		return nil, re.New(re.ErrKindOpts, re.ErrNoAddressProvided)
+		return nil, redis.New(redis.ErrKindOpts, redis.ErrNoAddressProvided)
 	}
 	cluster := &Cluster{
 		opts: opts,
@@ -307,8 +308,8 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 	slot, ok := reqSlot(req)
 	if !ok {
 		c.forceReloading()
-		re.Do(func() {
-			cb(re.New(re.ErrKindRequest, re.ErrNoSlotKey).With("request", req), off)
+		Go(func() {
+			cb(redis.New(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
 		})
 		return
 	}
@@ -317,7 +318,7 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 
 	conn, err := c.connForSlot(slot, policy)
 	if err != nil {
-		re.Do(func() { cb(err, off) })
+		Go(func() { cb(err, off) })
 		return
 	}
 
@@ -362,14 +363,14 @@ func (r *request) set(res interface{}, _ uint64) {
 	err = err.With("cluster", r.c)
 
 	switch err.Kind {
-	case re.ErrKindIO:
+	case redis.ErrKindIO:
 		if r.policy == MasterOnly {
 			// It is not safe to retry read-write operation
 			r.cb(res, r.off)
 			return
 		}
 		fallthrough
-	case re.ErrKindConnection, re.ErrKindContext:
+	case redis.ErrKindConnection, redis.ErrKindContext:
 		r.c.forceReloading()
 		// It is safe to retry readonly requests, and if request were
 		// not sent at all.
@@ -386,26 +387,26 @@ func (r *request) set(res interface{}, _ uint64) {
 		} else {
 			conn.Send(r.req, r.set, 0)
 		}
-	case re.ErrKindResult:
-		if err.Code == re.ErrMoved || err.Code == re.ErrLoading {
+	case redis.ErrKindResult:
+		if err.Code == redis.ErrMoved || err.Code == redis.ErrLoading {
 			r.c.forceReloading()
 		}
-		if (err.Code == re.ErrMoved || err.Code == re.ErrAsk) && int(r.try) < r.c.opts.MovedRetries {
+		if (err.Code == redis.ErrMoved || err.Code == redis.ErrAsk) && int(r.try) < r.c.opts.MovedRetries {
 			r.try++
 			r.lastErrIsHard = false
 			addr := err.Data.Get("addr").(string)
 			conn := r.c.connForAddress(addr)
 			if conn != nil {
-				conn.SendAsk(r.req, r.set, 0, err.Code == re.ErrAsk)
+				conn.SendAsk(r.req, r.set, 0, err.Code == redis.ErrAsk)
 				return
 			}
-			re.Do(func() {
+			Go(func() {
 				conn, cerr := r.c.newConn(addr)
 				if cerr != nil {
 					r.cb(cerr, r.off)
 					return
 				}
-				conn.SendAsk(r.req, r.set, 0, err.Code == re.ErrAsk)
+				conn.SendAsk(r.req, r.set, 0, err.Code == redis.ErrAsk)
 			})
 			return
 		}
@@ -421,10 +422,10 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
 	}
 	slot, ok := batchSlot(reqs)
 	if !ok {
-		err := re.New(re.ErrKindRequest, re.ErrNoSlotKey).
+		err := redis.New(redis.ErrKindRequest, redis.ErrNoSlotKey).
 			With("cluster", c).
 			With("requests", reqs)
-		re.Do(func() { cb(err, off) })
+		Go(func() { cb(err, off) })
 		return
 	}
 
@@ -432,7 +433,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
 
 	if err != nil {
 		// ? no known alive connection for slot
-		re.Do(func() { cb(err, off) })
+		Go(func() { cb(err, off) })
 		return
 	}
 
@@ -485,12 +486,12 @@ func (t *transaction) set(res interface{}, n uint64) {
 	err = err.With("cluster", t.c)
 
 	switch err.Kind {
-	case re.ErrKindIO:
+	case redis.ErrKindIO:
 		// redis treats all transactions as read-write, and it is not safe
 		// to retry
 		t.cb(execres, t.off)
 		return
-	case re.ErrKindConnection, re.ErrKindContext:
+	case redis.ErrKindConnection, redis.ErrKindContext:
 		t.c.forceReloading()
 		if t.lastErrIsHard {
 			t.cb(execres, t.off)
@@ -504,12 +505,12 @@ func (t *transaction) set(res interface{}, n uint64) {
 		} else {
 			t.send(conn, false)
 		}
-	case re.ErrKindResult:
+	case redis.ErrKindResult:
 		var moved string
 		allmoved := true
 		moving := false
 		asking := false
-		if err.Code == re.ErrMoved {
+		if err.Code == redis.ErrMoved {
 			// we occasionally sent transaction to slave
 			moved = err.Data.Get("addr").(string)
 			moving = true
@@ -518,14 +519,14 @@ func (t *transaction) set(res interface{}, n uint64) {
 			responses := t.r[1 : len(t.r)-1]
 			for _, r := range responses {
 				err := resp.RedisError(r)
-				if err == nil || err.Code != re.ErrMoved || err.Code != re.ErrAsk {
+				if err == nil || err.Code != redis.ErrMoved || err.Code != redis.ErrAsk {
 					allmoved = false
 					break
 				}
 				moved = err.Data.Get("addr").(string)
-				if err.Code == re.ErrMoved {
+				if err.Code == redis.ErrMoved {
 					moving = true
-				} else if err.Code == re.ErrAsk {
+				} else if err.Code == redis.ErrAsk {
 					asking = true
 				}
 			}
@@ -563,7 +564,7 @@ func (t *transaction) sendMoved(addr string, asking bool) {
 		t.send(conn, asking)
 		return
 	}
-	re.Do(func() {
+	Go(func() {
 		conn, cerr := t.c.newConn(addr)
 		if cerr != nil {
 			t.cb(cerr, t.off)
@@ -578,7 +579,7 @@ func (c *Cluster) newConn(addr string) (*redisconn.Connection, error) {
 	node := c.addNode(addr)
 	conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
 	if conn == nil {
-		err := re.New(re.ErrKindConnection, re.ErrDial)
+		err := redis.New(redis.ErrKindConnection, redis.ErrDial)
 		err = err.With("cluster", c).With("addr", addr)
 		return nil, err
 	}

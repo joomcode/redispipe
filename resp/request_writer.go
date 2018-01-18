@@ -3,7 +3,7 @@ package resp
 import (
 	"strconv"
 
-	re "github.com/joomcode/redispipe/rediserror"
+	"github.com/joomcode/redispipe/redis"
 )
 
 type Request struct {
@@ -11,7 +11,7 @@ type Request struct {
 	Args []interface{}
 }
 
-func AppendRequest(buf []byte, req Request) ([]byte, *re.Error) {
+func AppendRequest(buf []byte, req Request) ([]byte, *redis.Error) {
 	space := -1
 	for i, c := range []byte(req.Cmd) {
 		if c == ' ' {
@@ -75,7 +75,7 @@ func AppendRequest(buf []byte, req Request) ([]byte, *re.Error) {
 			buf = appendHead(buf, '$', int64(len(str)))
 			buf = append(buf, str...)
 		default:
-			return nil, re.NewMsg(re.ErrKindRequest, re.ErrArgumentType,
+			return nil, redis.NewMsg(redis.ErrKindRequest, redis.ErrArgumentType,
 				"resp.AppendRequest() couldn't handle type").With("val", val).With("request", req)
 		}
 		buf = append(buf, '\r', '\n')

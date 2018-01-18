@@ -4,8 +4,8 @@ import (
 	"runtime"
 	"sync/atomic"
 
+	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
-	re "github.com/joomcode/redispipe/rediserror"
 )
 
 func (c *Cluster) getNodeMap() nodeMap {
@@ -155,7 +155,7 @@ Loop:
 	}
 	if conn == nil {
 		c.forceReloading()
-		return nil, re.New(re.ErrKindConnection, re.ErrDial).
+		return nil, redis.New(redis.ErrKindConnection, redis.ErrDial).
 			With("cluster", c).With("slot", slot).With("policy", policy)
 	}
 	return conn, nil

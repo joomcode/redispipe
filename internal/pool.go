@@ -1,4 +1,4 @@
-package rediserror
+package internal
 
 import "sync/atomic"
 
@@ -24,7 +24,7 @@ func worker(ch chan func()) {
 	}
 }
 
-func Do(f func()) {
+func Go(f func()) {
 	i := atomic.AddUint32(&shardn, 1)
 	select {
 	case chans[i%shardN] <- f:

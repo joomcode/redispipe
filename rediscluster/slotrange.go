@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
-	re "github.com/joomcode/redispipe/rediserror"
 	"github.com/joomcode/redispipe/resp"
 )
 
@@ -45,7 +45,7 @@ func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 		}
 	}
 	c.report(LogClusterSlotsError)
-	return nil, re.New(re.ErrKindCluster, re.ErrClusterSlots).With("cluster", c)
+	return nil, redis.New(redis.ErrKindCluster, redis.ErrClusterSlots).With("cluster", c)
 }
 
 func ParseSlotsInfo(res interface{}, cl *Cluster) ([]SlotsRange, error) {
@@ -54,7 +54,7 @@ func ParseSlotsInfo(res interface{}, cl *Cluster) ([]SlotsRange, error) {
 	}
 
 	errf := func(f string, args ...interface{}) ([]SlotsRange, error) {
-		return nil, re.NewMsg(re.ErrKindResponse, re.ErrResponseFormat,
+		return nil, redis.NewMsg(redis.ErrKindResponse, redis.ErrResponseFormat,
 			fmt.Sprintf(f, args...)).With("response", res)
 	}
 

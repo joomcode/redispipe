@@ -370,6 +370,12 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 		return
 	default:
 	}
+	// or if request is not active already
+	if !r.cb.Active() {
+		r.cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestIsNotActive), r.off)
+		return
+	}
+
 	err = err.With("cluster", r.c)
 
 	switch err.Kind {
@@ -483,12 +489,17 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 	}
 
 	execres := t.r[len(t.reqs)-1]
-
+	// do not retry if cluster is closed
 	select {
 	case <-t.c.ctx.Done():
 		t.cb.Resolve(execres, t.off)
 		return
 	default:
+	}
+	// or if request is not active already
+	if !t.cb.Active() {
+		t.cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestIsNotActive), t.off)
+		return
 	}
 
 	err := redis.AsRedisError(execres)

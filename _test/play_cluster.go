@@ -56,16 +56,19 @@ func main() {
 	addrs := []string{"127.0.0.1:30001", "127.0.0.1:30002"}
 	cluster, err := rediscluster.NewCluster(ctx, addrs, clustopts)
 	check(err)
-	synccluster := redis.Sync{cluster.WithPolicy(rediscluster.PreferReplica)}
+
+	//synccluster := redis.Sync{cluster.WithPolicy(rediscluster.PreferReplica)}
+	synccluster := redis.SyncCtx{cluster.WithPolicy(rediscluster.PreferReplica)}
+	reqctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 
 	N, K := 800, 80000
 	start := time.Now()
 	var wg sync.WaitGroup
 	wg.Add(N)
 	for i := 0; i < N; i++ {
-		go func() {
+		go func(i int) {
 			for j := 0; j < K; j++ {
-				res := synccluster.Do("GET", i*K+j)
+				res := synccluster.Do(reqctx, "GET", i*K+j)
 				if err := redis.AsError(res); err != nil {
 					if rand.Intn(30000) == 0 {
 						log.Println(err, i, j)
@@ -80,7 +83,7 @@ func main() {
 				//}
 			}
 			wg.Done()
-		}()
+		}(i)
 	}
 	wg.Wait()
 	fmt.Printf("%d*%d: %s\n", N, K, time.Now().Sub(start))

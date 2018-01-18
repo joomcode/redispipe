@@ -1,12 +1,9 @@
 package redisconn
 
-import (
-	"github.com/joomcode/redispipe/rediswrap"
-	"github.com/joomcode/redispipe/resp"
-)
+import "github.com/joomcode/redispipe/redis"
 
-type Request = resp.Request
-type Callback = rediswrap.Callback
+type Request = redis.Request
+type Callback = redis.Callback
 
 type future struct {
 	Callback

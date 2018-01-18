@@ -6,11 +6,9 @@ import (
 )
 
 type Error struct {
-	Kind  int
-	Code  int
-	Text  string
-	Cause error
-	Data  *KV
+	Kind uint32
+	Code uint32
+	*kv
 }
 
 const (
@@ -69,6 +67,9 @@ const (
 	// Response is not valid Redis response
 	// (ErrKindResponse)
 	ErrResponseFormat
+	// Response is valid redis response, but its structure/type unexpected
+	// (ErrKindResponse)
+	ErrResponseUnexpected
 	// Header line too large
 	// (ErrKindResponse)
 	ErrHeaderlineTooLarge
@@ -113,12 +114,13 @@ const (
 	ErrClusterConfigEmpty
 )
 
-var typeName = map[int]string{
+var typeName = map[uint32]string{
 	ErrContextIsNil:   "ErrContextIsNil",
 	ErrContextClosed:  "ErrContextClosed",
 	ErrNotConnected:   "ErrNotConnected",
 	ErrDial:           "ErrDial",
 	ErrAuth:           "ErrAuth",
+	ErrConnSetup:      "ErrConnSetup",
 	ErrIO:             "ErrIO",
 	ErrArgumentType:   "ErrArgumentType",
 	ErrBatchFormat:    "ErrBatchFormat",
@@ -132,19 +134,23 @@ var typeName = map[int]string{
 	ErrClusterSlots:   "ErrClusterSlots",
 	ErrExecEmpty:      "ErrExecEmpty",
 
+	ErrClusterConfigEmpty: "ErrClusterConfigEmpty",
+	ErrResponseUnexpected: "ErrResponseUnexpected",
 	ErrHeaderlineTooLarge: "ErrHeaderlineTooLarge",
+	ErrHeaderlineEmpty:    "ErrHeaderlineEmpty",
 	ErrIntegerParsing:     "ErrIntegerParsing",
 	ErrNoFinalRN:          "ErrNoFinalRN",
 	ErrUnknownHeaderType:  "ErrUnknownHeaderType",
 }
 
-var defMessage = map[int]string{
+var defMessage = map[uint32]string{
 	ErrContextIsNil:   "context is not set",
 	ErrContextClosed:  "context is closed",
 	ErrNotConnected:   "connection is not established",
 	ErrDial:           "could not connect",
 	ErrAuth:           "auth is not successful",
 	ErrIO:             "io error",
+	ErrConnSetup:      "connection setup unsuccessful",
 	ErrArgumentType:   "command argument type not supported",
 	ErrBatchFormat:    "one of batch command is malformed",
 	ErrResponseFormat: "redis response is malformed",
@@ -156,7 +162,10 @@ var defMessage = map[int]string{
 	ErrClusterSlots:   "could not retrieve slots from redis",
 	ErrExecEmpty:      "exec failed because of WATCH???",
 
+	ErrClusterConfigEmpty: "cluster configuration is empty",
+	ErrResponseUnexpected: "redis response is unexpected",
 	ErrHeaderlineTooLarge: "headerline too large",
+	ErrHeaderlineEmpty:    "headerline is empty",
 	ErrIntegerParsing:     "integer is not integer",
 	ErrNoFinalRN:          "no final \r\n in response",
 	ErrUnknownHeaderType:  "header type is not known",
@@ -164,33 +173,30 @@ var defMessage = map[int]string{
 	//ErrResult:         "",
 }
 
-func NewErr(kind, code int) *Error {
-	return &Error{
-		Kind: kind,
-		Code: code,
-	}
+func NewErr(kind, code uint32) *Error {
+	return &Error{Kind: kind, Code: code}
 }
 
-func NewErrMsg(kind, code int, msg string) *Error {
-	return &Error{
-		Kind: kind,
-		Code: code,
-		Text: msg,
-	}
+func NewErrMsg(kind, code uint32, msg string) *Error {
+	return Error{Kind: kind, Code: code}.With("message", msg)
 }
 
-func NewErrWrap(kind, code int, err error) *Error {
-	return &Error{
-		Kind:  kind,
-		Code:  code,
-		Cause: err,
-	}
+func NewErrWrap(kind, code uint32, err error) *Error {
+	return Error{Kind: kind, Code: code}.With("cause", err)
+}
+
+func (copy Error) WithMsg(msg string) *Error {
+	return copy.With("message", msg)
+}
+
+func (copy Error) Wrap(err error) *Error {
+	return copy.With("cause", err)
 }
 
 func (copy Error) With(name string, value interface{}) *Error {
 	// This could be called from many places concurrently, so need to
 	// copy error
-	copy.Data = &KV{Name: name, Value: value, Next: copy.Data}
+	copy.kv = &kv{name: name, value: value, next: copy.kv}
 	return &copy
 }
 
@@ -203,9 +209,21 @@ func (e Error) Error() string {
 	if typ == "" {
 		typ = fmt.Sprintf("ErrUnknown%d", e.Code)
 	}
-	msg := e.Text
-	if msg == "" && e.Cause != nil {
-		msg = e.Cause.Error()
+	msg := e.Msg()
+	rest := e.restAsString()
+	if rest != "" {
+		return fmt.Sprintf("%s (%s %s)", msg, typ, rest)
+	} else {
+		return fmt.Sprintf("%s (%s)", msg, typ)
+	}
+}
+
+func (e Error) Msg() string {
+	msg, _ := e.Get("message").(string)
+	if msg == "" {
+		if err := e.Cause(); err != nil {
+			msg = err.Error()
+		}
 	}
 	if msg == "" {
 		msg = defMessage[e.Code]
@@ -213,47 +231,59 @@ func (e Error) Error() string {
 			msg = "generic "
 		}
 	}
-	if e.Data != nil {
-		return fmt.Sprintf("%s (%s %s)", msg, typ, e.Data)
-	} else {
-		return fmt.Sprintf("%s (%s)", msg, typ)
-	}
+	return msg
 }
 
-type KV struct {
-	Name  string
-	Value interface{}
-	Next  *KV
+func (e Error) Cause() error {
+	if ierr := e.Get("cause"); ierr != nil {
+		if err, ok := ierr.(error); ok {
+			return err
+		}
+	}
+	return nil
 }
 
-func (kv *KV) Get(name string) interface{} {
-	if kv == nil {
-		return nil
-	}
-	if kv.Name == name {
-		return kv.Value
-	}
-	return kv.Next.Get(name)
-}
-
-func (kv *KV) ToMap() map[string]interface{} {
-	var kvs []*KV
+func (e Error) restAsString() string {
+	parts := []string{}
+	kv := e.kv
 	for kv != nil {
-		kvs = append(kvs, kv)
-		kv = kv.Next
+		if kv.name != "message" && kv.name != "cause" {
+			parts = append(parts, fmt.Sprintf("%s: %v", kv.name, kv.value))
+		}
+		kv = kv.next
 	}
-	res := make(map[string]interface{}, len(kvs))
-	for i := len(kvs) - 1; i >= 0; i-- {
-		res[kvs[i].Name] = kvs[i].Value
+	if len(parts) > 0 {
+		return "{" + strings.Join(parts, ", ") + "}"
+	} else {
+		return ""
+	}
+}
+
+func (e Error) ToMap() map[string]interface{} {
+	res := map[string]interface{}{
+		"kind": e.Kind,
+		"code": e.Code,
+	}
+	kv := e.kv
+	for kv != nil {
+		res[kv.name] = kv.value
+		kv = kv.next
 	}
 	return res
 }
 
-func (kv *KV) String() string {
-	parts := []string{}
+type kv struct {
+	name  string
+	value interface{}
+	next  *kv
+}
+
+func (kv *kv) Get(name string) interface{} {
 	for kv != nil {
-		parts = append(parts, fmt.Sprintf("%s: %v", kv.Name, kv.Value))
-		kv = kv.Next
+		if kv.name == name {
+			return kv.value
+		}
+		kv = kv.next
 	}
-	return "{" + strings.Join(parts, ", ") + "}"
+	return nil
 }

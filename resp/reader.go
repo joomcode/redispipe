@@ -3,27 +3,11 @@ package resp
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"io"
 	"strings"
 
 	"github.com/joomcode/redispipe/redis"
 )
-
-func Error(v interface{}) error {
-	e, _ := v.(error)
-	return e
-}
-
-func RedisError(v interface{}) *redis.Error {
-	e, _ := v.(*redis.Error)
-	if e == nil {
-		if _, ok := v.(error); ok {
-			panic(fmt.Errorf("result should be either *rediserror.Error, or not error at all, but got %#v", v))
-		}
-	}
-	return e
-}
 
 func Read(b *bufio.Reader) interface{} {
 	line, isPrefix, err := b.ReadLine()
@@ -59,10 +43,10 @@ func Read(b *bufio.Reader) interface{} {
 			}
 			if moved {
 				return redis.NewErrMsg(redis.ErrKindResult, redis.ErrMoved, txt).
-					With("addr", string(parts[2])).With("slot", slot)
+					With("movedto", string(parts[2])).With("slot", slot)
 			} else {
 				return redis.NewErrMsg(redis.ErrKindResult, redis.ErrAsk, txt).
-					With("addr", string(parts[2])).With("slot", slot)
+					With("movedto", string(parts[2])).With("slot", slot)
 			}
 		}
 		if strings.HasPrefix(txt, "LOADING") {

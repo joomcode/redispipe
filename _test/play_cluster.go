@@ -12,13 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/rediscluster"
 	"github.com/joomcode/redispipe/redisconn"
-	"github.com/joomcode/redispipe/rediswrap"
-	"github.com/joomcode/redispipe/resp"
 )
 
-type Req = rediswrap.Request
+type Req = redis.Request
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile `file`")
 var memprofile = flag.String("memprofile", "", "write memory profile to `file`")
@@ -57,7 +56,7 @@ func main() {
 	addrs := []string{"127.0.0.1:30001", "127.0.0.1:30002"}
 	cluster, err := rediscluster.NewCluster(ctx, addrs, clustopts)
 	check(err)
-	synccluster := rediswrap.Sync{cluster.WithPolicy(rediscluster.PreferReplica)}
+	synccluster := redis.Sync{cluster.WithPolicy(rediscluster.PreferReplica)}
 
 	N, K := 800, 80000
 	start := time.Now()
@@ -67,7 +66,7 @@ func main() {
 		go func() {
 			for j := 0; j < K; j++ {
 				res := synccluster.Send(Req{"GET", []interface{}{i*K + j}})
-				if err := resp.Error(res); err != nil {
+				if err := redis.AsError(res); err != nil {
 					if rand.Intn(30000) == 0 {
 						log.Println(err, i, j)
 					}

@@ -222,11 +222,11 @@ func (conn *Connection) Ping() error {
 	}, 0)
 	wg.Wait()
 
-	if err := resp.Error(res); err != nil {
+	if err := redis.AsError(res); err != nil {
 		return err
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
-		return redis.NewErr(redis.ErrKindResponse, redis.ErrPing).With("conn", conn).With("response", res)
+		return conn.err(redis.ErrKindResponse, redis.ErrPing).With("response", res)
 	}
 	return nil
 }
@@ -247,7 +247,7 @@ func (conn *Connection) SendAsk(req Request, cb Callback, n uint64, asking bool)
 		cb = dumb
 	}
 	if err := conn.doSend(req, cb, n, asking); err != nil {
-		Go(func() { cb(err.With("conn", conn), n) })
+		Go(func() { cb(err.With("connection", conn), n) })
 	}
 }
 
@@ -266,7 +266,7 @@ func (conn *Connection) doSend(req Request, cb Callback, n uint64, asking bool) 
 	futures := shard.futures
 	var err *redis.Error
 	if asking {
-		buf, _ = resp.AppendRequest(buf, Request{"ASKING", nil})
+		buf = append(buf, askingReq...)
 		futures = append(futures, future{dumb, 0})
 	}
 	if buf, err = resp.AppendRequest(buf, req); err != nil {
@@ -297,10 +297,10 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start ui
 	var err *redis.Error
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		err = redis.NewErrWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err()).With("conn", conn)
+		err = conn.err(redis.ErrKindContext, redis.ErrContextClosed).Wrap(conn.ctx.Err())
 		return
 	case connDisconnected:
-		err = redis.NewErr(redis.ErrKindConnection, redis.ErrNotConnected).With("conn", conn)
+		err = conn.err(redis.ErrKindConnection, redis.ErrNotConnected)
 		return
 	}
 	n := len(requests)
@@ -315,11 +315,11 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start ui
 	buf := shard.buf
 	futures := shard.futures
 	if flags&DoAsking != 0 {
-		buf = append(buf, resp.AskingReq...)
+		buf = append(buf, askingReq...)
 		futures = append(futures, future{dumb, 0})
 	}
 	if flags&DoTransaction != 0 {
-		buf = append(buf, resp.MultiReq...)
+		buf = append(buf, multiReq...)
 		futures = append(futures, future{dumb, 0})
 	}
 	for i, req := range requests {
@@ -327,10 +327,10 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start ui
 		if err != nil {
 			Go(func() {
 				var common_err error
-				err = err.With("conn", conn).With("request", requests[i])
-				common_err = redis.NewErrWrap(redis.ErrKindRequest, redis.ErrBatchFormat, err).
+				err = err.With("connection", conn).With("request", requests[i])
+				common_err = conn.err(redis.ErrKindRequest, redis.ErrBatchFormat).
+					Wrap(err).
 					With("requests", requests).
-					With("conn", conn).
 					With("request", requests[i])
 				for j := 0; j < n; j++ {
 					if j == i {
@@ -345,7 +345,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start ui
 		futures = append(futures, future{cb, start + uint64(i)})
 	}
 	if flags&DoTransaction != 0 {
-		buf = append(buf, resp.ExecReq...)
+		buf = append(buf, execReq...)
 		futures = append(futures, future{cb, start + uint64(len(requests))})
 	}
 
@@ -425,11 +425,11 @@ func (conn *Connection) dial() error {
 
 	var req []byte
 	if conn.opts.Password != "" {
-		req = append(req, resp.AuthReq...)
+		req = append(req, authReq...)
 	}
-	req = append(req, resp.PingReq...)
+	req = append(req, pingReq...)
 	if conn.opts.DB != 0 {
-		req = append(req, resp.SelectReq...)
+		req = append(req, selectReq...)
 	}
 	if _, err = dc.Write(req); err != nil {
 		connection.Close()
@@ -439,36 +439,37 @@ func (conn *Connection) dial() error {
 	// Password response
 	if conn.opts.Password != "" {
 		res = resp.Read(r)
-		if err := resp.RedisError(res); err != nil {
+		if err := redis.AsRedisError(res); err != nil {
 			connection.Close()
 			if strings.Contains(err.Error(), "password") {
-				return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrAuth, err).With("conn", conn)
+				return conn.err(redis.ErrKindConnection, redis.ErrAuth).Wrap(err)
 			}
-			return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err).With("conn", conn)
+			return conn.err(redis.ErrKindConnection, redis.ErrConnSetup).Wrap(err)
 		}
 	}
 	// PING Response
 	res = resp.Read(r)
-	if err = resp.Error(res); err != nil {
+	if err = redis.AsError(res); err != nil {
 		connection.Close()
 		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err)
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
 		connection.Close()
-		return redis.NewErrMsg(redis.ErrKindConnection, redis.ErrConnSetup, "ping response mismatch").
-			With("conn", conn).With("response", res)
+		return conn.err(redis.ErrKindConnection, redis.ErrConnSetup).
+			WithMsg("ping response mismatch").
+			With("response", res)
 	}
 	// SELECT DB Response
 	if conn.opts.DB != 0 {
 		res = resp.Read(r)
-		if err = resp.Error(res); err != nil {
+		if err = redis.AsError(res); err != nil {
 			connection.Close()
-			return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err).With("conn", conn)
+			return conn.err(redis.ErrKindConnection, redis.ErrConnSetup).Wrap(err)
 		}
 		if str, ok := res.(string); !ok || str != "OK" {
 			connection.Close()
-			return redis.NewErrMsg(redis.ErrKindConnection, redis.ErrConnSetup, "SELECT db response mismatch").
-				With("conn", conn).
+			return conn.err(redis.ErrKindConnection, redis.ErrConnSetup).
+				WithMsg("SELECT db response mismatch").
 				With("db", conn.opts.DB).With("response", res)
 		}
 	}
@@ -584,8 +585,8 @@ func (conn *Connection) control() {
 		case <-conn.ctx.Done():
 			conn.mutex.Lock()
 			defer conn.mutex.Unlock()
-			conn.closeErr = redis.NewErrWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err()).
-				With("conn", conn)
+			conn.closeErr = conn.err(redis.ErrKindContext, redis.ErrContextClosed).
+				Wrap(conn.ctx.Err())
 			conn.closeConnection(conn.closeErr, true)
 			return
 		case <-t.C:
@@ -606,8 +607,7 @@ func (one *oneconn) setErr(neterr error, conn *Connection) {
 		if !ok {
 			rerr = redis.NewErrWrap(redis.ErrKindIO, redis.ErrIO, neterr)
 		}
-		rerr = rerr.With("conn", conn)
-		one.err = rerr
+		one.err = rerr.With("connection", conn)
 	})
 	go conn.reconnect(neterr, one)
 }
@@ -713,7 +713,7 @@ Outter:
 		for i, fut := range futures {
 			res = resp.Read(r)
 			futures[i].Callback = nil
-			if rerr := resp.RedisError(res); rerr.HardError() {
+			if rerr := redis.AsRedisError(res); rerr.HardError() {
 				one.setErr(rerr, conn)
 				fut.Call(one.err)
 				break Outter
@@ -730,4 +730,8 @@ Outter:
 			fut.Call(one.err)
 		}
 	}
+}
+
+func (conn *Connection) err(kind uint32, code uint32) *redis.Error {
+	return redis.NewErr(kind, code).With("connection", conn)
 }

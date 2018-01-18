@@ -11,7 +11,6 @@ import (
 
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
-	"github.com/joomcode/redispipe/resp"
 )
 
 type SlotsRange struct {
@@ -37,7 +36,9 @@ func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 	for _, node := range nodes {
 		for _, conn := range node.conns {
 			res := syncSend(conn, Request{"CLUSTER SLOTS", nil})
-			slotsres, err := ParseSlotsInfo(res, c)
+			slotsres, err := ParseSlotsInfo(res, func(r *redis.Error) *redis.Error {
+				return r.With("cluster", c).With("connection", conn)
+			})
 			if err == nil {
 				return slotsres, nil
 			}
@@ -45,17 +46,22 @@ func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 		}
 	}
 	c.report(LogClusterSlotsError)
-	return nil, redis.NewErr(redis.ErrKindCluster, redis.ErrClusterSlots).With("cluster", c)
+	return nil, c.err(redis.ErrKindCluster, redis.ErrClusterSlots)
 }
 
-func ParseSlotsInfo(res interface{}, cl *Cluster) ([]SlotsRange, error) {
-	if err := resp.Error(res); err != nil {
+func ParseSlotsInfo(res interface{}, with func(*redis.Error) *redis.Error) ([]SlotsRange, error) {
+	if with == nil {
+		with = func(r *redis.Error) *redis.Error { return r }
+	}
+	if err := redis.AsError(res); err != nil {
 		return nil, err
 	}
 
 	errf := func(f string, args ...interface{}) ([]SlotsRange, error) {
-		return nil, redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseFormat,
-			fmt.Sprintf(f, args...)).With("response", res)
+		msg := fmt.Sprintf(f, args...)
+		err := redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseUnexpected, msg)
+		err = with(err)
+		return nil, err
 	}
 
 	var rawranges []interface{}
@@ -197,7 +203,6 @@ func (c *Cluster) updateMappings(ranges []SlotsRange) {
 	c.nodeMap.Store(tmpNodes)
 	c.shardMap.Store(tmpShards)
 	c.masterMap.Store(newMasters)
-	fmt.Println("store masters", newMasters)
 
 	go c.setConnRoles(newShards)
 
@@ -247,7 +252,7 @@ func (c *Cluster) updateMappings(ranges []SlotsRange) {
 
 func (s *shard) setReplicaInfo(res interface{}, n uint64) {
 	haserr := false
-	if err := resp.Error(res); err != nil {
+	if err := redis.AsError(res); err != nil {
 		haserr = true
 	} else if n&1 == 0 {
 		str, ok := res.(string)

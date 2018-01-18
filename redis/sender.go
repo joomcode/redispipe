@@ -1,12 +1,8 @@
-package rediswrap
+package redis
 
 import (
 	"errors"
-
-	"github.com/joomcode/redispipe/resp"
 )
-
-type Request = resp.Request
 
 type Callback func(res interface{}, n uint64)
 

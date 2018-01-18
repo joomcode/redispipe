@@ -1,32 +1,28 @@
 package rediscluster
 
 import (
-	"fmt"
-
 	"github.com/joomcode/redispipe/redis"
-	"github.com/joomcode/redispipe/rediswrap"
 )
 
 type Scanner struct {
-	rediswrap.ScanOpts
+	redis.ScanOpts
 
 	err   error
 	c     *Cluster
-	s     rediswrap.Scanner
+	s     redis.Scanner
 	addrs []string
 	cb    func([]string, error)
 }
 
-func (c *Cluster) Scanner(opts rediswrap.ScanOpts) rediswrap.Scanner {
+func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
 	masters := c.getMasterMap()
 	addrs := make([]string, 0, len(masters))
 	for addr := range masters {
 		addrs = append(addrs, addr)
 	}
-	fmt.Println("addrs", addrs)
 	if len(addrs) == 0 {
 		return &Scanner{
-			err: redis.NewErr(redis.ErrKindCluster, redis.ErrClusterConfigEmpty).With("cluster", c),
+			err: c.err(redis.ErrKindCluster, redis.ErrClusterConfigEmpty),
 		}
 	}
 
@@ -44,15 +40,15 @@ func (s *Scanner) Next(cb func(keys []string, err error)) {
 		return
 	}
 	if len(s.addrs) == 0 && s.s == nil {
-		cb(nil, rediswrap.ScanEOF)
+		cb(nil, redis.ScanEOF)
 		return
 	}
 	if s.s == nil {
 		conn := s.c.connForAddress(s.addrs[0])
 		s.addrs = s.addrs[1:]
 		if conn == nil {
-			cb(nil, redis.NewErr(redis.ErrKindConnection, redis.ErrNotConnected).
-				With("cluster", s.c).With("addr", s.addrs[0]))
+			cb(nil, s.c.err(redis.ErrKindConnection, redis.ErrNotConnected).
+				With("address", s.addrs[0]))
 			return
 		}
 		s.s = conn.Scanner(s.ScanOpts)
@@ -64,12 +60,14 @@ func (s *Scanner) Next(cb func(keys []string, err error)) {
 func (s *Scanner) set(keys []string, err error) {
 	cb := s.cb
 	s.cb = nil
-	if err != nil && err != rediswrap.ScanEOF {
+	if err != nil && err != redis.ScanEOF {
+		s.err = err
 		cb(keys, err)
 	} else if keys == nil {
 		s.s = nil
 		s.Next(cb)
 	} else {
+		s.err = err
 		cb(keys, err)
 	}
 }

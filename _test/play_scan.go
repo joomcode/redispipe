@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/rediscluster"
 	"github.com/joomcode/redispipe/redisconn"
-	"github.com/joomcode/redispipe/rediswrap"
 )
 
 func main() {
@@ -23,9 +23,9 @@ func main() {
 	}
 	conn, err := redisconn.Connect(ctx, "localhost:6379", connopts)
 	check(err)
-	syncconn := rediswrap.Sync{conn}
+	syncconn := redis.Sync{conn}
 
-	scan(syncconn.Scanner(rediswrap.ScanOpts{Match: "x*", Count: 100}))
+	scan(syncconn.Scanner(redis.ScanOpts{Match: "x*", Count: 100}))
 
 	// cluster
 
@@ -40,12 +40,12 @@ func main() {
 	addrs := []string{"127.0.0.1:30001", "127.0.0.1:30002"}
 	cluster, err := rediscluster.NewCluster(ctx, addrs, clustopts)
 	check(err)
-	synccluster := rediswrap.Sync{cluster.WithPolicy(rediscluster.PreferReplica)}
+	synccluster := redis.Sync{cluster.WithPolicy(rediscluster.PreferReplica)}
 
-	scan(synccluster.Scanner(rediswrap.ScanOpts{Match: "x*", Count: 100}))
+	scan(synccluster.Scanner(redis.ScanOpts{Match: "x*", Count: 100}))
 }
 
-func scan(scanner *rediswrap.SyncIterator) {
+func scan(scanner *redis.SyncIterator) {
 	all := []string{}
 	for {
 		keys, err := scanner.Next()

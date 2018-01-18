@@ -1,6 +1,6 @@
 package rediscluster
 
-import "github.com/joomcode/redispipe/rediswrap"
+import "github.com/joomcode/redispipe/redis"
 
-type Request = rediswrap.Request
-type Callback = rediswrap.Callback
+type Request = redis.Request
+type Callback = redis.Callback

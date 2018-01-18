@@ -1,9 +1,7 @@
-package rediswrap
+package redis
 
 import (
 	"sync"
-
-	"github.com/joomcode/redispipe/resp"
 )
 
 type Sync struct {
@@ -35,12 +33,12 @@ func (s Sync) SendMany(reqs []Request) []interface{} {
 	return res.r
 }
 
-func (s Sync) SendTransaction(reqs []Request) []interface{} {
+func (s Sync) SendTransaction(reqs []Request) ([]interface{}, error) {
 	var res syncRes
 	res.Add(1)
 	s.S.SendTransaction(reqs, res.set, 0)
 	res.Wait()
-	return resp.TransactionResponse(res.r, len(reqs))
+	return TransactionResponse(res.r)
 }
 
 func (s Sync) Scanner(opts ScanOpts) *SyncIterator {

@@ -8,13 +8,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/rediscluster"
 	"github.com/joomcode/redispipe/redisconn"
-	"github.com/joomcode/redispipe/rediswrap"
-	"github.com/joomcode/redispipe/resp"
 )
 
-type Req = rediswrap.Request
+type Req = redis.Request
 
 func main() {
 	check := func(err error) {
@@ -38,7 +37,7 @@ func main() {
 	addrs := []string{"127.0.0.1:30001", "127.0.0.1:30002"}
 	cluster, err := rediscluster.NewCluster(ctx, addrs, clustopts)
 	check(err)
-	synccluster := rediswrap.Sync{cluster}
+	synccluster := redis.Sync{cluster}
 
 	in := bufio.NewReader(os.Stdin)
 	for {
@@ -57,7 +56,7 @@ func main() {
 			continue
 		}
 		r := synccluster.Send(Req{string(args[0].([]byte)), args[1:]})
-		if err := resp.Error(r); err != nil {
+		if err := redis.AsError(r); err != nil {
 			fmt.Println("error:", err)
 		} else {
 			fmt.Println("result:", r)

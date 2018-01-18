@@ -347,7 +347,7 @@ type request struct {
 }
 
 func (r *request) set(res interface{}, _ uint64) {
-	err := resp.RedisError(res)
+	err := redis.AsRedisError(res)
 	if err == nil {
 		r.cb(res, r.off)
 		return
@@ -394,7 +394,7 @@ func (r *request) set(res interface{}, _ uint64) {
 		if (err.Code == redis.ErrMoved || err.Code == redis.ErrAsk) && int(r.try) < r.c.opts.MovedRetries {
 			r.try++
 			r.lastErrIsHard = false
-			addr := err.Data.Get("addr").(string)
+			addr := err.Get("movedto").(string)
 			conn := r.c.connForAddress(addr)
 			if conn != nil {
 				conn.SendAsk(r.req, r.set, 0, err.Code == redis.ErrAsk)
@@ -422,8 +422,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
 	}
 	slot, ok := batchSlot(reqs)
 	if !ok {
-		err := redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).
-			With("cluster", c).
+		err := c.err(redis.ErrKindRequest, redis.ErrNoSlotKey).
 			With("requests", reqs)
 		Go(func() { cb(err, off) })
 		return
@@ -478,7 +477,7 @@ func (t *transaction) set(res interface{}, n uint64) {
 	default:
 	}
 
-	err := resp.RedisError(execres)
+	err := redis.AsRedisError(execres)
 	if err == nil {
 		t.cb(execres, t.off)
 		return
@@ -512,18 +511,18 @@ func (t *transaction) set(res interface{}, n uint64) {
 		asking := false
 		if err.Code == redis.ErrMoved {
 			// we occasionally sent transaction to slave
-			moved = err.Data.Get("addr").(string)
+			moved = err.Get("movedto").(string)
 			moving = true
-		} else if strings.HasPrefix(err.Text, "EXECABORT") {
+		} else if strings.HasPrefix(err.Msg(), "EXECABORT") {
 			// check if all partial responses were ASK or MOVED
 			responses := t.r[1 : len(t.r)-1]
 			for _, r := range responses {
-				err := resp.RedisError(r)
+				err := redis.AsRedisError(r)
 				if err == nil || err.Code != redis.ErrMoved || err.Code != redis.ErrAsk {
 					allmoved = false
 					break
 				}
-				moved = err.Data.Get("addr").(string)
+				moved = err.Get("movedto").(string)
 				if err.Code == redis.ErrMoved {
 					moving = true
 				} else if err.Code == redis.ErrAsk {
@@ -579,9 +578,12 @@ func (c *Cluster) newConn(addr string) (*redisconn.Connection, error) {
 	node := c.addNode(addr)
 	conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
 	if conn == nil {
-		err := redis.NewErr(redis.ErrKindConnection, redis.ErrDial)
-		err = err.With("cluster", c).With("addr", addr)
+		err := c.err(redis.ErrKindConnection, redis.ErrDial).With("address", addr)
 		return nil, err
 	}
 	return conn, nil
+}
+
+func (c *Cluster) err(kind uint32, code uint32) *redis.Error {
+	return redis.NewErr(kind, code).With("cluster", c)
 }

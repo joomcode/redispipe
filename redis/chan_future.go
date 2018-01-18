@@ -1,6 +1,4 @@
-package rediswrap
-
-import "github.com/joomcode/redispipe/resp"
+package redis
 
 type ChanFutured struct {
 	S Sender
@@ -30,7 +28,6 @@ func (s ChanFutured) SendMany(reqs []Request) ChanFutures {
 
 func (s ChanFutured) SendTransaction(r []Request) *ChanTransaction {
 	future := &ChanTransaction{
-		n:    len(r),
 		wait: make(chan struct{}),
 	}
 	s.S.SendTransaction(r, future.set, 0)
@@ -63,21 +60,20 @@ func (f ChanFutures) set(res interface{}, i uint64) {
 }
 
 type ChanTransaction struct {
-	r    []interface{}
-	n    int
+	r    interface{}
 	wait chan struct{}
 }
 
-func (f *ChanTransaction) Results() []interface{} {
+func (f *ChanTransaction) Results() ([]interface{}, error) {
 	<-f.wait
-	return f.r
+	return TransactionResponse(f.r)
 }
 
 func (f ChanTransaction) Done() <-chan struct{} {
 	return f.wait
 }
 
-func (f ChanTransaction) set(res interface{}, i uint64) {
-	f.r = resp.TransactionResponse(res, f.n)
+func (f *ChanTransaction) set(res interface{}, _ uint64) {
+	f.r = res
 	close(f.wait)
 }

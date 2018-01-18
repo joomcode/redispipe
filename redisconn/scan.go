@@ -1,12 +1,11 @@
 package redisconn
 
 import (
-	"github.com/joomcode/redispipe/rediswrap"
-	"github.com/joomcode/redispipe/resp"
+	"github.com/joomcode/redispipe/redis"
 )
 
 type Scanner struct {
-	rediswrap.ScanOpts
+	redis.ScanOpts
 
 	c  *Connection
 	it []byte
@@ -15,7 +14,7 @@ type Scanner struct {
 
 func (s *Scanner) Next(cb func(keys []string, err error)) {
 	if len(s.it) == 1 && s.it[0] == '0' {
-		cb(nil, rediswrap.ScanEOF)
+		cb(nil, redis.ScanEOF)
 		return
 	}
 	s.cb = cb
@@ -27,12 +26,12 @@ func (s *Scanner) set(it []byte, keys []string, err error) {
 	s.cb(keys, err)
 }
 
-func (s *Connection) CallScan(opts rediswrap.ScanOpts, it []byte, cb func([]byte, []string, error)) {
-	set := func(res interface{}, _ uint64) { cb(resp.ScanResponse(res)) }
+func (s *Connection) CallScan(opts redis.ScanOpts, it []byte, cb func([]byte, []string, error)) {
+	set := func(res interface{}, _ uint64) { cb(redis.ScanResponse(res)) }
 	s.Send(opts.Request(it), set, 0)
 }
 
-func (c *Connection) Scanner(opts rediswrap.ScanOpts) rediswrap.Scanner {
+func (c *Connection) Scanner(opts redis.ScanOpts) redis.Scanner {
 	return &Scanner{
 		ScanOpts: opts,
 		c:        c,

@@ -55,7 +55,7 @@ func ParseSlotsInfo(res interface{}, cl *Cluster) ([]SlotsRange, error) {
 
 	errf := func(f string, args ...interface{}) ([]SlotsRange, error) {
 		return nil, re.NewMsg(re.ErrKindResponse, re.ErrResponseFormat,
-			fmt.Sprintf(f, args...)).With("results", res)
+			fmt.Sprintf(f, args...)).With("response", res)
 	}
 
 	var rawranges []interface{}
@@ -197,6 +197,7 @@ func (c *Cluster) updateMappings(ranges []SlotsRange) {
 	c.nodeMap.Store(tmpNodes)
 	c.shardMap.Store(tmpShards)
 	c.masterMap.Store(newMasters)
+	fmt.Println("store masters", newMasters)
 
 	go c.setConnRoles(newShards)
 

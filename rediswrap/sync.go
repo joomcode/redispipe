@@ -43,6 +43,14 @@ func (s Sync) SendTransaction(reqs []Request) []interface{} {
 	return resp.TransactionResponse(res.r, len(reqs))
 }
 
+func (s Sync) Scanner(opts ScanOpts) *SyncIterator {
+	scanner := s.S.Scanner(opts)
+	if scanner == nil {
+		return nil
+	}
+	return &SyncIterator{scanner}
+}
+
 type syncRes struct {
 	r interface{}
 	sync.WaitGroup
@@ -61,4 +69,28 @@ type syncBatch struct {
 func (s *syncBatch) set(res interface{}, i uint64) {
 	s.r[i] = res
 	s.Done()
+}
+
+type SyncIterator struct {
+	s Scanner
+}
+
+type syncScanRes struct {
+	keys []string
+	err  error
+	sync.WaitGroup
+}
+
+func (r *syncScanRes) set(keys []string, err error) {
+	r.keys = keys
+	r.err = err
+	r.Done()
+}
+
+func (s SyncIterator) Next() ([]string, error) {
+	var res syncScanRes
+	res.Add(1)
+	s.s.Next(res.set)
+	res.Wait()
+	return res.keys, res.err
 }

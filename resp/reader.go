@@ -35,6 +35,10 @@ func Read(b *bufio.Reader) interface{} {
 		return re.New(re.ErrKindResponse, re.ErrHeaderlineTooLarge).With("line", line)
 	}
 
+	if len(line) == 0 {
+		return re.New(re.ErrKindResponse, re.ErrHeaderlineEmpty)
+	}
+
 	var v int64
 	switch line[0] {
 	case '+':

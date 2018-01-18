@@ -225,7 +225,7 @@ func (conn *Connection) Ping() error {
 		return err
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
-		return re.New(re.ErrKindResponse, re.ErrPing).With("conn", conn).With("result", res)
+		return re.New(re.ErrKindResponse, re.ErrPing).With("conn", conn).With("response", res)
 	}
 	return nil
 }

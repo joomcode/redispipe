@@ -34,7 +34,9 @@ const (
 	ErrKindCluster
 	// Just regular redis error response
 	ErrKindResult
+)
 
+const (
 	// context is not passed to contructor
 	// (ErrKindOpts)
 	ErrContextIsNil = iota + 1
@@ -70,6 +72,9 @@ const (
 	// Header line too large
 	// (ErrKindResponse)
 	ErrHeaderlineTooLarge
+	// Header line is empty
+	// (ErrKindResponse)
+	ErrHeaderlineEmpty
 	// Integer malformed
 	// (ErrKindResponse)
 	ErrIntegerParsing
@@ -103,6 +108,9 @@ const (
 	// EXEC returns nil (WATCH failed) (it is strange, cause we don't support WATCH)
 	// (ErrKindResult)
 	ErrExecEmpty
+	// No addresses found in config
+	// (ErrKindCluster)
+	ErrClusterConfigEmpty
 )
 
 var typeName = map[int]string{

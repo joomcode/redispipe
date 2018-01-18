@@ -2,29 +2,18 @@ package rediscluster
 
 import (
 	"bytes"
-	"fmt"
-	"sort"
-	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/joomcode/redispipe/redis"
 )
 
-type SlotsRange struct {
-	from  int
-	to    int
-	addrs []string
-}
-
-func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
+func (c *Cluster) SlotRanges() ([]redis.SlotsRange, error) {
 	nodes := c.getNodeMap()
 	for _, node := range nodes {
 		for _, conn := range node.conns {
 			res := redis.Sync{conn}.Do("CLUSTER SLOTS")
-			slotsres, err := ParseSlotsInfo(res, func(r *redis.Error) *redis.Error {
-				return r.With("cluster", c).With("connection", conn)
-			})
+			slotsres, err := redis.ParseSlotsInfo(res)
 			if err == nil {
 				return slotsres, nil
 			}
@@ -35,74 +24,10 @@ func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 	return nil, c.err(redis.ErrKindCluster, redis.ErrClusterSlots)
 }
 
-func ParseSlotsInfo(res interface{}, with func(*redis.Error) *redis.Error) ([]SlotsRange, error) {
-	if with == nil {
-		with = func(r *redis.Error) *redis.Error { return r }
-	}
-	if err := redis.AsError(res); err != nil {
-		return nil, err
-	}
-
-	errf := func(f string, args ...interface{}) ([]SlotsRange, error) {
-		msg := fmt.Sprintf(f, args...)
-		err := redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseUnexpected, msg)
-		err = with(err)
-		return nil, err
-	}
-
-	var rawranges []interface{}
-	var ok bool
-	if rawranges, ok = res.([]interface{}); !ok {
-		return errf("type is not array: %+v", res)
-	}
-
-	ranges := make([]SlotsRange, len(rawranges))
-	for i, rawelem := range rawranges {
-		var rawrange []interface{}
-		var ok bool
-		var i64 int64
-		r := SlotsRange{}
-		if rawrange, ok = rawelem.([]interface{}); !ok || len(rawrange) < 3 {
-			return errf("format mismatch: res[%d]=%+v", i, rawelem)
-		}
-		if i64, ok = rawrange[0].(int64); !ok || i64 < 0 || i64 >= NumSlots {
-			return errf("format mismatch: res[%d][0]=%+v", i, rawrange[0])
-		}
-		r.from = int(i64)
-		if i64, ok = rawrange[1].(int64); !ok || i64 < 0 || i64 >= NumSlots {
-			return errf("format mismatch: res[%d][1]=%+v", i, rawrange[1])
-		}
-		r.to = int(i64)
-		if r.from > r.to {
-			return errf("range wrong: res[%d]=%+v (%+v)", i, rawrange)
-		}
-		for j := 2; j < len(rawrange); j++ {
-			rawaddr, ok := rawrange[j].([]interface{})
-			if !ok || len(rawaddr) < 2 {
-				return errf("address format mismatch: res[%d][%d] = %+v",
-					i, j, rawrange[j])
-			}
-			host, ok := rawaddr[0].([]byte)
-			port, ok2 := rawaddr[1].(int64)
-			if !ok || !ok2 || port <= 0 || port+10000 > 65535 {
-				return errf("address format mismatch: res[%d][%d] = %+v",
-					i, j, rawaddr)
-			}
-			r.addrs = append(r.addrs, string(host)+":"+strconv.Itoa(int(port)))
-		}
-		sort.Strings(r.addrs[1:])
-		ranges[i] = r
-	}
-	sort.Slice(ranges, func(i, j int) bool {
-		return ranges[i].from < ranges[j].from
-	})
-	return ranges, nil
-}
-
-func (c *Cluster) updateMappings(ranges []SlotsRange) {
+func (c *Cluster) updateMappings(ranges []redis.SlotsRange) {
 	shards := make(map[string][]string)
 	for _, r := range ranges {
-		shards[r.addrs[0]] = r.addrs
+		shards[r.Addrs[0]] = r.Addrs
 	}
 
 	uniqaddrs := make(map[string]struct{})
@@ -195,13 +120,13 @@ func (c *Cluster) updateMappings(ranges []SlotsRange) {
 	var sh uint32
 	for i := 0; i < NumSlots; i++ {
 		var cur uint32
-		if len(ranges) != 0 && i > ranges[0].to {
+		if len(ranges) != 0 && i > ranges[0].To {
 			ranges = ranges[1:]
 		}
-		if len(ranges) == 0 || i < ranges[0].from {
+		if len(ranges) == 0 || i < ranges[0].From {
 			cur = uint32(random)
 		} else {
-			cur = uint32(newMasters[ranges[0].addrs[0]])
+			cur = uint32(newMasters[ranges[0].Addrs[0]])
 		}
 		if i&1 == 0 {
 			sh = cur

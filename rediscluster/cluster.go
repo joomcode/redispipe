@@ -300,16 +300,16 @@ func fixPolicy(req Request, policy MasterReplicaPolicyEnum) MasterReplicaPolicyE
 	return MasterOnly
 }
 
-func (c *Cluster) Send(req Request, cb Callback, off uint64) {
+func (c *Cluster) Send(req Request, cb Future, off uint64) {
 	c.SendWithPolicy(MasterOnly, req, cb, off)
 }
 
-func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb Callback, off uint64) {
+func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb Future, off uint64) {
 	slot, ok := reqSlot(req)
 	if !ok {
 		c.forceReloading()
 		Go(func() {
-			cb(redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
+			cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
 		})
 		return
 	}
@@ -318,7 +318,7 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 
 	conn, err := c.connForSlot(slot, policy)
 	if err != nil {
-		Go(func() { cb(err, off) })
+		Go(func() { cb.Resolve(err, off) })
 		return
 	}
 
@@ -330,13 +330,19 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 		slot:   slot,
 		policy: policy,
 	}
-	conn.Send(req, request.set, 0)
+	conn.Send(req, request, 0)
+}
+
+func (c *Cluster) SendMany(reqs []Request, cb Future, off uint64) {
+	for i, req := range reqs {
+		c.Send(req, cb, off+uint64(i))
+	}
 }
 
 type request struct {
 	c   *Cluster
 	req Request
-	cb  Callback
+	cb  Future
 
 	off    uint64
 	slot   uint16
@@ -346,17 +352,21 @@ type request struct {
 	try           uint8
 }
 
-func (r *request) set(res interface{}, _ uint64) {
+func (r *request) Active() bool {
+	return r.cb.Active()
+}
+
+func (r *request) Resolve(res interface{}, _ uint64) {
 	err := redis.AsRedisError(res)
 	if err == nil {
-		r.cb(res, r.off)
+		r.cb.Resolve(res, r.off)
 		return
 	}
 
 	// do not retry if cluster is closed
 	select {
 	case <-r.c.ctx.Done():
-		r.cb(res, r.off)
+		r.cb.Resolve(res, r.off)
 		return
 	default:
 	}
@@ -366,7 +376,7 @@ func (r *request) set(res interface{}, _ uint64) {
 	case redis.ErrKindIO:
 		if r.policy == MasterOnly {
 			// It is not safe to retry read-write operation
-			r.cb(res, r.off)
+			r.cb.Resolve(res, r.off)
 			return
 		}
 		fallthrough
@@ -377,15 +387,15 @@ func (r *request) set(res interface{}, _ uint64) {
 		if r.lastErrIsHard {
 			// on second try do no "smart" things,
 			// cause it is likely cluster is in unstable state
-			r.cb(res, r.off)
+			r.cb.Resolve(res, r.off)
 			return
 		}
 		r.lastErrIsHard = true
 		conn, err := r.c.connForSlot(r.slot, r.policy)
 		if err != nil {
-			r.cb(err, r.off)
+			r.cb.Resolve(err, r.off)
 		} else {
-			conn.Send(r.req, r.set, 0)
+			conn.Send(r.req, r, 0)
 		}
 	case redis.ErrKindResult:
 		if err.Code == redis.ErrMoved || err.Code == redis.ErrLoading {
@@ -397,26 +407,26 @@ func (r *request) set(res interface{}, _ uint64) {
 			addr := err.Get("movedto").(string)
 			conn := r.c.connForAddress(addr)
 			if conn != nil {
-				conn.SendAsk(r.req, r.set, 0, err.Code == redis.ErrAsk)
+				conn.SendAsk(r.req, r, 0, err.Code == redis.ErrAsk)
 				return
 			}
 			Go(func() {
 				conn, cerr := r.c.newConn(addr)
 				if cerr != nil {
-					r.cb(cerr, r.off)
+					r.cb.Resolve(cerr, r.off)
 					return
 				}
-				conn.SendAsk(r.req, r.set, 0, err.Code == redis.ErrAsk)
+				conn.SendAsk(r.req, r, 0, err.Code == redis.ErrAsk)
 			})
 			return
 		}
 		fallthrough
 	default:
-		r.cb(res, r.off)
+		r.cb.Resolve(res, r.off)
 	}
 }
 
-func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
+func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 	if len(reqs) == 0 {
 		return
 	}
@@ -424,7 +434,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
 	if !ok {
 		err := c.err(redis.ErrKindRequest, redis.ErrNoSlotKey).
 			With("requests", reqs)
-		Go(func() { cb(err, off) })
+		Go(func() { cb.Resolve(err, off) })
 		return
 	}
 
@@ -432,7 +442,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
 
 	if err != nil {
 		// ? no known alive connection for slot
-		Go(func() { cb(err, off) })
+		Go(func() { cb.Resolve(err, off) })
 		return
 	}
 
@@ -443,7 +453,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Callback, off uint64) {
 type transaction struct {
 	c    *Cluster
 	reqs []Request
-	cb   Callback
+	cb   Future
 	off  uint64
 
 	r []interface{}
@@ -459,10 +469,14 @@ func (t *transaction) send(conn *redisconn.Connection, ask bool) {
 	if ask {
 		flags |= redisconn.DoAsking
 	}
-	conn.SendBatchFlags(t.reqs, t.set, 0, flags)
+	conn.SendBatchFlags(t.reqs, t, 0, flags)
 }
 
-func (t *transaction) set(res interface{}, n uint64) {
+func (t *transaction) Active() bool {
+	return t.cb.Active()
+}
+
+func (t *transaction) Resolve(res interface{}, n uint64) {
 	t.r[n] = res
 	if int(n) != len(t.reqs) {
 		return
@@ -472,14 +486,14 @@ func (t *transaction) set(res interface{}, n uint64) {
 
 	select {
 	case <-t.c.ctx.Done():
-		t.cb(execres, t.off)
+		t.cb.Resolve(execres, t.off)
 		return
 	default:
 	}
 
 	err := redis.AsRedisError(execres)
 	if err == nil {
-		t.cb(execres, t.off)
+		t.cb.Resolve(execres, t.off)
 		return
 	}
 	err = err.With("cluster", t.c)
@@ -488,19 +502,19 @@ func (t *transaction) set(res interface{}, n uint64) {
 	case redis.ErrKindIO:
 		// redis treats all transactions as read-write, and it is not safe
 		// to retry
-		t.cb(execres, t.off)
+		t.cb.Resolve(execres, t.off)
 		return
 	case redis.ErrKindConnection, redis.ErrKindContext:
 		t.c.forceReloading()
 		if t.lastErrIsHard {
-			t.cb(execres, t.off)
+			t.cb.Resolve(execres, t.off)
 			return
 		}
 		t.lastErrIsHard = true
 
 		conn, err := t.c.connForSlot(t.slot, MasterOnly)
 		if err != nil {
-			t.cb(err, t.off)
+			t.cb.Resolve(err, t.off)
 		} else {
 			t.send(conn, false)
 		}
@@ -543,7 +557,7 @@ func (t *transaction) set(res interface{}, n uint64) {
 					})
 				} else {
 					// shit... wtf?
-					t.cb(res, t.off)
+					t.cb.Resolve(res, t.off)
 				}
 				return
 			}
@@ -552,7 +566,7 @@ func (t *transaction) set(res interface{}, n uint64) {
 		}
 		fallthrough
 	default:
-		t.cb(execres, t.off)
+		t.cb.Resolve(execres, t.off)
 		return
 	}
 }
@@ -566,7 +580,7 @@ func (t *transaction) sendMoved(addr string, asking bool) {
 	Go(func() {
 		conn, cerr := t.c.newConn(addr)
 		if cerr != nil {
-			t.cb(cerr, t.off)
+			t.cb.Resolve(cerr, t.off)
 			return
 		}
 		t.send(conn, asking)

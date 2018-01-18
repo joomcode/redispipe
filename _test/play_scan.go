@@ -45,7 +45,7 @@ func main() {
 	scan(synccluster.Scanner(redis.ScanOpts{Match: "x*", Count: 100}))
 }
 
-func scan(scanner *redis.SyncIterator) {
+func scan(scanner redis.SyncIterator) {
 	all := []string{}
 	for {
 		keys, err := scanner.Next()

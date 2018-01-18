@@ -3,15 +3,15 @@ package redisconn
 import "github.com/joomcode/redispipe/redis"
 
 type Request = redis.Request
-type Callback = redis.Callback
+type Future = redis.Future
 
 type future struct {
-	Callback
+	Future
 	N uint64
 }
 
-func (f future) Call(res interface{}) {
-	if f.Callback != nil {
-		f.Callback(res, f.N)
+func (f future) call(res interface{}) {
+	if f.Future != nil {
+		f.Future.Resolve(res, f.N)
 	}
 }

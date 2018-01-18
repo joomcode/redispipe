@@ -8,10 +8,14 @@ type Sync struct {
 	S Sender
 }
 
+func (s Sync) Do(cmd string, args ...interface{}) interface{} {
+	return s.Send(Request{cmd, args})
+}
+
 func (s Sync) Send(r Request) interface{} {
 	var res syncRes
 	res.Add(1)
-	s.S.Send(r, res.set, 0)
+	s.S.Send(r, &res, 0)
 	res.Wait()
 	return res.r
 }
@@ -21,14 +25,7 @@ func (s Sync) SendMany(reqs []Request) []interface{} {
 		r: make([]interface{}, len(reqs)),
 	}
 	res.Add(len(reqs))
-	if batcher, ok := s.S.(SendBatcher); ok {
-		batcher.SendBatch(reqs, res.set, 0)
-	} else {
-		cb := res.set
-		for i, req := range reqs {
-			s.S.Send(req, cb, uint64(i))
-		}
-	}
+	s.S.SendMany(reqs, &res, 0)
 	res.Wait()
 	return res.r
 }
@@ -36,17 +33,13 @@ func (s Sync) SendMany(reqs []Request) []interface{} {
 func (s Sync) SendTransaction(reqs []Request) ([]interface{}, error) {
 	var res syncRes
 	res.Add(1)
-	s.S.SendTransaction(reqs, res.set, 0)
+	s.S.SendTransaction(reqs, &res, 0)
 	res.Wait()
 	return TransactionResponse(res.r)
 }
 
-func (s Sync) Scanner(opts ScanOpts) *SyncIterator {
-	scanner := s.S.Scanner(opts)
-	if scanner == nil {
-		return nil
-	}
-	return &SyncIterator{scanner}
+func (s Sync) Scanner(opts ScanOpts) SyncIterator {
+	return SyncIterator{s.S.Scanner(opts)}
 }
 
 type syncRes struct {
@@ -54,7 +47,11 @@ type syncRes struct {
 	sync.WaitGroup
 }
 
-func (s *syncRes) set(res interface{}, _ uint64) {
+func (s *syncRes) Active() bool {
+	return true
+}
+
+func (s *syncRes) Resolve(res interface{}, _ uint64) {
 	s.r = res
 	s.Done()
 }
@@ -64,7 +61,11 @@ type syncBatch struct {
 	sync.WaitGroup
 }
 
-func (s *syncBatch) set(res interface{}, i uint64) {
+func (s *syncBatch) Active() bool {
+	return true
+}
+
+func (s *syncBatch) Resolve(res interface{}, i uint64) {
 	s.r[i] = res
 	s.Done()
 }
@@ -73,25 +74,16 @@ type SyncIterator struct {
 	s Scanner
 }
 
-type syncScanRes struct {
-	keys []string
-	err  error
-	sync.WaitGroup
-}
-
-func (r *syncScanRes) set(keys []string, err error) {
-	r.keys = keys
-	r.err = err
-	r.Done()
-}
-
 func (s SyncIterator) Next() ([]string, error) {
-	var res syncScanRes
+	var res syncRes
 	res.Add(1)
-	s.s.Next(res.set)
+	s.s.Next(&res)
 	res.Wait()
-	if res.keys == nil && res.err == nil {
-		res.err = ScanEOF
+	if err := AsError(res.r); err != nil {
+		return nil, err
+	} else if res.r == nil {
+		return nil, ScanEOF
+	} else {
+		return res.r.([]string), nil
 	}
-	return res.keys, res.err
 }

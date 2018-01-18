@@ -212,16 +212,7 @@ func (conn *Connection) Handle() interface{} {
 }
 
 func (conn *Connection) Ping() error {
-	var wg sync.WaitGroup
-	var res interface{}
-
-	wg.Add(1)
-	conn.Send(Request{"PING", nil}, func(r interface{}, _ uint64) {
-		res = r
-		wg.Done()
-	}, 0)
-	wg.Wait()
-
+	res := redis.Sync{conn}.Do("PING")
 	if err := redis.AsError(res); err != nil {
 		return err
 	}
@@ -236,22 +227,31 @@ func (conn *Connection) getShard() (uint32, *connShard) {
 	return shardn, &conn.shard[shardn]
 }
 
-var dumb = func(interface{}, uint64) {}
+type dumbcb struct{}
 
-func (conn *Connection) Send(req Request, cb Callback, n uint64) {
+func (d dumbcb) Active() bool                { return true }
+func (d dumbcb) Resolve(interface{}, uint64) {}
+
+var dumb dumbcb
+
+func (conn *Connection) Send(req Request, cb Future, n uint64) {
 	conn.SendAsk(req, cb, n, false)
 }
 
-func (conn *Connection) SendAsk(req Request, cb Callback, n uint64, asking bool) {
+func (conn *Connection) SendAsk(req Request, cb Future, n uint64, asking bool) {
 	if cb == nil {
 		cb = dumb
 	}
 	if err := conn.doSend(req, cb, n, asking); err != nil {
-		Go(func() { cb(err.With("connection", conn), n) })
+		Go(func() { cb.Resolve(err.With("connection", conn), n) })
 	}
 }
 
-func (conn *Connection) doSend(req Request, cb Callback, n uint64, asking bool) *redis.Error {
+func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *redis.Error {
+	if !cb.Active() {
+		return conn.err(redis.ErrKindRequest, redis.ErrRequestIsNotActive)
+	}
+
 	shardn, shard := conn.getShard()
 	shard.Lock()
 	defer shard.Unlock()
@@ -281,12 +281,24 @@ func (conn *Connection) doSend(req Request, cb Callback, n uint64, asking bool) 
 	return nil
 }
 
-func (conn *Connection) SendBatch(requests []Request, cb Callback, start uint64) {
+func (conn *Connection) SendMany(requests []Request, cb Future, start uint64) {
+	conn.SendBatch(requests, cb, start)
+}
+
+func (conn *Connection) SendBatch(requests []Request, cb Future, start uint64) {
 	conn.SendBatchFlags(requests, cb, start, 0)
 }
 
-func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start uint64, flags int) {
+func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint64, flags int) {
 	if len(requests) == 0 {
+		return
+	}
+	n := len(requests)
+	if !cb.Active() {
+		err := conn.err(redis.ErrKindRequest, redis.ErrRequestIsNotActive)
+		for i := 0; i < n; i++ {
+			cb.Resolve(err, start+uint64(i))
+		}
 		return
 	}
 
@@ -303,11 +315,10 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start ui
 		err = conn.err(redis.ErrKindConnection, redis.ErrNotConnected)
 		return
 	}
-	n := len(requests)
 	if err != nil {
 		Go(func() {
 			for i := 0; i < n; i++ {
-				cb(err, start+uint64(i))
+				cb.Resolve(err, start+uint64(i))
 			}
 		})
 		return
@@ -334,9 +345,9 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start ui
 					With("request", requests[i])
 				for j := 0; j < n; j++ {
 					if j == i {
-						cb(err, start+uint64(i))
+						cb.Resolve(err, start+uint64(i))
 					} else {
-						cb(common_err, start+uint64(j))
+						cb.Resolve(common_err, start+uint64(j))
 					}
 				}
 			})
@@ -357,13 +368,17 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Callback, start ui
 	return
 }
 
-func (conn *Connection) SendTransaction(reqs []Request, cb Callback, off uint64) {
-	l := uint64(len(reqs))
-	tcb := func(res interface{}, n uint64) {
-		if n == l {
-			cb(res, off)
-		}
+func (conn *Connection) SendTransaction(reqs []Request, cb Future, off uint64) {
+	if !cb.Active() {
+		cb.Resolve(conn.err(redis.ErrKindRequest, redis.ErrRequestIsNotActive), off)
+		return
 	}
+	l := uint64(len(reqs))
+	tcb := redis.WrapFuture(cb, func(res interface{}, n uint64) {
+		if n == l {
+			cb.Resolve(res, off)
+		}
+	})
 	conn.SendBatchFlags(reqs, tcb, 0, DoTransaction)
 }
 
@@ -544,7 +559,7 @@ Loop:
 	for i := range conn.shard {
 		sh := &conn.shard[i]
 		for _, fut := range sh.futures {
-			fut.Call(err)
+			fut.call(err)
 		}
 		sh.buf = sh.buf[:0]
 		sh.futures = sh.futures[:0]
@@ -712,22 +727,22 @@ Outter:
 	for futures = range one.futures {
 		for i, fut := range futures {
 			res = resp.Read(r)
-			futures[i].Callback = nil
+			futures[i].Future = nil
 			if rerr := redis.AsRedisError(res); rerr.HardError() {
 				one.setErr(rerr, conn)
-				fut.Call(one.err)
+				fut.call(one.err)
 				break Outter
 			}
-			fut.Call(res)
+			fut.call(res)
 		}
 		futures = nil
 	}
 	for _, fut := range futures {
-		fut.Call(one.err)
+		fut.call(one.err)
 	}
 	for futures := range one.futures {
 		for _, fut := range futures {
-			fut.Call(one.err)
+			fut.call(one.err)
 		}
 	}
 }

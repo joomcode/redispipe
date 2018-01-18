@@ -16,8 +16,6 @@ import (
 	"github.com/joomcode/redispipe/redisconn"
 )
 
-type Req = redis.Request
-
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile `file`")
 var memprofile = flag.String("memprofile", "", "write memory profile to `file`")
 
@@ -45,16 +43,18 @@ func main() {
 	}
 	conn, err := redisconn.Connect(ctx, "localhost:6379", opts)
 	check(err)
-	syncconn := redis.Sync{conn}
+	syncconn := redis.SyncCtx{conn}
+	//syncconn := redis.Sync{conn}
 
 	start := time.Now()
-	N, K := 800, 8000
+	N, K := 800, 80000
 	var wg sync.WaitGroup
 	wg.Add(N)
 	for i := 0; i < N; i++ {
 		go func() {
 			for j := 0; j < K; j++ {
-				res := syncconn.Send(Req{"GET", []interface{}{"asdf"}})
+				res := syncconn.Do(context.TODO(), "GET", "asdf")
+				//res := syncconn.Do("GET", "asdf")
 				if err := redis.AsError(res); err != nil {
 					if rand.Intn(300) == 0 {
 						log.Println(err)

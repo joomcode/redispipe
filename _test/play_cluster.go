@@ -65,7 +65,7 @@ func main() {
 	for i := 0; i < N; i++ {
 		go func() {
 			for j := 0; j < K; j++ {
-				res := synccluster.Send(Req{"GET", []interface{}{i*K + j}})
+				res := synccluster.Do("GET", i*K+j)
 				if err := redis.AsError(res); err != nil {
 					if rand.Intn(30000) == 0 {
 						log.Println(err, i, j)

@@ -5,44 +5,25 @@ import (
 )
 
 type Scanner struct {
-	redis.ScanOpts
-
-	c   *Connection
-	err error
-	it  []byte
-	cb  func([]string, error)
+	redis.ScannerBase
+	c *Connection
 }
 
-func (s *Scanner) Next(cb func(keys []string, err error)) {
-	if s.err != nil {
-		cb(nil, s.err)
+func (s *Scanner) Next(cb redis.Future) {
+	if s.Err != nil {
+		cb.Resolve(s.Err, 0)
 		return
 	}
-	if len(s.it) == 1 && s.it[0] == '0' {
-		cb(nil, nil)
+	if s.IterLast() {
+		cb.Resolve(nil, 0)
 		return
 	}
-	s.cb = cb
-	s.c.CallScan(s.ScanOpts, s.it, s.set)
-}
-
-func (s *Scanner) set(it []byte, keys []string, err error) {
-	cb := s.cb
-	s.cb = nil
-	s.it = it
-	s.err = err
-	cb(keys, err)
-}
-
-func (s *Connection) CallScan(opts redis.ScanOpts, it []byte, cb func([]byte, []string, error)) {
-	set := func(res interface{}, _ uint64) { cb(redis.ScanResponse(res)) }
-	s.Send(opts.Request(it), set, 0)
+	s.DoNext(cb, s.c)
 }
 
 func (c *Connection) Scanner(opts redis.ScanOpts) redis.Scanner {
 	return &Scanner{
-		ScanOpts: opts,
-		c:        c,
-		it:       nil,
+		ScannerBase: redis.ScannerBase{ScanOpts: opts},
+		c:           c,
 	}
 }

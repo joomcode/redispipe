@@ -6,7 +6,7 @@ type ChanFutured struct {
 
 func (s ChanFutured) Send(r Request) *ChanFuture {
 	f := &ChanFuture{wait: make(chan struct{})}
-	s.S.Send(r, Callback(f.set), 0)
+	s.S.Send(r, Future(f), 0)
 	return f
 }
 
@@ -15,22 +15,15 @@ func (s ChanFutured) SendMany(reqs []Request) ChanFutures {
 	for i := range futures {
 		futures[i] = &ChanFuture{wait: make(chan struct{})}
 	}
-	if batcher, ok := s.S.(SendBatcher); ok {
-		batcher.SendBatch(reqs, futures.set, 0)
-	} else {
-		cb := futures.set
-		for i, req := range reqs {
-			s.S.Send(req, cb, uint64(i))
-		}
-	}
+	s.S.SendMany(reqs, futures, 0)
 	return futures
 }
 
 func (s ChanFutured) SendTransaction(r []Request) *ChanTransaction {
 	future := &ChanTransaction{
-		wait: make(chan struct{}),
+		ChanFuture: ChanFuture{wait: make(chan struct{})},
 	}
-	s.S.SendTransaction(r, future.set, 0)
+	s.S.SendTransaction(r, future, 0)
 	return future
 }
 
@@ -48,20 +41,27 @@ func (f ChanFuture) Done() <-chan struct{} {
 	return f.wait
 }
 
-func (f *ChanFuture) set(res interface{}, _ uint64) {
+func (f *ChanFuture) Resolve(res interface{}, _ uint64) {
 	f.r = res
 	close(f.wait)
 }
 
+func (f *ChanFuture) Active() bool {
+	return true
+}
+
 type ChanFutures []*ChanFuture
 
-func (f ChanFutures) set(res interface{}, i uint64) {
-	f[i].set(res, i)
+func (f ChanFutures) Active() bool {
+	return true
+}
+
+func (f ChanFutures) Resolve(res interface{}, i uint64) {
+	f[i].Resolve(res, i)
 }
 
 type ChanTransaction struct {
-	r    interface{}
-	wait chan struct{}
+	ChanFuture
 }
 
 func (f *ChanTransaction) Results() ([]interface{}, error) {
@@ -71,9 +71,4 @@ func (f *ChanTransaction) Results() ([]interface{}, error) {
 
 func (f ChanTransaction) Done() <-chan struct{} {
 	return f.wait
-}
-
-func (f *ChanTransaction) set(res interface{}, _ uint64) {
-	f.r = res
-	close(f.wait)
 }

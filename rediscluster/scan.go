@@ -5,13 +5,10 @@ import (
 )
 
 type Scanner struct {
-	redis.ScanOpts
+	redis.ScannerBase
 
-	err   error
 	c     *Cluster
 	addrs []string
-	it    []byte
-	cb    func([]string, error)
 }
 
 func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
@@ -21,47 +18,38 @@ func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
 		addrs = append(addrs, addr)
 	}
 	if len(addrs) == 0 {
-		return &Scanner{
-			err: c.err(redis.ErrKindCluster, redis.ErrClusterConfigEmpty),
-		}
+		s := &Scanner{}
+		s.Err = c.err(redis.ErrKindCluster, redis.ErrClusterConfigEmpty)
+		return s
 	}
 
 	return &Scanner{
-		ScanOpts: opts,
+		ScannerBase: redis.ScannerBase{ScanOpts: opts},
 
 		c:     c,
 		addrs: addrs,
 	}
 }
 
-func (s *Scanner) Next(cb func(keys []string, err error)) {
-	if s.err != nil {
-		cb(nil, s.err)
+func (s *Scanner) Next(cb redis.Future) {
+	if s.Err != nil {
+		cb.Resolve(s.Err, 0)
 		return
 	}
-	if len(s.it) == 1 && s.it[0] == '0' {
+	if s.IterLast() {
 		s.addrs = s.addrs[1:]
-		s.it = nil
+		s.Iter = nil
 	}
-	if len(s.addrs) == 0 && s.it == nil {
-		cb(nil, redis.ScanEOF)
+	if len(s.addrs) == 0 && s.Iter == nil {
+		cb.Resolve(nil, 0)
 		return
 	}
 	conn := s.c.connForAddress(s.addrs[0])
 	if conn == nil {
-		s.err = s.c.err(redis.ErrKindConnection, redis.ErrNotConnected).
+		s.Err = s.c.err(redis.ErrKindConnection, redis.ErrNotConnected).
 			With("address", s.addrs[0])
-		cb(nil, s.err)
+		cb.Resolve(s.Err, 0)
 		return
 	}
-	s.cb = cb
-	conn.CallScan(s.ScanOpts, s.it, s.set)
-}
-
-func (s *Scanner) set(it []byte, keys []string, err error) {
-	cb := s.cb
-	s.cb = nil
-	s.it = it
-	s.err = err
-	cb(keys, err)
+	s.DoNext(cb, conn)
 }

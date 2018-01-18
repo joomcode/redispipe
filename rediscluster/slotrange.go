@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/joomcode/redispipe/redis"
-	"github.com/joomcode/redispipe/redisconn"
 )
 
 type SlotsRange struct {
@@ -19,23 +17,11 @@ type SlotsRange struct {
 	addrs []string
 }
 
-func syncSend(c *redisconn.Connection, r Request) interface{} {
-	var wg sync.WaitGroup
-	var res interface{}
-	wg.Add(1)
-	c.Send(r, func(r interface{}, _ uint64) {
-		res = r
-		wg.Done()
-	}, 0)
-	wg.Wait()
-	return res
-}
-
 func (c *Cluster) SlotRanges() ([]SlotsRange, error) {
 	nodes := c.getNodeMap()
 	for _, node := range nodes {
 		for _, conn := range node.conns {
-			res := syncSend(conn, Request{"CLUSTER SLOTS", nil})
+			res := redis.Sync{conn}.Do("CLUSTER SLOTS")
 			slotsres, err := ParseSlotsInfo(res, func(r *redis.Error) *redis.Error {
 				return r.With("cluster", c).With("connection", conn)
 			})
@@ -290,7 +276,8 @@ func (c *Cluster) setConnRoles(shards shardMap) {
 				if i == 0 {
 					conn.Send(Request{"READWRITE", nil}, nil, 0)
 				} else {
-					conn.SendBatch([]Request{{"READONLY", nil}, Request{"INFO", nil}}, sh.setReplicaInfo, uint64(i*2))
+					conn.SendBatch([]Request{{"READONLY", nil}, Request{"INFO", nil}},
+						redis.FuncFuture(sh.setReplicaInfo), uint64(i*2))
 				}
 			}
 		}

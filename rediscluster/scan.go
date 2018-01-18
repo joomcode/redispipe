@@ -9,8 +9,8 @@ type Scanner struct {
 
 	err   error
 	c     *Cluster
-	s     redis.Scanner
 	addrs []string
+	it    []byte
 	cb    func([]string, error)
 }
 
@@ -39,35 +39,29 @@ func (s *Scanner) Next(cb func(keys []string, err error)) {
 		cb(nil, s.err)
 		return
 	}
-	if len(s.addrs) == 0 && s.s == nil {
+	if len(s.it) == 1 && s.it[0] == '0' {
+		s.addrs = s.addrs[1:]
+		s.it = nil
+	}
+	if len(s.addrs) == 0 && s.it == nil {
 		cb(nil, redis.ScanEOF)
 		return
 	}
-	if s.s == nil {
-		conn := s.c.connForAddress(s.addrs[0])
-		s.addrs = s.addrs[1:]
-		if conn == nil {
-			cb(nil, s.c.err(redis.ErrKindConnection, redis.ErrNotConnected).
-				With("address", s.addrs[0]))
-			return
-		}
-		s.s = conn.Scanner(s.ScanOpts)
+	conn := s.c.connForAddress(s.addrs[0])
+	if conn == nil {
+		s.err = s.c.err(redis.ErrKindConnection, redis.ErrNotConnected).
+			With("address", s.addrs[0])
+		cb(nil, s.err)
+		return
 	}
 	s.cb = cb
-	s.s.Next(s.set)
+	conn.CallScan(s.ScanOpts, s.it, s.set)
 }
 
-func (s *Scanner) set(keys []string, err error) {
+func (s *Scanner) set(it []byte, keys []string, err error) {
 	cb := s.cb
 	s.cb = nil
-	if err != nil && err != redis.ScanEOF {
-		s.err = err
-		cb(keys, err)
-	} else if keys == nil {
-		s.s = nil
-		s.Next(cb)
-	} else {
-		s.err = err
-		cb(keys, err)
-	}
+	s.it = it
+	s.err = err
+	cb(keys, err)
 }

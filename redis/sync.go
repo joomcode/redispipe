@@ -90,5 +90,8 @@ func (s SyncIterator) Next() ([]string, error) {
 	res.Add(1)
 	s.s.Next(res.set)
 	res.Wait()
+	if res.keys == nil && res.err == nil {
+		res.err = ScanEOF
+	}
 	return res.keys, res.err
 }

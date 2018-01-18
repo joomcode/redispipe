@@ -1,31 +1,36 @@
 package rediscluster
 
-import "github.com/joomcode/redispipe/redisconn"
+import (
+	"github.com/joomcode/redispipe/redis"
+	"github.com/joomcode/redispipe/redisconn"
+)
 
-func (c *Cluster) EachShard(cb func(c *redisconn.Connection) bool) {
+func (c *Cluster) EachShard(cb func(*redisconn.Connection, error) bool) {
 	masters := c.getMasterMap()
 	shards := c.getShardMap()
 	nodes := c.getNodeMap()
 	for _, shno := range masters {
 		shard := shards[shno]
 		if shard == nil {
-			cb(nil)
+			cb(nil, c.err(redis.ErrKindConnection, redis.ErrDial))
 			return
 		}
 		node := nodes[shard.addr[0]]
 		if node == nil {
-			cb(nil)
+			cb(nil, c.err(redis.ErrKindConnection, redis.ErrDial))
 			return
 		}
 		conn := node.getConn(c.opts.ConnHostPolicy, needConnected)
 		if conn == nil {
 			conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
 		}
-		if cb(conn) {
+		if conn == nil {
+			cb(nil, c.err(redis.ErrKindConnection, redis.ErrDial))
 			return
 		}
-		if conn == nil {
+		if cb(conn, nil) {
 			return
 		}
 	}
+	cb(nil, nil)
 }

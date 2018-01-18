@@ -7,14 +7,19 @@ import (
 type Scanner struct {
 	redis.ScanOpts
 
-	c  *Connection
-	it []byte
-	cb func([]string, error)
+	c   *Connection
+	err error
+	it  []byte
+	cb  func([]string, error)
 }
 
 func (s *Scanner) Next(cb func(keys []string, err error)) {
+	if s.err != nil {
+		cb(nil, s.err)
+		return
+	}
 	if len(s.it) == 1 && s.it[0] == '0' {
-		cb(nil, redis.ScanEOF)
+		cb(nil, nil)
 		return
 	}
 	s.cb = cb
@@ -22,8 +27,11 @@ func (s *Scanner) Next(cb func(keys []string, err error)) {
 }
 
 func (s *Scanner) set(it []byte, keys []string, err error) {
+	cb := s.cb
+	s.cb = nil
 	s.it = it
-	s.cb(keys, err)
+	s.err = err
+	cb(keys, err)
 }
 
 func (s *Connection) CallScan(opts redis.ScanOpts, it []byte, cb func([]byte, []string, error)) {

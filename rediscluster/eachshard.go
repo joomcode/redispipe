@@ -2,10 +2,9 @@ package rediscluster
 
 import (
 	"github.com/joomcode/redispipe/redis"
-	"github.com/joomcode/redispipe/redisconn"
 )
 
-func (c *Cluster) EachShard(cb func(*redisconn.Connection, error) bool) {
+func (c *Cluster) EachShard(cb func(redis.Sender, error) bool) {
 	masters := c.getMasterMap()
 	shards := c.getShardMap()
 	nodes := c.getNodeMap()

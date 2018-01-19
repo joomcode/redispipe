@@ -195,6 +195,10 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	return cluster, nil
 }
 
+func (c *Cluster) Close() {
+	c.cancel()
+}
+
 func (c *Cluster) String() string {
 	return fmt.Sprintf("*rediscluster.Cluster{Name: %s}", c.opts.Name)
 }

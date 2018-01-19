@@ -46,20 +46,19 @@ func main() {
 		IOTimeout: 1 * time.Second,
 	}
 	clustopts := rediscluster.Opts{
-		HostOpts:      connopts,
-		ConnsPerHost:  2,
-		Name:          "default",
-		CheckInterval: time.Second,
-		ForceInterval: 10 * time.Millisecond,
-		Logger:        &rediscluster.SkippingLogger{},
+		HostOpts:     connopts,
+		ConnsPerHost: 2,
+		Name:         "default",
+		Logger:       &rediscluster.SkippingLogger{},
 	}
 	addrs := []string{"127.0.0.1:30001", "127.0.0.1:30002"}
 	cluster, err := rediscluster.NewCluster(ctx, addrs, clustopts)
 	check(err)
 
-	//synccluster := redis.Sync{cluster.WithPolicy(rediscluster.PreferReplica)}
-	synccluster := redis.SyncCtx{cluster.WithPolicy(rediscluster.PreferReplica)}
-	reqctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	//synccluster := redis.SyncCtx{cluster.WithPolicy(rediscluster.PreferReplica)}
+	synccluster := redis.SyncCtx{cluster}
+	//reqctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	reqctx := context.TODO()
 
 	N, K := 800, 80000
 	start := time.Now()

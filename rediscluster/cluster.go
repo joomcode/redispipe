@@ -172,9 +172,14 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 
 	cluster.slotMap = make([]uint32, NumSlots/2)
 
+	var err error
 	for _, addr := range init_addrs {
 		if _, ok := masters[addr]; !ok {
-			nodes[addr] = cluster.newNode(addr)
+			nodes[addr], err = cluster.newNode(addr, true)
+			if err != nil {
+				cluster.cancel()
+				return nil, err
+			}
 		}
 	}
 

@@ -35,7 +35,7 @@ type ClusterHandle struct {
 	N       int
 }
 
-func (c *Cluster) newNode(addr string) *node {
+func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 	node := &node{
 		opts:    c.opts.HostOpts,
 		addr:    addr,
@@ -48,12 +48,16 @@ func (c *Cluster) newNode(addr string) *node {
 		var err error
 		node.conns[i], err = redisconn.Connect(c.ctx, addr, node.opts)
 		if err != nil {
-			// since we are connected in async mode, there are should no be
+			if initial {
+				return nil, err
+			}
+			// Since we are connected in async mode, there are should no be
 			// errors. If there is error, it is configuration error.
+			// There could no be configuration error after start.
 			panic(err)
 		}
 	}
-	return node
+	return node, nil
 }
 
 func (c *Cluster) addNode(addr string) *node {
@@ -78,7 +82,7 @@ func (c *Cluster) addNode(addr string) *node {
 	for a, node := range addrs {
 		new[a] = node
 	}
-	node := c.newNode(addr)
+	node, _ := c.newNode(addr, false)
 	new[addr] = node
 
 	c.nodeMap.Store(new)

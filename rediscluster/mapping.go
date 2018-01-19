@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"sync/atomic"
 
+	"github.com/joomcode/redispipe/impltool"
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
 )
@@ -123,11 +124,8 @@ Loop:
 			hadall := true
 			for _, needState := range []int{needConnected, mayBeConnected} {
 				mask := atomic.LoadUint32(&shard.good)
-				mask |= 1 // always trust master ????
 				for mask != 0 {
-					// LCG
-					off = off*5 + 1
-					k := ((off^off>>16)%n + a) / 3
+					k := (impltool.NextRng(&off, n) + a) / 3
 					if mask&(1<<k) == 0 {
 						// replica isn't healthy, or already viewed
 						continue
@@ -204,8 +202,7 @@ func (n *node) getConn(policy ConnHostPolicyEnum, needState int) *redisconn.Conn
 		l := uint32(len(n.conns))
 		mask := uint32(1)<<uint(l) - 1
 		for mask != 0 {
-			off = off*5 + 1
-			k := (off ^ off>>16) % l
+			k := impltool.NextRng(&off, l)
 			if mask&(1<<k) == 0 {
 				continue
 			}

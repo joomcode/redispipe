@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/joomcode/redispipe/internal"
+	. "github.com/joomcode/redispipe/impltool"
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/resp"
 )
@@ -243,7 +243,7 @@ func (conn *Connection) SendAsk(req Request, cb Future, n uint64, asking bool) {
 		cb = dumb
 	}
 	if err := conn.doSend(req, cb, n, asking); err != nil {
-		Go(func() { cb.Resolve(err.With("connection", conn), n) })
+		cb.Resolve(err.With("connection", conn), n)
 	}
 }
 
@@ -290,16 +290,25 @@ func (conn *Connection) SendBatch(requests []Request, cb Future, start uint64) {
 }
 
 func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint64, flags int) {
-	if len(requests) == 0 {
-		return
+	commonerr, pos, err := conn.doSendBatch(requests, cb, start, flags)
+	if commonerr != nil {
+		for i := 0; i < len(requests); i++ {
+			if i != pos {
+				cb.Resolve(commonerr, start+uint64(i))
+			} else {
+				cb.Resolve(err, start+uint64(i))
+			}
+		}
 	}
-	n := len(requests)
+}
+func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64, flags int) (error, int, error) {
+	if len(requests) == 0 {
+		return nil, 0, nil
+	}
+
 	if !cb.Active() {
 		err := conn.err(redis.ErrKindRequest, redis.ErrRequestIsNotActive)
-		for i := 0; i < n; i++ {
-			cb.Resolve(err, start+uint64(i))
-		}
-		return
+		return err, -1, nil
 	}
 
 	shardn, shard := conn.getShard()
@@ -310,19 +319,12 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
 		err = conn.err(redis.ErrKindContext, redis.ErrContextClosed).Wrap(conn.ctx.Err())
-		return
+		return err, -1, nil
 	case connDisconnected:
 		err = conn.err(redis.ErrKindConnection, redis.ErrNotConnected)
-		return
+		return err, -1, nil
 	}
-	if err != nil {
-		Go(func() {
-			for i := 0; i < n; i++ {
-				cb.Resolve(err, start+uint64(i))
-			}
-		})
-		return
-	}
+
 	buf := shard.buf
 	futures := shard.futures
 	if flags&DoAsking != 0 {
@@ -336,22 +338,12 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 	for i, req := range requests {
 		buf, err = resp.AppendRequest(buf, req)
 		if err != nil {
-			Go(func() {
-				var common_err error
-				err = err.With("connection", conn).With("request", requests[i])
-				common_err = conn.err(redis.ErrKindRequest, redis.ErrBatchFormat).
-					Wrap(err).
-					With("requests", requests).
-					With("request", requests[i])
-				for j := 0; j < n; j++ {
-					if j == i {
-						cb.Resolve(err, start+uint64(i))
-					} else {
-						cb.Resolve(common_err, start+uint64(j))
-					}
-				}
-			})
-			return
+			err = err.With("connection", conn).With("request", requests[i])
+			commonerr := conn.err(redis.ErrKindRequest, redis.ErrBatchFormat).
+				Wrap(err).
+				With("requests", requests).
+				With("request", requests[i])
+			return commonerr, i, err
 		}
 		futures = append(futures, future{cb, start + uint64(i)})
 	}
@@ -365,7 +357,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 	}
 	shard.buf = buf
 	shard.futures = futures
-	return
+	return nil, -1, nil
 }
 
 func (conn *Connection) SendTransaction(reqs []Request, cb Future, off uint64) {

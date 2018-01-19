@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/joomcode/redispipe/internal"
+	. "github.com/joomcode/redispipe/impltool"
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
 	"github.com/joomcode/redispipe/resp"
@@ -308,9 +308,7 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 	slot, ok := reqSlot(req)
 	if !ok {
 		c.forceReloading()
-		Go(func() {
-			cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
-		})
+		cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
 		return
 	}
 
@@ -318,7 +316,7 @@ func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb
 
 	conn, err := c.connForSlot(slot, policy)
 	if err != nil {
-		Go(func() { cb.Resolve(err, off) })
+		cb.Resolve(err, off)
 		return
 	}
 
@@ -440,7 +438,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 	if !ok {
 		err := c.err(redis.ErrKindRequest, redis.ErrNoSlotKey).
 			With("requests", reqs)
-		Go(func() { cb.Resolve(err, off) })
+		cb.Resolve(err, off)
 		return
 	}
 
@@ -448,7 +446,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 
 	if err != nil {
 		// ? no known alive connection for slot
-		Go(func() { cb.Resolve(err, off) })
+		cb.Resolve(err, off)
 		return
 	}
 

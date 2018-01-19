@@ -1,4 +1,4 @@
-package internal
+package impltool
 
 import "sync/atomic"
 
@@ -29,13 +29,11 @@ func Go(f func()) {
 	select {
 	case chans[i%shardN] <- f:
 	default:
-		i = i*0x12345 + 1
-		j := i ^ i>>16
-		i = i*0x12345 + 1
-		i ^= i >> 16
+		m := NextRng(&i, shardN)
+		n := NextRng(&i, shardN-1)
 		select {
-		case chans[i%shardN] <- f:
-		case chans[j%shardN] <- f:
+		case chans[m%shardN] <- f:
+		case chans[(m+1+n)%shardN] <- f:
 		}
 	}
 }

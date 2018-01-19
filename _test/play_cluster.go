@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
+	"strconv"
 	"sync"
 	"time"
 
@@ -66,13 +67,33 @@ func main() {
 	wg.Add(N)
 	for i := 0; i < N; i++ {
 		go func(i int) {
+			rnd := rand.New(rand.NewSource(rand.Int63()))
 			for j := 0; j < K; j++ {
-				res := synccluster.Do(reqctx, "GET", i*K+j)
+				v := rnd.Intn(10000)
+				var res interface{}
+				if rnd.Intn(10) == 0 {
+					res = synccluster.Do(reqctx, "SET", v, v)
+				} else {
+					res = synccluster.Do(reqctx, "GET", v)
+				}
 				if err := redis.AsError(res); err != nil {
 					if rand.Intn(30000) == 0 {
 						log.Println(err, i, j)
 					}
 				} else {
+					if res != nil {
+						if str, ok := res.(string); ok {
+							if str != "OK" {
+								log.Println("string", str)
+							}
+							continue
+						}
+						rr, err := strconv.Atoi(string(res.([]byte)))
+						if rr != v {
+							log.Println(err, i, j, rr, v)
+							continue
+						}
+					}
 					if rand.Intn(300000) == 0 {
 						log.Println("OK")
 					}

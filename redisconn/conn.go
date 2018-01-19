@@ -228,7 +228,7 @@ func (conn *Connection) getShard() (uint32, *connShard) {
 
 type dumbcb struct{}
 
-func (d dumbcb) Active() bool                { return true }
+func (d dumbcb) Cancelled() bool             { return false }
 func (d dumbcb) Resolve(interface{}, uint64) {}
 
 var dumb dumbcb
@@ -247,8 +247,8 @@ func (conn *Connection) SendAsk(req Request, cb Future, n uint64, asking bool) {
 }
 
 func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *redis.Error {
-	if !cb.Active() {
-		return conn.err(redis.ErrKindRequest, redis.ErrRequestIsNotActive)
+	if cb.Cancelled() {
+		return conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
 	}
 
 	shardn, shard := conn.getShard()
@@ -305,8 +305,8 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 		return nil, 0, nil
 	}
 
-	if !cb.Active() {
-		err := conn.err(redis.ErrKindRequest, redis.ErrRequestIsNotActive)
+	if cb.Cancelled() {
+		err := conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
 		return err, -1, nil
 	}
 
@@ -360,8 +360,8 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 }
 
 func (conn *Connection) SendTransaction(reqs []Request, cb Future, off uint64) {
-	if !cb.Active() {
-		cb.Resolve(conn.err(redis.ErrKindRequest, redis.ErrRequestIsNotActive), off)
+	if cb.Cancelled() {
+		cb.Resolve(conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled), off)
 		return
 	}
 	l := uint64(len(reqs))

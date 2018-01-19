@@ -47,8 +47,8 @@ type syncRes struct {
 	sync.WaitGroup
 }
 
-func (s *syncRes) Active() bool {
-	return true
+func (s *syncRes) Cancelled() bool {
+	return false
 }
 
 func (s *syncRes) Resolve(res interface{}, _ uint64) {
@@ -61,8 +61,8 @@ type syncBatch struct {
 	sync.WaitGroup
 }
 
-func (s *syncBatch) Active() bool {
-	return true
+func (s *syncBatch) Cancelled() bool {
+	return false
 }
 
 func (s *syncBatch) Resolve(res interface{}, i uint64) {

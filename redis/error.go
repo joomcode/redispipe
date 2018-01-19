@@ -114,7 +114,7 @@ const (
 	ErrClusterConfigEmpty
 	// Request already cancelled
 	// (ErrKindRequest)
-	ErrRequestIsNotActive
+	ErrRequestCancelled
 )
 
 var typeName = map[uint32]string{
@@ -137,7 +137,7 @@ var typeName = map[uint32]string{
 	ErrClusterSlots:   "ErrClusterSlots",
 	ErrExecEmpty:      "ErrExecEmpty",
 
-	ErrRequestIsNotActive: "ErrRequestIsNotActive",
+	ErrRequestCancelled:   "ErrRequestCancelled",
 	ErrClusterConfigEmpty: "ErrClusterConfigEmpty",
 	ErrResponseUnexpected: "ErrResponseUnexpected",
 	ErrHeaderlineTooLarge: "ErrHeaderlineTooLarge",
@@ -166,7 +166,7 @@ var defMessage = map[uint32]string{
 	ErrClusterSlots:   "could not retrieve slots from redis",
 	ErrExecEmpty:      "exec failed because of WATCH???",
 
-	ErrRequestIsNotActive: "request was already cancelled",
+	ErrRequestCancelled:   "request was already cancelled",
 	ErrClusterConfigEmpty: "cluster configuration is empty",
 	ErrResponseUnexpected: "redis response is unexpected",
 	ErrHeaderlineTooLarge: "headerline too large",

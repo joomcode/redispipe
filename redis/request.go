@@ -9,17 +9,17 @@ type Request struct {
 	Args []interface{}
 }
 
-type Activer interface {
-	Active() bool
+type Cancelling interface {
+	Cancelled() bool
 }
 
 type Future interface {
 	Resolve(res interface{}, n uint64)
-	Active() bool
+	Cancelled() bool
 }
 
 type FutureWrapped struct {
-	Activer
+	Cancelling
 	Func func(res interface{}, n uint64)
 }
 
@@ -27,11 +27,11 @@ func (cw FutureWrapped) Resolve(res interface{}, n uint64) {
 	cw.Func(res, n)
 }
 
-func WrapFuture(act Activer, f func(res interface{}, n uint64)) Future {
+func WrapFuture(act Cancelling, f func(res interface{}, n uint64)) Future {
 	return FutureWrapped{act, f}
 }
 
 type FuncFuture func(res interface{}, n uint64)
 
-func (f FuncFuture) Active() bool                      { return true }
+func (f FuncFuture) Cancelled() bool                   { return false }
 func (f FuncFuture) Resolve(res interface{}, n uint64) { f(res, n) }

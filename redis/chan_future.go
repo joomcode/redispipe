@@ -46,14 +46,14 @@ func (f *ChanFuture) Resolve(res interface{}, _ uint64) {
 	close(f.wait)
 }
 
-func (f *ChanFuture) Active() bool {
-	return true
+func (f *ChanFuture) Cancelled() bool {
+	return false
 }
 
 type ChanFutures []*ChanFuture
 
-func (f ChanFutures) Active() bool {
-	return true
+func (f ChanFutures) Cancelled() bool {
+	return false
 }
 
 func (f ChanFutures) Resolve(res interface{}, i uint64) {

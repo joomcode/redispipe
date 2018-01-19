@@ -66,8 +66,8 @@ func (s *ScannerBase) IterLast() bool {
 	return len(s.Iter) == 1 && s.Iter[0] == '0'
 }
 
-func (s *ScannerBase) Active() bool {
-	return s.cb.Active()
+func (s *ScannerBase) Cancelled() bool {
+	return s.cb.Cancelled()
 }
 
 func (s *ScannerBase) Resolve(res interface{}, _ uint64) {

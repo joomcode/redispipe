@@ -20,7 +20,7 @@ func (s SyncCtx) Send(ctx context.Context, r Request) interface{} {
 
 	select {
 	case <-ctx.Done():
-		return NewErr(ErrKindRequest, ErrRequestIsNotActive)
+		return NewErr(ErrKindRequest, ErrRequestCancelled)
 	case <-res.ch:
 		return res.r
 	}
@@ -38,7 +38,7 @@ func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) interface{} {
 
 	select {
 	case <-ctx.Done():
-		err := NewErr(ErrKindRequest, ErrRequestIsNotActive)
+		err := NewErr(ErrKindRequest, ErrRequestCancelled)
 		for i := range res.o {
 			res.Resolve(err, uint64(i))
 		}
@@ -56,7 +56,7 @@ func (s SyncCtx) SendTransaction(ctx context.Context, reqs []Request) ([]interfa
 	var r interface{}
 	select {
 	case <-ctx.Done():
-		r = NewErr(ErrKindRequest, ErrRequestIsNotActive)
+		r = NewErr(ErrKindRequest, ErrRequestCancelled)
 	case <-res.ch:
 		r = res.r
 	}
@@ -77,12 +77,12 @@ func newActive(ctx context.Context) active {
 	return active{ctx, make(chan struct{})}
 }
 
-func (c active) Active() bool {
+func (c active) Cancelled() bool {
 	select {
 	case <-c.ctx.Done():
-		return false
-	default:
 		return true
+	default:
+		return false
 	}
 }
 
@@ -137,7 +137,7 @@ func (s SyncCtxIterator) Next() ([]string, error) {
 	res := syncCtxScanRes{active: newActive(s.ctx)}
 	select {
 	case <-s.ctx.Done():
-		return nil, NewErr(ErrKindRequest, ErrRequestIsNotActive)
+		return nil, NewErr(ErrKindRequest, ErrRequestCancelled)
 	case <-res.ch:
 		return res.keys, res.err
 	}

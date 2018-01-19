@@ -358,8 +358,8 @@ type request struct {
 	try           uint8
 }
 
-func (r *request) Active() bool {
-	return r.cb.Active()
+func (r *request) Cancelled() bool {
+	return r.cb.Cancelled()
 }
 
 func (r *request) Resolve(res interface{}, _ uint64) {
@@ -377,8 +377,8 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 	default:
 	}
 	// or if request is not active already
-	if !r.cb.Active() {
-		r.cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestIsNotActive), r.off)
+	if r.cb.Cancelled() {
+		r.cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestCancelled), r.off)
 		return
 	}
 
@@ -478,8 +478,8 @@ func (t *transaction) send(conn *redisconn.Connection, ask bool) {
 	conn.SendBatchFlags(t.reqs, t, 0, flags)
 }
 
-func (t *transaction) Active() bool {
-	return t.cb.Active()
+func (t *transaction) Cancelled() bool {
+	return t.cb.Cancelled()
 }
 
 func (t *transaction) Resolve(res interface{}, n uint64) {
@@ -497,8 +497,8 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 	default:
 	}
 	// or if request is not active already
-	if !t.cb.Active() {
-		t.cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestIsNotActive), t.off)
+	if t.cb.Cancelled() {
+		t.cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestCancelled), t.off)
 		return
 	}
 

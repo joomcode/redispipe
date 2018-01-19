@@ -11,10 +11,6 @@ type Sender interface {
 	Scanner(opts ScanOpts) Scanner
 }
 
-type SendBatcher interface {
-	SendBatch(r []Request, cb Future, n uint64)
-}
-
 type Scanner interface {
 	Next(Future)
 }

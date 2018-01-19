@@ -1,7 +1,5 @@
 package redis
 
-import "github.com/joomcode/redispipe/resp"
-
 func Req(cmd string, args ...interface{}) Request {
 	return Request{cmd, args}
 }
@@ -22,7 +20,7 @@ func (req Request) Key() (string, bool) {
 	if len(req.Args) <= n {
 		return "", false
 	}
-	return resp.ArgToString(req.Args[n])
+	return ArgToString(req.Args[n])
 }
 
 type Cancelling interface {

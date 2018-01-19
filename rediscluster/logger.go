@@ -20,7 +20,8 @@ const (
 )
 
 type Logger interface {
-	Report(event LogKind, conn *Cluster, v ...interface{})
+	Report(event LogKind, c *Cluster, v ...interface{})
+	ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64)
 }
 
 func (c *Cluster) report(event LogKind, v ...interface{}) {
@@ -74,6 +75,10 @@ func (d DefaultLogger) Report(event LogKind, cluster *Cluster, v ...interface{})
 	}
 }
 
+func (d DefaultLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
+	// noop
+}
+
 type SkippingLogger struct {
 	dl     DefaultLogger
 	ts     int64
@@ -122,4 +127,8 @@ func (d defaultConnLogger) Report(event redisconn.LogKind, conn *redisconn.Conne
 	args := []interface{}{event, conn}
 	args = append(args, v...)
 	d.Cluster.opts.Logger.Report(LogHostEvent, d.Cluster, args...)
+}
+
+func (d defaultConnLogger) ReqStat(conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
+	d.Cluster.opts.Logger.ReqStat(d.Cluster, conn, req, res, nanos)
 }

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/joomcode/redispipe/redis"
-	"github.com/joomcode/redispipe/resp"
 )
 
 const (
@@ -266,12 +265,12 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 	var err *redis.Error
 	if asking {
 		buf = append(buf, askingReq...)
-		futures = append(futures, future{dumb, 0})
+		futures = append(futures, future{dumb, 0, 0, Request{}})
 	}
-	if buf, err = resp.AppendRequest(buf, req); err != nil {
+	if buf, err = redis.AppendRequest(buf, req); err != nil {
 		return err
 	}
-	futures = append(futures, future{cb, n})
+	futures = append(futures, future{cb, n, nownano(), req})
 	if len(shard.buf) == 0 {
 		conn.dirtyShard <- shardn
 	}
@@ -306,6 +305,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 		}
 	}
 }
+
 func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64, flags int) (error, int, error) {
 	if len(requests) == 0 {
 		return nil, 0, nil
@@ -334,14 +334,17 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	futures := shard.futures
 	if flags&DoAsking != 0 {
 		buf = append(buf, askingReq...)
-		futures = append(futures, future{dumb, 0})
+		futures = append(futures, future{dumb, 0, 0, Request{}})
 	}
 	if flags&DoTransaction != 0 {
 		buf = append(buf, multiReq...)
-		futures = append(futures, future{dumb, 0})
+		futures = append(futures, future{dumb, 0, 0, Request{}})
 	}
+
+	now := nownano()
+
 	for i, req := range requests {
-		buf, err = resp.AppendRequest(buf, req)
+		buf, err = redis.AppendRequest(buf, req)
 		if err != nil {
 			err = err.With("connection", conn).With("request", requests[i])
 			commonerr := conn.err(redis.ErrKindRequest, redis.ErrBatchFormat).
@@ -350,11 +353,11 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 				With("request", requests[i])
 			return commonerr, i, err
 		}
-		futures = append(futures, future{cb, start + uint64(i)})
+		futures = append(futures, future{cb, start + uint64(i), now, req})
 	}
 	if flags&DoTransaction != 0 {
 		buf = append(buf, execReq...)
-		futures = append(futures, future{cb, start + uint64(len(requests))})
+		futures = append(futures, future{cb, start + uint64(len(requests)), now, Request{"EXEC", nil}})
 	}
 
 	if len(shard.buf) == 0 {
@@ -450,7 +453,7 @@ func (conn *Connection) dial() error {
 	var res interface{}
 	// Password response
 	if conn.opts.Password != "" {
-		res = resp.Read(r)
+		res = redis.ReadResponse(r)
 		if err := redis.AsRedisError(res); err != nil {
 			connection.Close()
 			if strings.Contains(err.Error(), "password") {
@@ -460,7 +463,7 @@ func (conn *Connection) dial() error {
 		}
 	}
 	// PING Response
-	res = resp.Read(r)
+	res = redis.ReadResponse(r)
 	if err = redis.AsError(res); err != nil {
 		connection.Close()
 		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err)
@@ -473,7 +476,7 @@ func (conn *Connection) dial() error {
 	}
 	// SELECT DB Response
 	if conn.opts.DB != 0 {
-		res = resp.Read(r)
+		res = redis.ReadResponse(r)
 		if err = redis.AsError(res); err != nil {
 			connection.Close()
 			return conn.err(redis.ErrKindConnection, redis.ErrConnSetup).Wrap(err)
@@ -556,7 +559,7 @@ Loop:
 	for i := range conn.shard {
 		sh := &conn.shard[i]
 		for _, fut := range sh.futures {
-			fut.call(err)
+			conn.call(fut, err)
 		}
 		sh.buf = sh.buf[:0]
 		sh.futures = sh.futures[:0]
@@ -723,23 +726,23 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 Outter:
 	for futures = range one.futures {
 		for i, fut := range futures {
-			res = resp.Read(r)
+			res = redis.ReadResponse(r)
 			futures[i].Future = nil
 			if rerr := redis.AsRedisError(res); rerr.HardError() {
 				one.setErr(rerr, conn)
-				fut.call(one.err)
+				conn.call(fut, one.err)
 				break Outter
 			}
-			fut.call(res)
+			conn.call(fut, res)
 		}
 		futures = nil
 	}
 	for _, fut := range futures {
-		fut.call(one.err)
+		conn.call(fut, one.err)
 	}
 	for futures := range one.futures {
 		for _, fut := range futures {
-			fut.call(one.err)
+			conn.call(fut, one.err)
 		}
 	}
 }

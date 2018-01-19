@@ -15,6 +15,7 @@ const (
 
 type Logger interface {
 	Report(event LogKind, conn *Connection, v ...interface{})
+	ReqStat(conn *Connection, req Request, res interface{}, nanos int64)
 }
 
 type defaultLogger struct{}
@@ -41,4 +42,8 @@ func (d defaultLogger) Report(event LogKind, conn *Connection, v ...interface{})
 		args = append(args, v...)
 		log.Print(args...)
 	}
+}
+
+func (d defaultLogger) ReqStat(conn *Connection, req Request, res interface{}, nanos int64) {
+	// noop
 }

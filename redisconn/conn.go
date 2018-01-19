@@ -439,7 +439,7 @@ func (conn *Connection) dial() error {
 	}
 	if _, err = dc.Write(req); err != nil {
 		connection.Close()
-		return err
+		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err)
 	}
 	var res interface{}
 	// Password response

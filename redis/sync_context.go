@@ -26,7 +26,7 @@ func (s SyncCtx) Send(ctx context.Context, r Request) interface{} {
 	}
 }
 
-func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) interface{} {
+func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
 	res := ctxBatch{
 		active: newActive(ctx),
 		r:      make([]interface{}, len(reqs)),

@@ -1,5 +1,7 @@
 package redis
 
+import "github.com/joomcode/redispipe/resp"
+
 func Req(cmd string, args ...interface{}) Request {
 	return Request{cmd, args}
 }
@@ -7,6 +9,20 @@ func Req(cmd string, args ...interface{}) Request {
 type Request struct {
 	Cmd  string
 	Args []interface{}
+}
+
+func (req Request) Key() (string, bool) {
+	if req.Cmd == "RANDOMKEY" {
+		return "RANDOMKEY", false
+	}
+	n := 0
+	if req.Cmd == "EVAL" || req.Cmd == "EVALSHA" || req.Cmd == "BITOP" {
+		n = 1
+	}
+	if len(req.Args) <= n {
+		return "", false
+	}
+	return resp.ArgToString(req.Args[n])
 }
 
 type Cancelling interface {

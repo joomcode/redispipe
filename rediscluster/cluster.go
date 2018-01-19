@@ -11,7 +11,6 @@ import (
 
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
-	"github.com/joomcode/redispipe/resp"
 )
 
 type ConnHostPolicyEnum int8
@@ -246,17 +245,10 @@ func (c *Cluster) forceReloading() {
 }
 
 func reqSlot(req Request) (uint16, bool) {
-	n := 0
-	if req.Cmd == "RANDOMKEY" {
+	key, ok := req.Key()
+	if key == "RANDOMKEY" && !ok {
 		return uint16(rand.Intn(NumSlots)), true
 	}
-	if req.Cmd == "EVAL" || req.Cmd == "EVALSHA" || req.Cmd == "BITOP" {
-		n = 1
-	}
-	if len(req.Args) <= n {
-		return 0, false
-	}
-	key, ok := resp.ArgToString(req.Args[n])
 	return Slot(key), ok
 }
 

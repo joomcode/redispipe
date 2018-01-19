@@ -31,7 +31,7 @@ const (
 )
 
 const (
-	defaultCheckInterval = 30 * time.Second
+	defaultCheckInterval = 5 * time.Second
 	defaultForceInterval = 100 * time.Millisecond
 	defaultWaitToMigrate = 1 * time.Millisecond
 
@@ -56,7 +56,7 @@ type Opts struct {
 	// Name
 	Name string
 	// Check interval - default cluster configuration reloading interval
-	// default: 30 seconds, min: 1 second, max: 10 minutes
+	// default: 5 seconds, min: 1 second, max: 10 minutes
 	CheckInterval time.Duration
 	// Force interval - short interval for forcing reloading cluster configuration
 	// default: 100 milliseconds, min: 10 milliseconds, max: 1 second

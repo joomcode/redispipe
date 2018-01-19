@@ -4,7 +4,6 @@ import (
 	"runtime"
 	"sync/atomic"
 
-	"github.com/joomcode/redispipe/impltool"
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
 )
@@ -58,6 +57,44 @@ func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 		}
 	}
 	return node, nil
+}
+
+type connThen func(conn *redisconn.Connection, err error)
+
+func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
+	if conn := c.connForAddress(addr); conn != nil {
+		then(conn, nil)
+		return
+	}
+
+	c.nodeWait.Lock()
+	defer c.nodeWait.Unlock()
+
+	if c.nodeWait.promises == nil {
+		c.nodeWait.promises = make(map[string]*[]connThen, 1)
+	}
+
+	if future, ok := c.nodeWait.promises[addr]; ok {
+		*future = append(*future, then)
+		return
+	}
+
+	future := &[]connThen{then}
+	c.nodeWait.promises[addr] = future
+	go func() {
+		node := c.addNode(addr)
+		var err error
+		conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
+		if conn == nil {
+			err = c.err(redis.ErrKindConnection, redis.ErrDial).With("address", addr)
+		}
+		c.nodeWait.Lock()
+		delete(c.nodeWait.promises, addr)
+		c.nodeWait.Unlock()
+		for _, cb := range *future {
+			cb(conn, err)
+		}
+	}()
 }
 
 func (c *Cluster) addNode(addr string) *node {
@@ -129,7 +166,7 @@ Loop:
 			for _, needState := range []int{needConnected, mayBeConnected} {
 				mask := atomic.LoadUint32(&shard.good)
 				for mask != 0 {
-					k := (impltool.NextRng(&off, n) + a) / 3
+					k := (nextRng(&off, n) + a) / 3
 					if mask&(1<<k) == 0 {
 						// replica isn't healthy, or already viewed
 						continue
@@ -206,7 +243,7 @@ func (n *node) getConn(policy ConnHostPolicyEnum, needState int) *redisconn.Conn
 		l := uint32(len(n.conns))
 		mask := uint32(1)<<uint(l) - 1
 		for mask != 0 {
-			k := impltool.NextRng(&off, l)
+			k := nextRng(&off, l)
 			if mask&(1<<k) == 0 {
 				continue
 			}
@@ -233,4 +270,10 @@ func (n *node) copyVersion(c *Cluster) {
 func (n *node) isOlder(cver uint32) bool {
 	nver := atomic.LoadUint32(&n.version)
 	return (nver-cver)&0x80000000 != 0
+}
+
+func nextRng(state *uint32, mod uint32) uint32 {
+	v := *state
+	*state = v*0x12345 + 1
+	return (v ^ v>>16) % mod
 }

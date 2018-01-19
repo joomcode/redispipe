@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/joomcode/redispipe/impltool"
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
 	"github.com/joomcode/redispipe/resp"
@@ -94,7 +93,11 @@ type Cluster struct {
 	masterMap atomic.Value // map[string]uint32
 	nextShard uint16
 
-	nodeMap atomic.Value // map[string]*host
+	nodeMap  atomic.Value // map[string]*host
+	nodeWait struct {
+		sync.Mutex
+		promises map[string]*[]connThen
+	}
 
 	// map of slot to shard
 	slotMap []uint32
@@ -414,18 +417,12 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 			r.try++
 			r.lastErrIsHard = false
 			addr := err.Get("movedto").(string)
-			conn := r.c.connForAddress(addr)
-			if conn != nil {
-				conn.SendAsk(r.req, r, 0, err.Code == redis.ErrAsk)
-				return
-			}
-			Go(func() {
-				conn, cerr := r.c.newConn(addr)
+			r.c.ensureConnForAddress(addr, func(conn *redisconn.Connection, cerr error) {
 				if cerr != nil {
 					r.cb.Resolve(cerr, r.off)
-					return
+				} else {
+					conn.SendAsk(r.req, r, 0, err.Code == redis.ErrAsk)
 				}
-				conn.SendAsk(r.req, r, 0, err.Code == redis.ErrAsk)
 			})
 			return
 		}
@@ -586,20 +583,13 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 }
 
 func (t *transaction) sendMoved(addr string, asking bool) {
-	conn := t.c.connForAddress(addr)
-	if conn != nil {
-		t.send(conn, asking)
-		return
-	}
-	Go(func() {
-		conn, cerr := t.c.newConn(addr)
+	t.c.ensureConnForAddress(addr, func(conn *redisconn.Connection, cerr error) {
 		if cerr != nil {
 			t.cb.Resolve(cerr, t.off)
-			return
+		} else {
+			t.send(conn, asking)
 		}
-		t.send(conn, asking)
 	})
-	return
 }
 
 func (c *Cluster) newConn(addr string) (*redisconn.Connection, error) {

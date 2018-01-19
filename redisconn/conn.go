@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/joomcode/redispipe/impltool"
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/resp"
 )

@@ -55,7 +55,7 @@ func (c *Cluster) updateMappings(ranges []redis.SlotsRange) {
 		if node, ok := oldNodes[addr]; ok {
 			node.copyVersion(c)
 		} else {
-			node = c.newNode(addr)
+			node, _ = c.newNode(addr, false)
 			tmpNodes[addr] = node
 		}
 	}
@@ -110,6 +110,10 @@ func (c *Cluster) updateMappings(ranges []redis.SlotsRange) {
 		newShards[shardn] = sh
 		random = shardn
 	}
+
+	c.nodeWait.Lock()
+	c.nodeWait.promises = nil
+	c.nodeWait.Unlock()
 
 	c.nodeMap.Store(tmpNodes)
 	c.shardMap.Store(tmpShards)

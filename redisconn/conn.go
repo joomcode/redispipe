@@ -281,7 +281,13 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 }
 
 func (conn *Connection) SendMany(requests []Request, cb Future, start uint64) {
-	conn.SendBatch(requests, cb, start)
+	for i := 0; i < len(requests); i += 16 {
+		j := i + 16
+		if j > len(requests) {
+			j = len(requests)
+		}
+		conn.SendBatch(requests[i:j], cb, start+uint64(i))
+	}
 }
 
 func (conn *Connection) SendBatch(requests []Request, cb Future, start uint64) {

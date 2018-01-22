@@ -23,34 +23,33 @@ const (
 	connConnected    = 2
 	connClosed       = 3
 
-	defaultReconnectPause = 500 * time.Millisecond
-	defaultKeepAlive      = 300 * time.Millisecond
-	defaultIOTimeout      = 1 * time.Second
+	defaultIOTimeout = 1 * time.Second
 )
 
 type Opts struct {
-	// ReconnectPause is a pause after failed connection attempt before next one.
-	// If ReconnectPause < 0, then no reconnection will be performed.
-	// If ReconnectPause == 0, then default pause used (250ms)
-	// ReconnectPause/2 is used as timeout for Dial
-	ReconnectPause time.Duration
-	// DialTimeout is timeout for net.Dialer
-	// If not set, then ReconnectPause/2 is used (unless ReconnectPause < 0)
-	DialTimeout time.Duration
 	// DB - database number
 	DB int
 	// Password for AUTH
 	Password string
+	// IOTimeout - timeout on read/write to socket.
+	// If IOTimeout == 0, then it is set to 1 second
+	// If IOTimeout < 0, then timeout is disabled
+	IOTimeout time.Duration
+	// DialTimeout is timeout for net.Dialer
+	// If it is <= 0 or >= IOTimeout, then IOTimeout
+	// If IOTimeout is disabled, then 5 seconds used (but without affect on ReconnectPause)
+	DialTimeout time.Duration
+	// ReconnectPause is a pause after failed connection attempt before next one.
+	// If ReconnectPause < 0, then no reconnection will be performed.
+	// If ReconnectPause == 0, then DialTimeout * 2 is used
+	ReconnectPause time.Duration
+	// TCPKeepAlive - KeepAlive parameter for net.Dialer
+	// default is IOTimeout / 3
+	TCPKeepAlive time.Duration
 	// Handle is returned with Connection.Handle()
 	Handle interface{}
 	// Concurrency - number for shards. Default is runtime.GOMAXPROCS(-1)*4
 	Concurrency uint32
-	// IOTimeout - timeout on read/write to socket.
-	// If IOTimeout == 0, then it is set to 200 ms
-	// If IOTimeout < 0, then timeout is disabled
-	IOTimeout time.Duration
-	// TCPKeepAlive - KeepAlive parameter for net.Dialer
-	TCPKeepAlive time.Duration
 	// Logger
 	Logger Logger
 	// Async - do not establish connection immediately
@@ -111,20 +110,25 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	conn.shard = make([]connShard, conn.opts.Concurrency)
 	conn.dirtyShard = make(chan uint32, conn.opts.Concurrency*2)
 
-	if conn.opts.ReconnectPause == 0 {
-		conn.opts.ReconnectPause = defaultReconnectPause
-	}
-
-	if conn.opts.TCPKeepAlive == 0 {
-		conn.opts.TCPKeepAlive = defaultKeepAlive
-	} else if conn.opts.TCPKeepAlive < 0 {
-		conn.opts.TCPKeepAlive = 0
-	}
-
 	if conn.opts.IOTimeout == 0 {
 		conn.opts.IOTimeout = defaultIOTimeout
 	} else if conn.opts.IOTimeout < 0 {
 		conn.opts.IOTimeout = 0
+	}
+
+	if conn.opts.DialTimeout <= 0 || conn.opts.DialTimeout > conn.opts.IOTimeout {
+		conn.opts.DialTimeout = conn.opts.IOTimeout
+	}
+
+	if conn.opts.ReconnectPause == 0 {
+		conn.opts.ReconnectPause = conn.opts.DialTimeout * 2
+	}
+
+	if conn.opts.TCPKeepAlive == 0 {
+		conn.opts.TCPKeepAlive = conn.opts.IOTimeout / 3
+	}
+	if conn.opts.TCPKeepAlive < 0 {
+		conn.opts.TCPKeepAlive = 0
 	}
 
 	if conn.opts.Logger == nil {
@@ -409,10 +413,8 @@ func (conn *Connection) dial() error {
 	var err error
 	network := "tcp"
 	address := conn.addr
-	timeout := conn.opts.ReconnectPause / 2
-	if timeout <= 0 {
-		timeout = defaultReconnectPause / 2
-	} else if timeout > 5*time.Second {
+	timeout := conn.opts.DialTimeout
+	if timeout <= 0 || timeout > 5*time.Second {
 		timeout = 5 * time.Second
 	}
 	if address[0] == '.' || address[0] == '/' {

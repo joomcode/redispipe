@@ -12,15 +12,25 @@ type Scanner struct {
 }
 
 func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
-	masters := c.getMasterMap()
-	addrs := make([]string, 0, len(masters))
-	for addr := range masters {
-		addrs = append(addrs, addr)
-	}
-	if len(addrs) == 0 {
-		s := &Scanner{}
-		s.Err = c.err(redis.ErrKindCluster, redis.ErrClusterConfigEmpty)
-		return s
+	var addrs []string
+
+	if opts.Cmd == "" || opts.Cmd == "SCAN" {
+		masters := c.getMasterMap()
+		addrs = make([]string, 0, len(masters))
+		for addr := range masters {
+			addrs = append(addrs, addr)
+		}
+		if len(addrs) == 0 {
+			s := &Scanner{}
+			s.Err = c.err(redis.ErrKindCluster, redis.ErrClusterConfigEmpty)
+			return s
+		}
+	} else {
+		// other commands operates on single key
+		key := opts.Key
+		slot := Slot(key)
+		shard := c.slot2shard(slot)
+		addrs = shard.addr[:1]
 	}
 
 	return &Scanner{

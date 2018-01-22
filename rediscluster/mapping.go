@@ -127,6 +127,19 @@ func (c *Cluster) addNode(addr string) *node {
 	return node
 }
 
+func (c *Cluster) slot2shard(slot uint16) *shard {
+	for {
+		sh32 := atomic.LoadUint32(&c.slotMap[slot/2])
+		sh16 := uint16((sh32 >> (16 * (slot & 1))) & 0xffff)
+		shards := c.getShardMap()
+		shard := shards[sh16]
+		if shard != nil {
+			return shard
+		}
+		runtime.Gosched()
+	}
+}
+
 func (c *Cluster) connForSlot(slot uint16, policy MasterReplicaPolicyEnum) (*redisconn.Connection, error) {
 	// We are not synchronizing by locks, so we need to spin until we have
 	// consistent configuration, ie for shard number we have a shard in a shardmap
@@ -134,14 +147,7 @@ func (c *Cluster) connForSlot(slot uint16, policy MasterReplicaPolicyEnum) (*red
 	var conn *redisconn.Connection
 Loop:
 	for {
-		sh32 := atomic.LoadUint32(&c.slotMap[slot/2])
-		sh16 := uint16((sh32 >> (16 * (slot & 1))) & 0xffff)
-		shards := c.getShardMap()
-		shard := shards[sh16]
-		if shard == nil {
-			runtime.Gosched()
-			continue
-		}
+		shard := c.slot2shard(slot)
 		nodes := c.getNodeMap()
 		var addr string
 		switch policy {

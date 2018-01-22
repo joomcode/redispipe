@@ -67,6 +67,8 @@ func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
 			str := strconv.FormatFloat(v, 'f', -1, 64)
 			buf = appendHead(buf, '$', int64(len(str)))
 			buf = append(buf, str...)
+		case nil:
+			buf = append(buf, "$0\r\n"...)
 		default:
 			return nil, NewErr(ErrKindRequest, ErrArgumentType).
 				With("val", val).With("request", req)

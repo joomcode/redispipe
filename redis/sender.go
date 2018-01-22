@@ -9,7 +9,7 @@ type Sender interface {
 	SendMany(r []Request, cb Future, n uint64)
 	SendTransaction(r []Request, cb Future, start uint64)
 	Scanner(opts ScanOpts) Scanner
-	EachShard(func(Sender, error))
+	EachShard(func(Sender, error) bool)
 	Close()
 }
 

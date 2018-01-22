@@ -80,8 +80,8 @@ func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
 
 func appendInt(b []byte, i int64) []byte {
 	var u uint
-	if i == 0 {
-		b = append(b, '0', '\r', '\n')
+	if i >= 0 && i <= 9 {
+		b = append(b, byte(i)+'0')
 		return b
 	}
 	if i > 0 {

@@ -80,7 +80,7 @@ func (d DefaultLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Reque
 }
 
 type SkippingLogger struct {
-	dl     DefaultLogger
+	DefaultLogger
 	ts     int64
 	rnd    uint32
 	counts [int(LogMAX) + int(redisconn.LogMAX)]uint32
@@ -108,15 +108,12 @@ func (s *SkippingLogger) Report(event LogKind, cluster *Cluster, v ...interface{
 		}
 	}
 	rnd := atomic.AddUint32(&s.rnd, 1)
-	rnd *= 0x12345679
-	rnd ^= rnd >> 16
-	rnd *= 0x12345679
 	k := atomic.LoadUint32(&s.counts[n])
-	if k >= 32 || rnd>>(32-k) != 0 {
+	if k >= 32 || rnd&(1<<k-1) != 0 {
 		return
 	}
 	atomic.AddUint32(&s.counts[n], 1)
-	s.dl.Report(event, cluster, v...)
+	s.DefaultLogger.Report(event, cluster, v...)
 }
 
 type defaultConnLogger struct {

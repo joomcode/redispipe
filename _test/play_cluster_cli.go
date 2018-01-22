@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joomcode/redispipe/redis"
@@ -45,21 +46,40 @@ func main() {
 		if err != nil {
 			break
 		}
-		parts := bytes.Split(line, []byte(" "))
-		args := make([]interface{}, 0, len(parts))
-		for _, s := range parts {
-			if len(s) > 0 {
-				args = append(args, s)
+		cmds := bytes.Split(line, []byte(";"))
+		reqs := []Req{}
+		for _, cmd := range cmds {
+			parts := bytes.Split(cmd, []byte(" "))
+			args := make([]interface{}, 0, len(parts))
+			for _, s := range parts {
+				if len(s) > 0 {
+					args = append(args, s)
+				}
 			}
+			if len(args) == 0 {
+				continue
+			}
+			reqs = append(reqs, Req{string(args[0].([]byte)), args[1:]})
 		}
-		if len(args) == 0 {
+		switch l := len(reqs); l {
+		case 0:
 			continue
-		}
-		r := synccluster.Send(Req{string(args[0].([]byte)), args[1:]})
-		if err := redis.AsError(r); err != nil {
-			fmt.Println("error:", err)
-		} else {
-			fmt.Println("result:", r)
+		case 1:
+			r := synccluster.Send(reqs[0])
+			if err := redis.AsError(r); err != nil {
+				fmt.Println("error:", err)
+			} else {
+				fmt.Println("result:", r)
+			}
+		default:
+			if strings.ToUpper(reqs[0].Cmd) == "MULTI" &&
+				strings.ToUpper(reqs[l-1].Cmd) == "EXEC" {
+				res, err := synccluster.SendTransaction(reqs)
+				fmt.Printf("results: %+v\nerror: %v\n", res, err)
+			} else {
+				res := synccluster.SendMany(reqs)
+				fmt.Printf("results: %+v\n", res)
+			}
 		}
 	}
 }

@@ -271,6 +271,7 @@ func batchSlot(reqs []Request) (uint16, bool) {
 		}
 		if !set {
 			slot = s
+			set = true
 		} else if slot != s {
 			return 0, false
 		}

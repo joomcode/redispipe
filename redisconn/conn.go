@@ -451,7 +451,7 @@ func (conn *Connection) dial() error {
 	}
 	req = append(req, pingReq...)
 	if conn.opts.DB != 0 {
-		req = append(req, selectReq...)
+		req, _ = redis.AppendRequest(req, Request{"SELECT", []interface{}{conn.opts.DB}})
 	}
 	if _, err = dc.Write(req); err != nil {
 		connection.Close()

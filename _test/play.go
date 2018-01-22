@@ -40,6 +40,7 @@ func main() {
 	ctx, _ := context.WithTimeout(context.Background(), 10000*time.Second)
 	opts := redisconn.Opts{
 		IOTimeout: 1 * time.Second,
+		DB:        1,
 	}
 	conn, err := redisconn.Connect(ctx, "localhost:6379", opts)
 	check(err)

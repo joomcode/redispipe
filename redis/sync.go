@@ -21,6 +21,10 @@ func (s Sync) Send(r Request) interface{} {
 }
 
 func (s Sync) SendMany(reqs []Request) []interface{} {
+	if len(reqs) == 0 {
+		return nil
+	}
+
 	res := syncBatch{
 		r: make([]interface{}, len(reqs)),
 	}

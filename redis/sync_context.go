@@ -27,6 +27,10 @@ func (s SyncCtx) Send(ctx context.Context, r Request) interface{} {
 }
 
 func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
+	if len(reqs) == 0 {
+		return nil
+	}
+
 	res := ctxBatch{
 		active: newActive(ctx),
 		r:      make([]interface{}, len(reqs)),

@@ -3,8 +3,6 @@ package rediscluster
 import (
 	"fmt"
 	"log"
-	"sync/atomic"
-	"time"
 
 	"github.com/joomcode/redispipe/redisconn"
 )
@@ -77,43 +75,6 @@ func (d DefaultLogger) Report(event LogKind, cluster *Cluster, v ...interface{})
 
 func (d DefaultLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
 	// noop
-}
-
-type SkippingLogger struct {
-	DefaultLogger
-	ts     int64
-	rnd    uint32
-	counts [int(LogMAX) + int(redisconn.LogMAX)]uint32
-}
-
-func (s *SkippingLogger) Report(event LogKind, cluster *Cluster, v ...interface{}) {
-	n := uint32(event)
-	if event == LogHostEvent {
-		n = uint32(LogMAX) + uint32(v[0].(redisconn.LogKind))
-	}
-	ts := time.Now().UnixNano()
-	oldts := atomic.LoadInt64(&s.ts)
-	if ts >= oldts && atomic.CompareAndSwapInt64(&s.ts, oldts, ts+1e8) && oldts != 0 {
-		del := uint32(2)
-		dist := (oldts - ts) / 1e8
-		if dist > 5 {
-			del = 33
-		} else {
-			for ; dist > 0; dist-- {
-				del *= 2
-			}
-		}
-		for i := range s.counts {
-			atomic.StoreUint32(&s.counts[i], atomic.LoadUint32(&s.counts[i])/del)
-		}
-	}
-	rnd := atomic.AddUint32(&s.rnd, 1)
-	k := atomic.LoadUint32(&s.counts[n])
-	if k >= 32 || rnd&(1<<k-1) != 0 {
-		return
-	}
-	atomic.AddUint32(&s.counts[n], 1)
-	s.DefaultLogger.Report(event, cluster, v...)
 }
 
 type defaultConnLogger struct {

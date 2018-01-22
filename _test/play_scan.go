@@ -35,7 +35,6 @@ func main() {
 		Name:          "default",
 		CheckInterval: time.Second,
 		ForceInterval: 10 * time.Millisecond,
-		Logger:        &rediscluster.SkippingLogger{},
 	}
 	addrs := []string{"127.0.0.1:30001", "127.0.0.1:30002"}
 	cluster, err := rediscluster.NewCluster(ctx, addrs, clustopts)

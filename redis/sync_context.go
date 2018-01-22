@@ -121,24 +121,19 @@ type SyncCtxIterator struct {
 	s   Scanner
 }
 
-type syncCtxScanRes struct {
-	active
-	keys []string
-	err  error
-}
-
-func (r *syncCtxScanRes) Resolve(keys []string, err error) {
-	r.keys = keys
-	r.err = err
-	r.done()
-}
-
 func (s SyncCtxIterator) Next() ([]string, error) {
-	res := syncCtxScanRes{active: newActive(s.ctx)}
+	res := ctxRes{active: newActive(s.ctx)}
+	s.s.Next(&res)
 	select {
 	case <-s.ctx.Done():
 		return nil, NewErr(ErrKindRequest, ErrRequestCancelled)
 	case <-res.ch:
-		return res.keys, res.err
+	}
+	if err := AsError(res.r); err != nil {
+		return nil, err
+	} else if res.r == nil {
+		return nil, ScanEOF
+	} else {
+		return res.r.([]string), nil
 	}
 }

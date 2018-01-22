@@ -195,6 +195,11 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	return cluster, nil
 }
 
+// Context of this connection
+func (c *Cluster) Ctx() context.Context {
+	return c.ctx
+}
+
 func (c *Cluster) Close() {
 	c.cancel()
 }

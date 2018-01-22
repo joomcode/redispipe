@@ -168,6 +168,11 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	return conn, nil
 }
 
+// Context of this connection
+func (conn *Connection) Ctx() context.Context {
+	return conn.ctx
+}
+
 // Connection is certainly connected now
 func (conn *Connection) ConnectedNow() bool {
 	return atomic.LoadUint32(&conn.state) == connConnected

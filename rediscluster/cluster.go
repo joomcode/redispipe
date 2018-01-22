@@ -43,7 +43,7 @@ type Opts struct {
 	// Note that HostOpts.Handle will be overwritten to ClusterHandle{ cluster.opts.Handle, conn.address}
 	HostOpts redisconn.Opts
 	// ConnsPerHost - how many connections are established to each host
-	// if ConnsPerHost <= 1 then ConnsPerHost = 1
+	// if ConnsPerHost < 1 then ConnsPerHost = 2
 	ConnsPerHost int
 	// ConnHostPolicy - either prefer to send to first connection until it is disconnected, or
 	//					send to all connections in round robin maner
@@ -131,8 +131,8 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 		cluster.opts.Logger = DefaultLogger{}
 	}
 
-	if cluster.opts.ConnsPerHost <= 1 {
-		cluster.opts.ConnsPerHost = 1
+	if cluster.opts.ConnsPerHost < 1 {
+		cluster.opts.ConnsPerHost = 2
 	}
 
 	if cluster.opts.CheckInterval <= 0 {

@@ -10,14 +10,25 @@ import (
 
 func (c *Cluster) SlotRanges() ([]redis.SlotsRange, error) {
 	nodes := c.getNodeMap()
-	for _, node := range nodes {
-		for _, conn := range node.conns {
-			res := redis.Sync{conn}.Do("CLUSTER SLOTS")
-			slotsres, err := redis.ParseSlotsInfo(res)
-			if err == nil {
-				return slotsres, nil
+	for _, searchConnected := range []bool{true, false} {
+		for _, node := range nodes {
+			for i := len(node.conns) - 1; i >= 0; i-- {
+				conn := node.conns[i]
+				var maySend bool
+				if searchConnected {
+					maySend = conn.ConnectedNow()
+				} else {
+					maySend = conn.MayBeConnected()
+				}
+				if maySend {
+					res := redis.Sync{conn}.Do("CLUSTER SLOTS")
+					slotsres, err := redis.ParseSlotsInfo(res)
+					if err == nil {
+						return slotsres, nil
+					}
+					c.report(LogClusterSlotsError, conn, err)
+				}
 			}
-			c.report(LogClusterSlotsError, conn, err)
 		}
 	}
 	c.report(LogClusterSlotsError)

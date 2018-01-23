@@ -5,15 +5,18 @@ import (
 	"strings"
 )
 
+type ErrorKind uint32
+type ErrorCode uint32
+
 type Error struct {
-	Kind uint32
-	Code uint32
+	Kind ErrorKind
+	Code ErrorCode
 	*kv
 }
 
 const (
 	// options are wrong
-	ErrKindOpts = iota + 1
+	ErrKindOpts ErrorKind = iota + 1
 	// context explicitely closed
 	ErrKindContext
 	// Connection was not established at the moment request were done,
@@ -34,10 +37,28 @@ const (
 	ErrKindResult
 )
 
+var kindName = map[ErrorKind]string{
+	ErrKindOpts:       "ErrKindOpts",
+	ErrKindContext:    "ErrKindContext",
+	ErrKindConnection: "ErrKindConnection",
+	ErrKindIO:         "ErrKindIO",
+	ErrKindRequest:    "ErrKindRequest",
+	ErrKindResponse:   "ErrKindResponse",
+	ErrKindCluster:    "ErrKindCluster",
+	ErrKindResult:     "ErrKindResult",
+}
+
+func (k ErrorKind) String() string {
+	if s, ok := kindName[k]; ok {
+		return s
+	}
+	return fmt.Sprintf("ErrKindUnknown%d", k)
+}
+
 const (
 	// context is not passed to contructor
 	// (ErrKindOpts)
-	ErrContextIsNil = iota + 1
+	ErrContextIsNil ErrorCode = iota + 1
 	// (ErrKindOpts)
 	ErrNoAddressProvided
 	// context were explicitely closed (connection or cluster shut down)
@@ -117,7 +138,7 @@ const (
 	ErrRequestCancelled
 )
 
-var typeName = map[uint32]string{
+var codeName = map[ErrorCode]string{
 	ErrContextIsNil:   "ErrContextIsNil",
 	ErrContextClosed:  "ErrContextClosed",
 	ErrNotConnected:   "ErrNotConnected",
@@ -147,7 +168,14 @@ var typeName = map[uint32]string{
 	ErrUnknownHeaderType:  "ErrUnknownHeaderType",
 }
 
-var defMessage = map[uint32]string{
+func (c ErrorCode) String() string {
+	if s, ok := codeName[c]; ok {
+		return s
+	}
+	return fmt.Sprintf("ErrUnknown%d", c)
+}
+
+var defMessage = map[ErrorCode]string{
 	ErrContextIsNil:   "context is not set",
 	ErrContextClosed:  "context is closed",
 	ErrNotConnected:   "connection is not established",
@@ -178,15 +206,15 @@ var defMessage = map[uint32]string{
 	//ErrResult:         "",
 }
 
-func NewErr(kind, code uint32) *Error {
+func NewErr(kind ErrorKind, code ErrorCode) *Error {
 	return &Error{Kind: kind, Code: code}
 }
 
-func NewErrMsg(kind, code uint32, msg string) *Error {
+func NewErrMsg(kind ErrorKind, code ErrorCode, msg string) *Error {
 	return Error{Kind: kind, Code: code}.With("message", msg)
 }
 
-func NewErrWrap(kind, code uint32, err error) *Error {
+func NewErrWrap(kind ErrorKind, code ErrorCode, err error) *Error {
 	return Error{Kind: kind, Code: code}.With("cause", err)
 }
 
@@ -210,7 +238,7 @@ func (e *Error) HardError() bool {
 }
 
 func (e Error) Error() string {
-	typ := typeName[e.Code]
+	typ := e.Code.String()
 	if typ == "" {
 		typ = fmt.Sprintf("ErrUnknown%d", e.Code)
 	}
@@ -224,13 +252,14 @@ func (e Error) Error() string {
 }
 
 func (e Error) Msg() string {
-	msg, _ := e.Get("message").(string)
-	if msg == "" {
+	msg, ok := e.Get("message").(string)
+	if !ok {
 		if err := e.Cause(); err != nil {
 			msg = err.Error()
+			ok = true
 		}
 	}
-	if msg == "" {
+	if !ok {
 		msg = defMessage[e.Code]
 		if msg == "" {
 			msg = "generic "

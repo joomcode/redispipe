@@ -268,6 +268,10 @@ func TestAppendRequestArgument(t *testing.T) {
 	assert.Equal(t, []byte("*2\r\n$3\r\nCMD\r\n$0\r\n\r\n"), k)
 	assert.Nil(t, err)
 
+	k, err = AppendRequest(nil, Req("CMD", ""))
+	assert.Equal(t, []byte("*2\r\n$3\r\nCMD\r\n$0\r\n\r\n"), k)
+	assert.Nil(t, err)
+
 	k, err = AppendRequest(nil, Req("CMD", "asdf"))
 	assert.Equal(t, []byte("*2\r\n$3\r\nCMD\r\n$4\r\nasdf\r\n"), k)
 	assert.Nil(t, err)
@@ -290,8 +294,8 @@ func TestAppendRequestArgument(t *testing.T) {
 	k, err = AppendRequest(nil, Req("CMD", make(chan int)))
 	assert.Nil(t, k)
 	assert.NotNil(t, err)
-	assert.Equal(t, uint32(ErrKindRequest), err.Kind)
-	assert.Equal(t, uint32(ErrArgumentType), err.Code)
+	assert.Equal(t, ErrKindRequest, err.Kind)
+	assert.Equal(t, ErrArgumentType, err.Code)
 }
 
 func TestAppendRequestCmdAndArgcount(t *testing.T) {

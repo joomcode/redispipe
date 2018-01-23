@@ -604,6 +604,6 @@ func (c *Cluster) newConn(addr string) (*redisconn.Connection, error) {
 	return conn, nil
 }
 
-func (c *Cluster) err(kind uint32, code uint32) *redis.Error {
+func (c *Cluster) err(kind redis.ErrorKind, code redis.ErrorCode) *redis.Error {
 	return redis.NewErr(kind, code).With("cluster", c)
 }

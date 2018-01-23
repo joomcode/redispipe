@@ -763,6 +763,6 @@ Outter:
 	}
 }
 
-func (conn *Connection) err(kind uint32, code uint32) *redis.Error {
+func (conn *Connection) err(kind redis.ErrorKind, code redis.ErrorCode) *redis.Error {
 	return redis.NewErr(kind, code).With("connection", conn)
 }

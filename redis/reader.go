@@ -79,10 +79,10 @@ func ReadResponse(b *bufio.Reader) interface{} {
 		if v < 0 {
 			return nil
 		}
-		result := make([]interface{}, v, v)
+		result := make([]interface{}, v)
 		for i := int64(0); i < v; i++ {
 			result[i] = ReadResponse(b)
-			if e, ok := result[i].(*Error); ok && e.Kind == ErrKindIO {
+			if e, ok := result[i].(*Error); ok && e.Kind != ErrKindResult {
 				return e
 			}
 		}
@@ -93,6 +93,10 @@ func ReadResponse(b *bufio.Reader) interface{} {
 }
 
 func parseInt(buf []byte) (int64, error) {
+	if len(buf) == 0 {
+		return 0, NewErr(ErrKindResponse, ErrIntegerParsing)
+	}
+
 	neg := buf[0] == '-'
 	if neg {
 		buf = buf[1:]

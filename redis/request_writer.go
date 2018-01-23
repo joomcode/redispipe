@@ -165,6 +165,8 @@ func ArgToString(arg interface{}) (string, bool) {
 		return strconv.FormatFloat(float64(v), 'f', -1, 32), true
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64), true
+	case nil:
+		return "", true
 	default:
 		return "", false
 	}

@@ -2,7 +2,6 @@ package redis_test
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -12,8 +11,8 @@ import (
 )
 
 func lines2bufio(lines ...string) *bufio.Reader {
-	buf := []byte(strings.Join(lines, ""))
-	return bufio.NewReader(bytes.NewReader(buf))
+	buf := strings.Join(lines, "")
+	return bufio.NewReader(strings.NewReader(buf))
 }
 
 func readLines(lines ...string) interface{} {

@@ -23,26 +23,9 @@ func (req Request) Key() (string, bool) {
 	return ArgToString(req.Args[n])
 }
 
-type Cancelling interface {
-	Cancelled() bool
-}
-
 type Future interface {
 	Resolve(res interface{}, n uint64)
 	Cancelled() bool
-}
-
-type FutureWrapped struct {
-	Cancelling
-	Func func(res interface{}, n uint64)
-}
-
-func (cw FutureWrapped) Resolve(res interface{}, n uint64) {
-	cw.Func(res, n)
-}
-
-func WrapFuture(act Cancelling, f func(res interface{}, n uint64)) Future {
-	return FutureWrapped{act, f}
 }
 
 type FuncFuture func(res interface{}, n uint64)

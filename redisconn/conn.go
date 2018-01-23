@@ -377,18 +377,27 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	return nil, -1, nil
 }
 
+type wrapped struct {
+	Future
+	f func(res interface{}, n uint64)
+}
+
+func (cw wrapped) Resolve(res interface{}, n uint64) {
+	cw.f(res, n)
+}
+
 func (conn *Connection) SendTransaction(reqs []Request, cb Future, off uint64) {
 	if cb.Cancelled() {
 		cb.Resolve(conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled), off)
 		return
 	}
 	l := uint64(len(reqs))
-	tcb := redis.WrapFuture(cb, func(res interface{}, n uint64) {
+	resolve := func(res interface{}, n uint64) {
 		if n == l {
 			cb.Resolve(res, off)
 		}
-	})
-	conn.SendBatchFlags(reqs, tcb, 0, DoTransaction)
+	}
+	conn.SendBatchFlags(reqs, wrapped{cb, resolve}, 0, DoTransaction)
 }
 
 func (conn *Connection) String() string {

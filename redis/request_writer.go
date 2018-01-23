@@ -36,23 +36,23 @@ func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
 		case int:
 			buf = appendBulkInt(buf, int64(v))
 		case uint:
-			buf = appendBulkInt(buf, int64(v))
+			buf = appendBulkUint(buf, uint64(v))
 		case int64:
 			buf = appendBulkInt(buf, int64(v))
 		case uint64:
-			buf = appendBulkInt(buf, int64(v))
+			buf = appendBulkUint(buf, uint64(v))
 		case int32:
 			buf = appendBulkInt(buf, int64(v))
 		case uint32:
-			buf = appendBulkInt(buf, int64(v))
+			buf = appendBulkUint(buf, uint64(v))
 		case int8:
 			buf = appendBulkInt(buf, int64(v))
 		case uint8:
-			buf = appendBulkInt(buf, int64(v))
+			buf = appendBulkUint(buf, uint64(v))
 		case int16:
 			buf = appendBulkInt(buf, int64(v))
 		case uint16:
-			buf = appendBulkInt(buf, int64(v))
+			buf = appendBulkUint(buf, uint64(v))
 		case bool:
 			if v {
 				buf = append(buf, "$1\r\n1"...)
@@ -79,19 +79,23 @@ func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
 }
 
 func appendInt(b []byte, i int64) []byte {
-	var u uint
+	var u uint64
 	if i >= 0 && i <= 9 {
 		b = append(b, byte(i)+'0')
 		return b
 	}
 	if i > 0 {
-		u = uint(i)
+		u = uint64(i)
 	} else {
 		b = append(b, '-')
-		u = uint(-i)
+		u = uint64(-i)
 	}
-	digits := [18]byte{}
-	p := 18
+	return appendUint(b, u)
+}
+
+func appendUint(b []byte, u uint64) []byte {
+	digits := [20]byte{}
+	p := 20
 	for u > 0 {
 		n := u / 10
 		p--
@@ -111,15 +115,36 @@ func appendBulkInt(b []byte, i int64) []byte {
 	if i >= -99999999 && i <= 999999999 {
 		b = append(b, '$', '0', '\r', '\n')
 	} else {
-		b = append(b, '$', '1', '0', '\r', '\n')
+		b = append(b, '$', '0', '0', '\r', '\n')
 	}
 	l := len(b)
 	b = appendInt(b, i)
-	li := len(b) - l
+	li := byte(len(b) - l)
 	if li < 10 {
-		b[l-3] = byte(li) + '0'
+		b[l-3] = li + '0'
 	} else {
-		b[l-3] = byte(li) - 10 + '0'
+		d := li / 10
+		b[l-4] = d + '0'
+		b[l-3] = li - (d * 10) + '0'
+	}
+	return b
+}
+
+func appendBulkUint(b []byte, i uint64) []byte {
+	if i <= 999999999 {
+		b = append(b, '$', '0', '\r', '\n')
+	} else {
+		b = append(b, '$', '1', '0', '\r', '\n')
+	}
+	l := len(b)
+	b = appendUint(b, i)
+	li := byte(len(b) - l)
+	if li < 10 {
+		b[l-3] = li + '0'
+	} else {
+		d := li / 10
+		b[l-4] = d + '0'
+		b[l-3] = li - (d * 10) + '0'
 	}
 	return b
 }
@@ -138,23 +163,23 @@ func ArgToString(arg interface{}) (string, bool) {
 	case int:
 		buf = appendInt(bufarr[:0], int64(v))
 	case uint:
-		buf = appendInt(bufarr[:0], int64(v))
+		buf = appendUint(bufarr[:0], uint64(v))
 	case int64:
 		buf = appendInt(bufarr[:0], int64(v))
 	case uint64:
-		buf = appendInt(bufarr[:0], int64(v))
+		buf = appendUint(bufarr[:0], uint64(v))
 	case int32:
 		buf = appendInt(bufarr[:0], int64(v))
 	case uint32:
-		buf = appendInt(bufarr[:0], int64(v))
+		buf = appendUint(bufarr[:0], uint64(v))
 	case int8:
 		buf = appendInt(bufarr[:0], int64(v))
 	case uint8:
-		buf = appendInt(bufarr[:0], int64(v))
+		buf = appendUint(bufarr[:0], uint64(v))
 	case int16:
 		buf = appendInt(bufarr[:0], int64(v))
 	case uint16:
-		buf = appendInt(bufarr[:0], int64(v))
+		buf = appendUint(bufarr[:0], uint64(v))
 	case bool:
 		if v {
 			return "1", true

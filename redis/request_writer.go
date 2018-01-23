@@ -9,6 +9,7 @@ func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
 	for i, c := range []byte(req.Cmd) {
 		if c == ' ' {
 			space = i
+			break
 		}
 	}
 	if space == -1 {

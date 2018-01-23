@@ -272,8 +272,19 @@ func TestAppendRequestArgument(t *testing.T) {
 	assert.Equal(t, []byte("*2\r\n$3\r\nCMD\r\n$4\r\nasdf\r\n"), k)
 	assert.Nil(t, err)
 
+	k, err = AppendRequest(nil, Req("CMD", "abcdefghijklmnopqrstuvwxyz"))
+	assert.Equal(t, []byte("*2\r\n$3\r\nCMD\r\n$26\r\nabcdefghijklmnopqrstuvwxyz\r\n"), k)
+	assert.Nil(t, err)
+
 	k, err = AppendRequest(nil, Req("CMD", []byte("asdf")))
 	assert.Equal(t, []byte("*2\r\n$3\r\nCMD\r\n$4\r\nasdf\r\n"), k)
+	assert.Nil(t, err)
+
+	big := make([]byte, 12345)
+	k, err = AppendRequest(nil, Req("CMD", big))
+	res := []byte("*2\r\n$3\r\nCMD\r\n$12345\r\n")
+	res = append(append(res, big...), "\r\n"...)
+	assert.Equal(t, res, k)
 	assert.Nil(t, err)
 
 	k, err = AppendRequest(nil, Req("CMD", make(chan int)))
@@ -281,4 +292,47 @@ func TestAppendRequestArgument(t *testing.T) {
 	assert.NotNil(t, err)
 	assert.Equal(t, uint32(ErrKindRequest), err.Kind)
 	assert.Equal(t, uint32(ErrArgumentType), err.Code)
+}
+
+func TestAppendRequestCmdAndArgcount(t *testing.T) {
+	var k []byte
+	var err *Error
+
+	k, err = AppendRequest(nil, Req("CMD", "hi"))
+	assert.Equal(t, []byte("*2\r\n$3\r\nCMD\r\n$2\r\nhi\r\n"), k)
+	assert.Nil(t, err)
+
+	k, err = AppendRequest(nil, Req("CMD", "hi", "ho"))
+	assert.Equal(t, []byte("*3\r\n$3\r\nCMD\r\n$2\r\nhi\r\n$2\r\nho\r\n"), k)
+	assert.Nil(t, err)
+
+	k, err = AppendRequest(nil, Req("CMD", "hi", "ho", "hu"))
+	assert.Equal(t, []byte("*4\r\n$3\r\nCMD\r\n$2\r\nhi\r\n$2\r\nho\r\n$2\r\nhu\r\n"), k)
+	assert.Nil(t, err)
+
+	// split by first space
+	k, err = AppendRequest(nil, Req("CMD ONE", "hi"))
+	assert.Equal(t, []byte("*3\r\n$3\r\nCMD\r\n$3\r\nONE\r\n$2\r\nhi\r\n"), k)
+	assert.Nil(t, err)
+
+	k, err = AppendRequest(nil, Req("CMD ONE", "hi", "ho"))
+	assert.Equal(t, []byte("*4\r\n$3\r\nCMD\r\n$3\r\nONE\r\n$2\r\nhi\r\n$2\r\nho\r\n"), k)
+	assert.Nil(t, err)
+
+	k, err = AppendRequest(nil, Req("CMD ONE", "hi", "ho", "hu"))
+	assert.Equal(t, []byte("*5\r\n$3\r\nCMD\r\n$3\r\nONE\r\n$2\r\nhi\r\n$2\r\nho\r\n$2\r\nhu\r\n"), k)
+	assert.Nil(t, err)
+
+	// no split by second space
+	k, err = AppendRequest(nil, Req("CMD ONE TWO", "hi"))
+	assert.Equal(t, []byte("*3\r\n$3\r\nCMD\r\n$7\r\nONE TWO\r\n$2\r\nhi\r\n"), k)
+	assert.Nil(t, err)
+
+	k, err = AppendRequest(nil, Req("CMD ONE TWO", "hi", "ho"))
+	assert.Equal(t, []byte("*4\r\n$3\r\nCMD\r\n$7\r\nONE TWO\r\n$2\r\nhi\r\n$2\r\nho\r\n"), k)
+	assert.Nil(t, err)
+
+	k, err = AppendRequest(nil, Req("CMD ONE TWO", "hi", "ho", "hu"))
+	assert.Equal(t, []byte("*5\r\n$3\r\nCMD\r\n$7\r\nONE TWO\r\n$2\r\nhi\r\n$2\r\nho\r\n$2\r\nhu\r\n"), k)
+	assert.Nil(t, err)
 }

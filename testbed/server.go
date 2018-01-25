@@ -35,6 +35,7 @@ type Server struct {
 	Args   []string
 	Cmd    *exec.Cmd
 	Paused bool
+	Conn   Conn
 }
 
 func (s *Server) PortStr() string {
@@ -54,7 +55,7 @@ func (s *Server) Start() {
 	args := append([]string{
 		"--bind", "127.0.0.1",
 		"--port", port,
-		//"--logfile", port + ".log",
+		"--dbfilename", "dump-" + port + ".rdb",
 	}, s.Args...)
 	var err error
 	s.Cmd = exec.Command(Binary, args...)
@@ -88,6 +89,7 @@ func (s *Server) Start() {
 			}
 		}
 	}()
+	s.Conn.Addr = s.Addr()
 }
 
 func (s *Server) Pause() {
@@ -126,5 +128,13 @@ func (s *Server) Stop() {
 }
 
 func (s *Server) Do(cmd string, args ...interface{}) interface{} {
-	return Do(s.Addr(), cmd, args...)
+	return s.Conn.Do(cmd, args...)
+}
+
+func (s *Server) DoSure(cmd string, args ...interface{}) interface{} {
+	r := s.Do(cmd, args...)
+	if err, ok := r.(error); ok {
+		panic(err)
+	}
+	return r
 }

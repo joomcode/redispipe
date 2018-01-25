@@ -41,7 +41,7 @@ func (s *Suite) SetupSuite() {
 
 func (s *Suite) SetupTest() {
 	s.cl.Start()
-	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 5*time.Second)
+	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 10*time.Second)
 }
 
 func (s *Suite) TearDownTest() {
@@ -203,4 +203,33 @@ func (s *Suite) TestTransactionNormal() {
 	}
 
 	s.Equal([]byte("2"), s.cl.Node[0].DoSure("GET", key1))
+}
+
+func (s *Suite) TestScan() {
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl}
+
+	reqs := make([]redis.Request, 0, NumSlots/4+1)
+	for i := 0; i < NumSlots; i += 4 {
+		reqs = append(reqs, redis.Req("SET", slotkey("scan:", s.keys[i]), "1"))
+	}
+	res := sconn.SendMany(s.ctx, reqs)
+	s.r().Nil(redis.AsError(res))
+
+	allkeys := make(map[string]struct{}, len(reqs))
+	for scanner := sconn.Scanner(s.ctx, redis.ScanOpts{Match: "scan:*", Count: 1000}); ; {
+		keys, err := scanner.Next()
+		if err != nil {
+			s.Equal(redis.ScanEOF, err)
+			break
+		}
+		for _, key := range keys {
+			s.NotContains(allkeys, key)
+			allkeys[key] = struct{}{}
+		}
+	}
+	s.Len(allkeys, len(reqs))
 }

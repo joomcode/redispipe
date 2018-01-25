@@ -59,6 +59,10 @@ func (cl *Cluster) Start() {
 	for i := range cl.Node {
 		cl.Node[i].Start()
 	}
+	cl.WaitClusterOk()
+}
+
+func (cl *Cluster) WaitClusterOk() {
 	for !cl.ClusterOk() {
 		time.Sleep(1 * time.Millisecond)
 	}

@@ -2,7 +2,9 @@ package redisconn_test
 
 import (
 	"context"
+	"fmt"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -46,31 +48,42 @@ var defopts = Opts{
 	IOTimeout: 10 * time.Millisecond,
 }
 
-func (s *Suite) goodPing(conn *Connection) {
-	req := redis.Sync{conn}.Do("PING")
-	s.Equal("PONG", req)
+func (s *Suite) ping(conn *Connection, timeout time.Duration) interface{} {
+	start := time.Now()
+	res := redis.Sync{conn}.Do("PING")
+	done := time.Now()
+	if timeout == 0 {
+		timeout = defopts.IOTimeout
+	}
+	s.r().WithinDuration(start, done, timeout*5/4)
+	return res
 }
 
-func (s *Suite) badPing(conn *Connection, kind redis.ErrorKind, code redis.ErrorCode) {
-	req := redis.Sync{conn}.Do("PING")
-	s.r().IsType((*redis.Error)(nil), req)
-	rerr := s.AsError(req)
+func (s *Suite) goodPing(conn *Connection, timeout time.Duration) {
+	s.Equal("PONG", s.ping(conn, timeout))
+}
+
+func (s *Suite) badPing(conn *Connection, kind redis.ErrorKind, code redis.ErrorCode, timeout time.Duration) {
+	res := s.ping(conn, timeout)
+	rerr := s.AsError(res)
 	s.Equal(kind, rerr.Kind)
 	s.Equal(code, rerr.Code)
 }
 
 func (s *Suite) waitReconnect(conn *Connection) {
-	now := time.Now()
+	start := time.Now()
 	for {
 		at := time.Now()
 		res := redis.Sync{conn}.Do("PING")
+		done := time.Now()
+		s.r().WithinDuration(at, done, defopts.IOTimeout*3/2)
 		if rerr := redis.AsRedisError(res); rerr != nil {
 			s.Equal(redis.ErrKindConnection, rerr.Kind)
 			s.Equal(redis.ErrNotConnected, rerr.Code)
-			s.r().WithinDuration(now, at, defopts.IOTimeout*2)
+			s.r().WithinDuration(start, at, defopts.IOTimeout*2)
 		} else {
 			s.Equal("PONG", res)
-			s.r().WithinDuration(now, at, defopts.IOTimeout*3)
+			s.r().WithinDuration(start, at, defopts.IOTimeout*3)
 			break
 		}
 		runtime.Gosched()
@@ -85,7 +98,7 @@ func (s *Suite) TestConnects() {
 	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
 	s.r().Nil(err)
 	defer conn.Close()
-	s.goodPing(conn)
+	s.goodPing(conn, 0)
 }
 
 func (s *Suite) TestStopped_DoesntConnectWithNegativeReconnectPause() {
@@ -106,13 +119,15 @@ func (s *Suite) TestStopped_Reconnects() {
 	s.r().Nil(err)
 	defer conn.Close()
 
-	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected)
+	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
 
 	s.s.Stop()
-	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected)
+	s.badPing(conn, redis.ErrKindIO, redis.ErrIO, 0)
+	time.Sleep(1 * time.Millisecond)
+	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
@@ -123,16 +138,20 @@ func (s *Suite) TestStopped_Reconnects2() {
 	s.r().Nil(err)
 	defer conn.Close()
 
-	s.goodPing(conn)
+	s.goodPing(conn, 0)
 
 	s.s.Stop()
-	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected)
+	s.badPing(conn, redis.ErrKindIO, redis.ErrIO, 0)
+	time.Sleep(1 * time.Millisecond)
+	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
 
 	s.s.Stop()
-	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected)
+	s.badPing(conn, redis.ErrKindIO, redis.ErrIO, 0)
+	time.Sleep(1 * time.Millisecond)
+	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
@@ -143,12 +162,206 @@ func (s *Suite) TestTimeout() {
 	s.r().Nil(err)
 	defer conn.Close()
 
-	s.goodPing(conn)
+	s.goodPing(conn, 0)
 
 	s.s.Pause()
-	s.badPing(conn, redis.ErrKindIO, redis.ErrIO)
-	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected)
+	events := 0
+	start := time.Now()
+	for events != 7 {
+		res := s.ping(conn, 0)
+		rerr := s.AsError(res)
+		switch true {
+		case rerr.Kind == redis.ErrKindIO && rerr.Code == redis.ErrIO:
+			events |= 1
+		case rerr.Kind == redis.ErrKindConnection && rerr.Code == redis.ErrConnSetup:
+			events |= 2
+		case rerr.Kind == redis.ErrKindConnection && rerr.Code == redis.ErrNotConnected:
+			events |= 4
+		}
+		s.r().WithinDuration(start, time.Now(), defopts.IOTimeout*10)
+	}
 
 	s.s.Resume()
 	s.waitReconnect(conn)
+}
+
+func (s *Suite) TestAllReturns_Good() {
+	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	s.r().Nil(err)
+	defer conn.Close()
+
+	const N = 200
+	const K = 200
+	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	ch := make(chan struct{}, N)
+
+	sconn := redis.SyncCtx{conn}
+	for i := 0; i < N; i++ {
+		go func(i int) {
+			for j := 0; j < K; j++ {
+				sij := strconv.Itoa(i*N + j)
+				res := sconn.Do(ctx, "PING", sij)
+				if !s.IsType([]byte{}, res) || !s.Equal(sij, string(res.([]byte))) {
+					return
+				}
+				ress := sconn.SendMany(ctx, []redis.Request{
+					redis.Req("PING", "a"+sij),
+					redis.Req("PING", "b"+sij),
+				})
+				if !s.IsType([]byte{}, ress[0]) || !s.Equal("a"+sij, string(ress[0].([]byte))) {
+					return
+				}
+				if !s.IsType([]byte{}, ress[1]) || !s.Equal("b"+sij, string(ress[1].([]byte))) {
+					return
+				}
+			}
+			ch <- struct{}{}
+		}(i)
+	}
+
+	cnt := 0
+Loop:
+	for cnt < N {
+		select {
+		case <-ctx.Done():
+			break Loop
+		case <-ch:
+			cnt++
+		}
+	}
+	s.Equal(N, cnt, "Not all goroutines finished")
+}
+
+func (s *Suite) TestAllReturns_Bad() {
+	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	s.r().Nil(err)
+	defer conn.Close()
+
+	const N = 200
+	const K = 200
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	fin := make(chan struct{})
+	goods := make([]chan bool, N)
+	checks := make(chan bool, N)
+	finch := make(chan struct{}, N)
+
+	sconn := redis.SyncCtx{conn}
+	for i := 0; i < N; i++ {
+		goods[i] = make(chan bool, 1)
+		go func(i int) {
+			check, good := true, true
+		Loop:
+			for j := 0; ; j++ {
+				select {
+				case good = <-goods[i]:
+					check = true
+				case <-fin:
+					break Loop
+				case <-ctx.Done():
+					break Loop
+				default:
+				}
+				sij := strconv.Itoa(i*N + j)
+				res := sconn.Do(ctx, "PING", sij)
+				ress := sconn.SendMany(ctx, []redis.Request{
+					redis.Req("PING", "a"+sij),
+					redis.Req("PING", "b"+sij),
+				})
+				if check && good {
+					ok := s.IsType([]byte{}, res) && s.Equal(sij, string(res.([]byte)))
+					ok = ok && s.IsType([]byte{}, ress[0]) && s.Equal("a"+sij, string(ress[0].([]byte)))
+					ok = ok && s.IsType([]byte{}, ress[1]) && s.Equal("b"+sij, string(ress[1].([]byte)))
+					checks <- ok
+				} else if check && !good {
+					ok := s.IsType((*redis.Error)(nil), res)
+					ok = ok && s.IsType((*redis.Error)(nil), ress[0])
+					ok = ok && s.IsType((*redis.Error)(nil), ress[1])
+					checks <- ok
+				}
+				check = false
+				runtime.Gosched()
+			}
+			finch <- struct{}{}
+		}(i)
+	}
+
+	isAllGood := true
+	sendgoods := func(need bool) bool {
+		for i := 0; i < N; i++ {
+			select {
+			case <-ctx.Done():
+				isAllGood = false
+				return false
+			case goods[i] <- need:
+			}
+		}
+		return true
+	}
+	allgood := func() bool {
+		ok := true
+		for i := 0; i < N; i++ {
+			select {
+			case <-ctx.Done():
+				isAllGood = false
+				return false
+			case cur := <-checks:
+				ok = ok && cur
+			}
+		}
+		isAllGood = ok
+		return ok
+	}
+
+	time.Sleep(defopts.IOTimeout * 2)
+	for k := 0; k < 10; k++ {
+		if !allgood() {
+			break
+		}
+		fmt.Println("first allgood")
+
+		s.s.Stop()
+		time.Sleep(defopts.IOTimeout * 3)
+		if !sendgoods(false) || !allgood() {
+			break
+		}
+
+		fmt.Println("second allgood")
+		s.s.Start()
+		time.Sleep(defopts.IOTimeout * 2)
+		if !sendgoods(true) || !allgood() {
+			break
+		}
+
+		fmt.Println("third allgood")
+		s.s.Pause()
+		time.Sleep(defopts.IOTimeout * 2)
+		if !sendgoods(false) || !allgood() {
+			break
+		}
+
+		fmt.Println("forth allgood")
+		s.s.Resume()
+		time.Sleep(defopts.IOTimeout * 2)
+		if !sendgoods(true) {
+			break
+		}
+	}
+
+	if isAllGood {
+		s.True(allgood())
+	}
+
+	close(fin)
+
+	cnt := 0
+Loop:
+	for cnt < N {
+		select {
+		case <-ctx.Done():
+			break Loop
+		case <-finch:
+			cnt++
+		}
+	}
+	s.Equal(N, cnt, "Not all goroutines finished")
 }

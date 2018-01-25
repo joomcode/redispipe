@@ -1,12 +1,13 @@
 package testbed
 
 import (
+	"bufio"
+	"bytes"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
-	"time"
 )
 
 var Binary = func() string { p, _ := exec.LookPath("redis-server"); return p }()
@@ -23,7 +24,10 @@ func InitDir(base string) {
 }
 
 func RmDir() {
-	os.RemoveAll(Dir)
+	if err := os.RemoveAll(Dir); err != nil {
+		panic(err)
+	}
+	Dir = ""
 }
 
 type Server struct {
@@ -41,75 +45,84 @@ func (s *Server) Addr() string {
 	return "127.0.0.1:" + s.PortStr()
 }
 
-func (s *Server) Start() error {
+func (s *Server) Start() {
 	if s.Cmd != nil {
-		return nil
+		return
 	}
 	s.Paused = false
 	port := s.PortStr()
 	args := append([]string{
 		"--bind", "127.0.0.1",
 		"--port", port,
-		"--logfile", port + ".log",
+		//"--logfile", port + ".log",
 	}, s.Args...)
 	var err error
 	s.Cmd = exec.Command(Binary, args...)
 	s.Cmd.Dir = Dir
-	/*
-		stdout, _ := s.Cmd.StdoutPipe()
-		stderr, _ := s.Cmd.StderrPipe()
-		go func() {
-			buf, _ := ioutil.ReadAll(stdout)
-			fmt.Printf("stdout: %q\n", buf)
-		}()
-		go func() {
-			buf, _ := ioutil.ReadAll(stderr)
-			fmt.Printf("stderr: %q\n", buf)
-		}()
-	*/
+
+	_stdout, _ := s.Cmd.StdoutPipe()
+	stdout := bufio.NewReader(_stdout)
+
 	err = s.Cmd.Start()
 	if err != nil {
 		s.Cmd = nil
-		return err
+		panic(err)
 	}
-	time.Sleep(10 * time.Millisecond)
-	return nil
+	for {
+		l, isPrefix, err := stdout.ReadLine()
+		if err != nil {
+			panic(err)
+		}
+		if isPrefix {
+			panic("logline too long")
+		}
+		if bytes.Contains(l, []byte("Ready to accept connections")) {
+			break
+		}
+	}
+	go func() {
+		for {
+			_, _, err := stdout.ReadLine()
+			if err != nil {
+				break
+			}
+		}
+	}()
 }
 
-func (s *Server) Pause() error {
+func (s *Server) Pause() {
 	if s.Paused {
-		return nil
+		return
 	}
 	if err := s.Cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-		return err
+		panic(err)
 	}
 	s.Paused = true
-	return nil
 }
 
-func (s *Server) Resume() error {
+func (s *Server) Resume() {
 	if !s.Paused {
-		return nil
+		return
 	}
 	if err := s.Cmd.Process.Signal(syscall.SIGCONT); err != nil {
-		return err
+		panic(err)
 	}
 	s.Paused = false
-	return nil
 }
 
-func (s *Server) Stop() error {
+func (s *Server) Stop() {
 	if s.Paused {
 		s.Resume()
 	}
 	if s.Cmd == nil {
-		return nil
+		return
 	}
-	defer time.Sleep(10 * time.Millisecond)
 	p := s.Cmd
 	s.Cmd = nil
-	defer p.Wait()
-	return p.Process.Kill()
+	if err := p.Process.Kill(); err != nil {
+		panic(err)
+	}
+	p.Wait()
 }
 
 func (s *Server) Do(cmd string, args ...interface{}) (interface{}, error) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,6 +184,54 @@ func (s *Suite) TestTimeout() {
 
 	s.s.Resume()
 	s.waitReconnect(conn)
+}
+
+func (s *Suite) TestTransaction() {
+	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	s.r().Nil(err)
+	defer conn.Close()
+
+	ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
+	sconn := redis.SyncCtx{conn}
+
+	res, err := sconn.SendTransaction(ctx, []redis.Request{
+		redis.Req("PING"),
+		redis.Req("PING", "asdf"),
+	})
+	s.Nil(err)
+	if s.IsType([]interface{}{}, res) && s.Len(res, 2) {
+		s.r().Equal("PONG", res[0])
+		s.r().Equal([]byte("asdf"), res[1])
+	}
+
+	s.s.Do("SET", "tran:x", 1)
+
+	res, err = sconn.SendTransaction(ctx, []redis.Request{
+		redis.Req("INCR", "tran:x"),
+		redis.Req("PANG"),
+	})
+	s.NotNil(err)
+	rerr := s.AsError(err)
+	s.Equal(redis.ErrKindResult, rerr.Kind)
+	s.Equal(redis.ErrResult, rerr.Code)
+	s.True(strings.HasPrefix("EXECABORT", rerr.Msg()))
+
+	s.Equal([]byte("1"), s.s.Do("GET", "tran:x"))
+
+	res, err = sconn.SendTransaction(ctx, []redis.Request{
+		redis.Req("INCR", "tran:x"),
+		redis.Req("HSET", "tran:x", "y", "1"),
+	})
+	s.Nil(err)
+	if s.IsType([]interface{}{}, res) && s.Len(res, 2) {
+		s.r().Equal([]byte("2"), res[0])
+		rerr := s.AsError(res[1])
+		s.Equal(redis.ErrKindResult, rerr.Kind)
+		s.Equal(redis.ErrResult, rerr.Code)
+		s.True(strings.HasPrefix("WRONGTYPE", rerr.Msg()))
+	}
+
+	s.Equal([]byte("2"), s.s.Do("GET", "tran:x"))
 }
 
 func (s *Suite) TestAllReturns_Good() {

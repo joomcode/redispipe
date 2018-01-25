@@ -125,6 +125,6 @@ func (s *Server) Stop() {
 	p.Wait()
 }
 
-func (s *Server) Do(cmd string, args ...interface{}) (interface{}, error) {
+func (s *Server) Do(cmd string, args ...interface{}) interface{} {
 	return Do(s.Addr(), cmd, args...)
 }

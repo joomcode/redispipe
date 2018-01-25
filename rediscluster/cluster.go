@@ -14,7 +14,7 @@ import (
 )
 
 type ConnHostPolicyEnum int8
-type MasterReplicaPolicyEnum int8
+type ReplicaPolicyEnum int8
 
 const (
 	ConnHostPreferFirst ConnHostPolicyEnum = iota
@@ -22,11 +22,11 @@ const (
 )
 
 const (
-	MasterOnly MasterReplicaPolicyEnum = iota
-	MasterAndReplica
-	PreferReplica
-	ForceMasterAndReplica
-	ForcePreferReplica
+	MasterOnly ReplicaPolicyEnum = iota
+	MasterAndSlaves
+	PreferSlaves
+	ForceMasterAndSlaves
+	ForcePreferSlaves
 )
 
 const (
@@ -295,14 +295,14 @@ var readonly = func() map[string]bool {
 	return ro
 }()
 
-func fixPolicy(req Request, policy MasterReplicaPolicyEnum) MasterReplicaPolicyEnum {
+func fixPolicy(req Request, policy ReplicaPolicyEnum) ReplicaPolicyEnum {
 	switch policy {
 	case MasterOnly:
 		return MasterOnly
-	case ForceMasterAndReplica:
-		return MasterAndReplica
-	case ForcePreferReplica:
-		return PreferReplica
+	case ForceMasterAndSlaves:
+		return MasterAndSlaves
+	case ForcePreferSlaves:
+		return PreferSlaves
 	}
 	if readonly[req.Cmd] {
 		return policy
@@ -314,7 +314,7 @@ func (c *Cluster) Send(req Request, cb Future, off uint64) {
 	c.SendWithPolicy(MasterOnly, req, cb, off)
 }
 
-func (c *Cluster) SendWithPolicy(policy MasterReplicaPolicyEnum, req Request, cb Future, off uint64) {
+func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Future, off uint64) {
 	slot, ok := reqSlot(req)
 	if !ok {
 		c.forceReloading()
@@ -354,7 +354,7 @@ type request struct {
 
 	off    uint64
 	slot   uint16
-	policy MasterReplicaPolicyEnum
+	policy ReplicaPolicyEnum
 
 	lastErrIsHard bool
 	try           uint8

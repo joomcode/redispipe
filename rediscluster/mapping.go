@@ -140,7 +140,7 @@ func (c *Cluster) slot2shard(slot uint16) *shard {
 	}
 }
 
-func (c *Cluster) connForSlot(slot uint16, policy MasterReplicaPolicyEnum) (*redisconn.Connection, error) {
+func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum) (*redisconn.Connection, error) {
 	// We are not synchronizing by locks, so we need to spin until we have
 	// consistent configuration, ie for shard number we have a shard in a shardmap
 	// and a node in a nodemap.
@@ -162,9 +162,9 @@ Loop:
 				conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
 			}
 			break Loop
-		case MasterAndReplica, PreferReplica:
+		case MasterAndSlaves, PreferSlaves:
 			n, a := uint32(len(shard.addr))*3, uint32(0)
-			if policy == PreferReplica {
+			if policy == PreferSlaves {
 				n, a = n-2, 2
 			}
 			off := atomic.AddUint32(&shard.rr, 1)

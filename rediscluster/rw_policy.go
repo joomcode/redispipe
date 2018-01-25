@@ -2,7 +2,7 @@ package rediscluster
 
 type Policeman struct {
 	*Cluster
-	Policy MasterReplicaPolicyEnum
+	Policy ReplicaPolicyEnum
 }
 
 func (p Policeman) Send(req Request, cb Future, off uint64) {
@@ -15,6 +15,6 @@ func (p Policeman) SendMany(reqs []Request, cb Future, off uint64) {
 	}
 }
 
-func (c *Cluster) WithPolicy(policy MasterReplicaPolicyEnum) Policeman {
+func (c *Cluster) WithPolicy(policy ReplicaPolicyEnum) Policeman {
 	return Policeman{c, policy}
 }

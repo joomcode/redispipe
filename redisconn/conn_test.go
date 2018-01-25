@@ -96,7 +96,7 @@ func TestConn(t *testing.T) {
 }
 
 func (s *Suite) TestConnects() {
-	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	conn, err := Connect(context.Background(), s.s.Addr(), defopts)
 	s.r().Nil(err)
 	defer conn.Close()
 	s.goodPing(conn, 0)
@@ -106,7 +106,7 @@ func (s *Suite) TestStopped_DoesntConnectWithNegativeReconnectPause() {
 	s.s.Stop()
 	opts := defopts
 	opts.ReconnectPause = -1
-	_, err := Connect(context.TODO(), s.s.Addr(), opts)
+	_, err := Connect(context.Background(), s.s.Addr(), opts)
 	s.r().NotNil(err)
 	rerr := s.AsError(err)
 	s.Equal(redis.ErrKindConnection, rerr.Kind)
@@ -116,7 +116,7 @@ func (s *Suite) TestStopped_DoesntConnectWithNegativeReconnectPause() {
 func (s *Suite) TestStopped_Reconnects() {
 	s.s.Stop()
 
-	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	conn, err := Connect(context.Background(), s.s.Addr(), defopts)
 	s.r().Nil(err)
 	defer conn.Close()
 
@@ -135,7 +135,7 @@ func (s *Suite) TestStopped_Reconnects() {
 }
 
 func (s *Suite) TestStopped_Reconnects2() {
-	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	conn, err := Connect(context.Background(), s.s.Addr(), defopts)
 	s.r().Nil(err)
 	defer conn.Close()
 
@@ -159,7 +159,7 @@ func (s *Suite) TestStopped_Reconnects2() {
 }
 
 func (s *Suite) TestTimeout() {
-	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	conn, err := Connect(context.Background(), s.s.Addr(), defopts)
 	s.r().Nil(err)
 	defer conn.Close()
 
@@ -187,7 +187,7 @@ func (s *Suite) TestTimeout() {
 }
 
 func (s *Suite) TestTransaction() {
-	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	conn, err := Connect(context.Background(), s.s.Addr(), defopts)
 	s.r().Nil(err)
 	defer conn.Close()
 
@@ -214,7 +214,7 @@ func (s *Suite) TestTransaction() {
 	rerr := s.AsError(err)
 	s.Equal(redis.ErrKindResult, rerr.Kind)
 	s.Equal(redis.ErrResult, rerr.Code)
-	s.True(strings.HasPrefix("EXECABORT", rerr.Msg()))
+	s.True(strings.HasPrefix(rerr.Msg(), "EXECABORT"))
 
 	s.Equal([]byte("1"), s.s.Do("GET", "tran:x"))
 
@@ -224,18 +224,45 @@ func (s *Suite) TestTransaction() {
 	})
 	s.Nil(err)
 	if s.IsType([]interface{}{}, res) && s.Len(res, 2) {
-		s.r().Equal([]byte("2"), res[0])
+		s.r().Equal(int64(2), res[0])
 		rerr := s.AsError(res[1])
 		s.Equal(redis.ErrKindResult, rerr.Kind)
 		s.Equal(redis.ErrResult, rerr.Code)
-		s.True(strings.HasPrefix("WRONGTYPE", rerr.Msg()))
+		s.True(strings.HasPrefix(rerr.Msg(), "WRONGTYPE"))
 	}
 
 	s.Equal([]byte("2"), s.s.Do("GET", "tran:x"))
 }
 
+func (s *Suite) TestScan() {
+	ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
+
+	conn, err := Connect(ctx, s.s.Addr(), defopts)
+	s.r().Nil(err)
+	defer conn.Close()
+
+	sconn := redis.SyncCtx{conn}
+	for i := 0; i < 1000; i++ {
+		sconn.Do(ctx, "SET", "scan:"+strconv.Itoa(i), i)
+	}
+
+	allkeys := make(map[string]struct{}, 1000)
+	for scanner := sconn.Scanner(ctx, redis.ScanOpts{Match: "scan:*"}); ; {
+		keys, err := scanner.Next()
+		if err != nil {
+			s.Equal(redis.ScanEOF, err)
+			break
+		}
+		for _, key := range keys {
+			s.NotContains(allkeys, key)
+			allkeys[key] = struct{}{}
+		}
+	}
+	s.Len(allkeys, 1000)
+}
+
 func (s *Suite) TestAllReturns_Good() {
-	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	conn, err := Connect(context.Background(), s.s.Addr(), defopts)
 	s.r().Nil(err)
 	defer conn.Close()
 
@@ -282,7 +309,7 @@ Loop:
 }
 
 func (s *Suite) TestAllReturns_Bad() {
-	conn, err := Connect(context.TODO(), s.s.Addr(), defopts)
+	conn, err := Connect(context.Background(), s.s.Addr(), defopts)
 	s.r().Nil(err)
 	defer conn.Close()
 

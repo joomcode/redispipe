@@ -212,9 +212,9 @@ func (s *Suite) TestScan() {
 
 	sconn := redis.SyncCtx{cl}
 
-	reqs := make([]redis.Request, 0, NumSlots/4+1)
-	for i := 0; i < NumSlots; i += 4 {
-		reqs = append(reqs, redis.Req("SET", slotkey("scan:", s.keys[i]), "1"))
+	reqs := make([]redis.Request, 0, NumSlots*4)
+	for i := 0; i < NumSlots*4; i++ {
+		reqs = append(reqs, redis.Req("SET", slotkey("scan:", s.keys[i/4], strconv.Itoa(i%4)), "1"))
 	}
 	res := sconn.SendMany(s.ctx, reqs)
 	s.r().Nil(redis.AsError(res))
@@ -227,7 +227,8 @@ func (s *Suite) TestScan() {
 			break
 		}
 		for _, key := range keys {
-			s.NotContains(allkeys, key)
+			_, ok := allkeys[key]
+			s.False(ok)
 			allkeys[key] = struct{}{}
 		}
 	}

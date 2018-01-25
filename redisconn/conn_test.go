@@ -260,7 +260,8 @@ func (s *Suite) TestScan() {
 			break
 		}
 		for _, key := range keys {
-			s.NotContains(allkeys, key)
+			_, ok := allkeys[key]
+			s.False(ok)
 			allkeys[key] = struct{}{}
 		}
 	}

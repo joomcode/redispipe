@@ -490,7 +490,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		return
 	}
 
-	execres := t.r[len(t.reqs)-1]
+	execres := t.r[len(t.reqs)]
 	// do not retry if cluster is closed
 	select {
 	case <-t.c.ctx.Done():

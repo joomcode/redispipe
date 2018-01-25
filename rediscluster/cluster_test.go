@@ -152,3 +152,55 @@ func (s *Suite) TestSendMany() {
 		s.Equal([]byte(s.keys[i]+"y"), res)
 	}
 }
+
+func (s *Suite) TestTransactionNormal() {
+	// copy fo connection test
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl}
+
+	key := s.keys[0]
+	key1 := slotkey("trans", key, "1")
+	key2 := slotkey("trans", key, "2")
+	s.cl.Node[0].DoSure("SET", key1, "1")
+	s.cl.Node[0].DoSure("SET", key2, "2")
+
+	res, err := sconn.SendTransaction(s.ctx, []redis.Request{
+		redis.Req("GET", key1),
+		redis.Req("GET", key2),
+	})
+	s.Nil(err)
+	if s.IsType([]interface{}{}, res) && s.Len(res, 2) {
+		s.r().Equal([]byte("1"), res[0])
+		s.r().Equal([]byte("2"), res[1])
+	}
+
+	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
+		redis.Req("INCR", key1),
+		redis.Req("PANG"),
+	})
+	s.NotNil(err)
+	rerr := s.AsError(err)
+	s.Equal(redis.ErrKindResult, rerr.Kind)
+	s.Equal(redis.ErrResult, rerr.Code)
+	s.True(strings.HasPrefix(rerr.Msg(), "EXECABORT"))
+
+	s.Equal([]byte("1"), s.cl.Node[0].DoSure("GET", key1))
+
+	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
+		redis.Req("INCR", key1),
+		redis.Req("HSET", key2, "y", "1"),
+	})
+	s.Nil(err)
+	if s.IsType([]interface{}{}, res) && s.Len(res, 2) {
+		s.r().Equal(int64(2), res[0])
+		rerr := s.AsError(res[1])
+		s.Equal(redis.ErrKindResult, rerr.Kind)
+		s.Equal(redis.ErrResult, rerr.Code)
+		s.True(strings.HasPrefix(rerr.Msg(), "WRONGTYPE"))
+	}
+
+	s.Equal([]byte("2"), s.cl.Node[0].DoSure("GET", key1))
+}

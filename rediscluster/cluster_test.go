@@ -249,9 +249,7 @@ func (s *Suite) TestFallbackToSlaveStop() {
 
 	s.cl.Node[0].Stop()
 	// test read from replica
-	for i := 0; i < 20; i++ {
-		s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key))
-	}
+	s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key))
 
 	// wait replica becomes master
 	s.cl.WaitClusterOk()
@@ -279,9 +277,7 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 
 	s.cl.Node[0].Pause()
 	// test read from replica
-	for i := 0; i < 20; i++ {
-		s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key))
-	}
+	s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key))
 
 	// wait replica becomes master
 	s.cl.WaitClusterOk()
@@ -371,4 +367,60 @@ func (s *Suite) TestAsk() {
 	s.Equal(int64(1), sconn.Do(s.ctx, "DEL", key))
 
 	s.cl.CancelMoveSlot(10997)
+}
+
+func (s *Suite) TestAskTransaction() {
+	// delay configuration refresh
+	opts := clustopts
+	opts.CheckInterval = 5 * time.Second
+	opts.MovedRetries = 4
+
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	key1 := slotkey("asktran", s.keys[10996], "1")
+	key2 := slotkey("asktran", s.keys[10996], "2")
+	key3 := slotkey("asktran", s.keys[10996], "3")
+	//key4 := slotkey("asktran", s.keys[10996], "4")
+
+	s.cl.InitMoveSlot(10996, 1, 2)
+	defer s.cl.CancelMoveSlot(10996)
+
+	sconn.Do(s.ctx, "SET", key1, "3")
+	sconn.Do(s.ctx, "SET", key2, "3")
+
+	// if all keys are in new shard, then redis allows transaction to execute
+	// on new shard.
+	res, err := sconn.SendTransaction(s.ctx, []redis.Request{
+		redis.Req("SET", key1, "1"),
+		redis.Req("SET", key2, "2"),
+	})
+	s.Nil(err)
+	s.Equal([]interface{}{"OK", "OK"}, res)
+
+	s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key1))
+
+	// if some keys are absent in new shard, then redis returns TRYAGAIN error
+	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
+		redis.Req("SET", key2, "1"),
+		redis.Req("SET", key3, "2"),
+	})
+	s.True(strings.HasPrefix(s.AsError(err).Msg(), "TRYAGAIN"))
+
+	// lets add key3 to make transaction happy
+	time.AfterFunc(5*time.Millisecond, func() {
+		sconn.Do(s.ctx, "SET", key3, "3")
+	})
+
+	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
+		redis.Req("SET", key2, "1"),
+		redis.Req("SET", key3, "2"),
+	})
+	s.Nil(err)
+
+	s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key2))
+	s.Equal([]byte("2"), sconn.Do(s.ctx, "GET", key3))
 }

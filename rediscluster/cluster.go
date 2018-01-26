@@ -32,7 +32,7 @@ const (
 const (
 	defaultCheckInterval = 5 * time.Second
 	defaultForceInterval = 100 * time.Millisecond
-	defaultWaitToMigrate = 1 * time.Millisecond
+	defaultWaitToMigrate = 20 * time.Millisecond
 
 	needConnected = iota
 	mayBeConnected
@@ -61,32 +61,24 @@ type Opts struct {
 	// default: 100 milliseconds, min: 10 milliseconds, max: 1 second
 	ForceInterval time.Duration
 	// MovedRetries - follow MOVED|ASK redirections this number of times
-	// default: 2, min: 1, max: 10
+	// default: 3, min: 1, max: 10
 	MovedRetries int
 	// WaitToMigrate - wait this time if not all transaction keys were migrating
-	// default: 1 millisecond, min: 100 microseconds, max: 100 milliseconds
+	// default: 20 millisecond, min: 100 microseconds, max: 100 milliseconds
 	WaitToMigrate time.Duration
 	// Logger
 	Logger Logger
 }
 
-type shard struct {
-	rr   uint32
-	good uint32
-	addr []string
-}
-type shardMap map[uint16]*shard
-type masterMap map[string]uint16
-type nodeMap map[string]*node
-
 type Cluster struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	opts Opts
+
 	m sync.Mutex
 
-	forceReload uint32
-	version     uint32
+	version uint32
 
 	shardMap  atomic.Value // map[uint32][]string
 	masterMap atomic.Value // map[string]uint32
@@ -101,8 +93,22 @@ type Cluster struct {
 	// map of slot to shard
 	slotMap []uint32
 
-	opts Opts
+	forceReload chan struct{}
+	commands    chan clusterCommand
+
+	wheelm    sync.Mutex
+	wheelt    *time.Timer
+	waitwheel [2][]func()
 }
+
+type shard struct {
+	rr   uint32
+	good uint32
+	addr []string
+}
+type shardMap map[uint16]*shard
+type masterMap map[string]uint16
+type nodeMap map[string]*node
 
 type node struct {
 	addr    string
@@ -110,6 +116,12 @@ type node struct {
 	version uint32
 	opts    redisconn.Opts
 	conns   []*redisconn.Connection
+}
+
+type clusterCommand struct {
+	cmd  string
+	slot uint16
+	addr string
 }
 
 func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, error) {
@@ -121,8 +133,13 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	}
 	cluster := &Cluster{
 		opts: opts,
+
+		commands:    make(chan clusterCommand, 4),
+		forceReload: make(chan struct{}, 1),
+		wheelt:      time.NewTimer(time.Hour),
 	}
 	cluster.ctx, cluster.cancel = context.WithCancel(ctx)
+	cluster.wheelt.Stop()
 
 	if cluster.opts.HostOpts.Logger == nil {
 		cluster.opts.HostOpts.Logger = defaultConnLogger{cluster}
@@ -152,7 +169,7 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	}
 
 	if cluster.opts.MovedRetries <= 0 {
-		cluster.opts.MovedRetries = 2
+		cluster.opts.MovedRetries = 3
 	} else if cluster.opts.MovedRetries > 10 {
 		cluster.opts.MovedRetries = 10
 	}
@@ -218,23 +235,21 @@ func (c *Cluster) Handle() interface{} {
 
 func (c *Cluster) checker() {
 	t := time.NewTicker(c.opts.CheckInterval)
-	f := time.NewTicker(c.opts.ForceInterval)
 	defer t.Stop()
-	defer f.Stop()
 
-Loop:
 	for {
 		select {
 		case <-c.ctx.Done():
 			c.report(LogContextClosed)
 			return
+		case <-c.wheelt.C:
+			c.callbackMigrate()
+			continue
+		case cmd := <-c.commands:
+			c.execCommand(cmd)
+			continue
+		case <-c.forceReload:
 		case <-t.C:
-		case <-f.C:
-			if atomic.LoadUint32(&c.forceReload) == 0 {
-				continue Loop
-			}
-			c.report(LogForceReload)
-			atomic.StoreUint32(&c.forceReload, 0)
 		}
 
 		c.reloadMapping()
@@ -249,9 +264,70 @@ func (c *Cluster) reloadMapping() error {
 	return err
 }
 
+func (c *Cluster) addWaitToMigrate(f func()) {
+	c.wheelm.Lock()
+	if len(c.waitwheel[0]) == 0 && len(c.waitwheel[1]) == 0 {
+		c.wheelt.Reset(c.opts.WaitToMigrate / 2)
+	}
+	c.waitwheel[1] = append(c.waitwheel[1], f)
+	c.wheelm.Unlock()
+}
+
+func (c *Cluster) callbackMigrate() {
+	c.wheelm.Lock()
+	funcs := c.waitwheel[0]
+	c.waitwheel[0], c.waitwheel[1] = c.waitwheel[1], nil
+	if len(c.waitwheel[0]) != 0 {
+		c.wheelt.Reset(c.opts.WaitToMigrate / 2)
+	}
+	defer c.wheelm.Unlock()
+
+	for _, f := range funcs {
+		f()
+	}
+}
+
+func (c *Cluster) sendCommand(cmd string, slot uint16, addr string) {
+	if cmd == "asking" {
+		if c.slotIsAsking(slot) {
+			return
+		}
+	}
+	select {
+	case c.commands <- clusterCommand{cmd, slot, addr}:
+	default:
+	}
+}
+
 func (c *Cluster) ForceReloading() {
-	if atomic.LoadUint32(&c.forceReload) == 0 {
-		atomic.StoreUint32(&c.forceReload, 1)
+	select {
+	case c.forceReload <- struct{}{}:
+	default:
+	}
+}
+
+func (c *Cluster) execCommand(cmd clusterCommand) {
+	switch cmd.cmd {
+	case "moved":
+		masterMap := c.getMasterMap()
+		addrshard, ok := masterMap[cmd.addr]
+		if !ok {
+			return
+		}
+		slotshard := c.slot2shardno(cmd.slot)
+		if addrshard == slotshard {
+			return
+		}
+		c.m.Lock()
+		defer c.m.Unlock()
+		masterMap = c.getMasterMap()
+		addrshard, ok = masterMap[cmd.addr]
+		if !ok {
+			return
+		}
+		c.slotSetShard(cmd.slot, addrshard)
+	case "asking":
+		c.slotMarkAsking(cmd.slot)
 	}
 }
 
@@ -297,7 +373,10 @@ var readonly = func() map[string]bool {
 	return ro
 }()
 
-func fixPolicy(req Request, policy ReplicaPolicyEnum) ReplicaPolicyEnum {
+func (c *Cluster) fixPolicy(slot uint16, req Request, policy ReplicaPolicyEnum) ReplicaPolicyEnum {
+	if c.slotIsAsking(slot) {
+		return MasterOnly
+	}
 	switch policy {
 	case MasterOnly:
 		return MasterOnly
@@ -319,12 +398,11 @@ func (c *Cluster) Send(req Request, cb Future, off uint64) {
 func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Future, off uint64) {
 	slot, ok := reqSlot(req)
 	if !ok {
-		c.ForceReloading()
 		cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
 		return
 	}
 
-	policy = fixPolicy(req, policy)
+	policy = c.fixPolicy(slot, req, policy)
 
 	conn, err := c.connForSlot(slot, policy, nil)
 	if err != nil {
@@ -425,7 +503,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 			conn.Send(r.req, r, 0)
 		}
 	case redis.ErrKindResult:
-		if err.Code == redis.ErrMoved || err.Code == redis.ErrLoading {
+		if err.Code == redis.ErrLoading {
 			r.c.ForceReloading()
 		}
 		if (err.Code == redis.ErrMoved || err.Code == redis.ErrAsk) && int(r.redir) < r.c.opts.MovedRetries {
@@ -433,6 +511,11 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 			r.hardErrs = 0
 			r.seen = nil
 			addr := err.Get("movedto").(string)
+			if err.Code == redis.ErrMoved {
+				r.c.sendCommand("moved", r.slot, addr)
+			} else {
+				r.c.sendCommand("asking", r.slot, "")
+			}
 			r.c.ensureConnForAddress(addr, func(conn *redisconn.Connection, cerr error) {
 				if cerr != nil {
 					r.cb.Resolve(cerr, r.off)
@@ -495,12 +578,14 @@ type transaction struct {
 	hardErrs uint8
 	redir    uint8
 	slot     uint16
+	asked    bool
 }
 
 func (t *transaction) send(conn *redisconn.Connection, ask bool) {
 	t.res = make([]interface{}, len(t.reqs)+1)
 	flags := redisconn.DoTransaction
 	if ask {
+		t.asked = true
 		flags |= redisconn.DoAsking
 	}
 	conn.SendBatchFlags(t.reqs, t, 0, flags)
@@ -575,7 +660,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 			responses := t.res[:len(t.res)-1]
 			for _, r := range responses {
 				err := redis.AsRedisError(r)
-				if err == nil || err.Code != redis.ErrMoved || err.Code != redis.ErrAsk {
+				if err == nil || (err.Code != redis.ErrMoved && err.Code != redis.ErrAsk) {
 					allmoved = false
 					break
 				}
@@ -586,18 +671,27 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 					asking = true
 				}
 			}
+		} else if strings.HasPrefix(err.Msg(), "TRYAGAIN") && int(t.redir) < t.c.opts.MovedRetries {
+			t.redir++
+			t.hardErrs = 0
+			t.seen = nil
+			t.c.addWaitToMigrate(func() { t.send(t.lastconn, t.asked) })
+			return
 		}
 		if moved != "" && moving != asking && int(t.redir) < t.c.opts.MovedRetries {
 			t.redir++
 			t.hardErrs = 0
 			t.seen = nil
 			if moving {
+				t.c.sendCommand("moved", t.slot, moved)
 				t.c.ForceReloading()
+			} else {
+				t.c.sendCommand("asking", t.slot, "")
 			}
 			if !allmoved {
 				if asking {
 					// lets wait a bit for migrating keys
-					time.AfterFunc(t.c.opts.WaitToMigrate, func() {
+					t.c.addWaitToMigrate(func() {
 						t.sendMoved(moved, asking)
 					})
 				} else {

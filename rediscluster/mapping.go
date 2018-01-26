@@ -127,10 +127,37 @@ func (c *Cluster) addNode(addr string) *node {
 	return node
 }
 
+func (c *Cluster) slot2shardno(slot uint16) uint16 {
+	sh32 := atomic.LoadUint32(&c.slotMap[slot/2])
+	sh16 := uint16((sh32 >> (16 * (slot & 1))) & 0x3fff)
+	return sh16
+}
+
+func (c *Cluster) slotSetShard(slot, shard uint16) {
+	sh32 := atomic.LoadUint32(&c.slotMap[slot/2])
+	sh32 &^= 0xffff << (16 * (slot & 1))
+	sh32 |= uint32(shard) << (16 * (slot & 1))
+	atomic.StoreUint32(&c.slotMap[slot/2], sh32)
+}
+
+func (c *Cluster) slotMarkAsking(slot uint16) {
+	sh32 := atomic.LoadUint32(&c.slotMap[slot/2])
+	flag := uint32(0x4000 << (16 * (slot & 1)))
+	if sh32&flag == 0 {
+		sh32 |= flag
+		atomic.StoreUint32(&c.slotMap[slot/2], sh32)
+	}
+}
+
+func (c *Cluster) slotIsAsking(slot uint16) bool {
+	sh32 := atomic.LoadUint32(&c.slotMap[slot/2])
+	flag := uint32(0x4000 << (16 * (slot & 1)))
+	return sh32&flag != 0
+}
+
 func (c *Cluster) slot2shard(slot uint16) *shard {
 	for {
-		sh32 := atomic.LoadUint32(&c.slotMap[slot/2])
-		sh16 := uint16((sh32 >> (16 * (slot & 1))) & 0xffff)
+		sh16 := c.slot2shardno(slot)
 		shards := c.getShardMap()
 		shard := shards[sh16]
 		if shard != nil {

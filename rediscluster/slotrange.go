@@ -147,7 +147,12 @@ func (c *Cluster) updateMappings(ranges []redis.SlotsRange) {
 			sh = cur
 		} else {
 			sh |= cur << 16
-			atomic.StoreUint32(&c.slotMap[i/2], sh)
+			old := atomic.LoadUint32(&c.slotMap[i/2])
+			// if shard numbers without flags are same, do not overwrite 7 times of 8
+			// flags are: 0x4000 - slot is "asking", so it has to be with MasterOnly policy
+			if old&^0xc000c000 != sh || version&7 == 0 {
+				atomic.StoreUint32(&c.slotMap[i/2], sh)
+			}
 		}
 	}
 

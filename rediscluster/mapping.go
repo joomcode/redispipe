@@ -84,7 +84,7 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 	go func() {
 		node := c.addNode(addr)
 		var err error
-		conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
+		conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected, nil)
 		if conn == nil {
 			err = c.err(redis.ErrKindConnection, redis.ErrDial).With("address", addr)
 		}
@@ -140,7 +140,7 @@ func (c *Cluster) slot2shard(slot uint16) *shard {
 	}
 }
 
-func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum) (*redisconn.Connection, error) {
+func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*redisconn.Connection) (*redisconn.Connection, error) {
 	// We are not synchronizing by locks, so we need to spin until we have
 	// consistent configuration, ie for shard number we have a shard in a shardmap
 	// and a node in a nodemap.
@@ -157,9 +157,9 @@ Loop:
 			if node == nil {
 				break /*switch*/
 			}
-			conn = node.getConn(c.opts.ConnHostPolicy, needConnected)
+			conn = node.getConn(c.opts.ConnHostPolicy, needConnected, seen)
 			if conn == nil {
-				conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
+				conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected, seen)
 			}
 			break Loop
 		case MasterAndSlaves, PreferSlaves:
@@ -184,7 +184,7 @@ Loop:
 						hadall = false
 						continue
 					}
-					conn = node.getConn(c.opts.ConnHostPolicy, needState)
+					conn = node.getConn(c.opts.ConnHostPolicy, needState, seen)
 					if conn != nil {
 						break Loop
 					}
@@ -199,7 +199,7 @@ Loop:
 		runtime.Gosched()
 	}
 	if conn == nil {
-		c.forceReloading()
+		c.ForceReloading()
 		return nil, c.err(redis.ErrKindConnection, redis.ErrDial).
 			With("slot", slot).With("policy", policy)
 	}
@@ -212,9 +212,9 @@ func (c *Cluster) connForAddress(addr string) *redisconn.Connection {
 		return nil
 	}
 
-	conn := node.getConn(c.opts.ConnHostPolicy, needConnected)
+	conn := node.getConn(c.opts.ConnHostPolicy, needConnected, nil)
 	if conn == nil {
-		conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
+		conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected, nil)
 	}
 	return conn
 }
@@ -229,8 +229,20 @@ func connHealthy(c *redisconn.Connection, needState int) bool {
 	}
 }
 
-func (n *node) getConn(policy ConnHostPolicyEnum, needState int) *redisconn.Connection {
+func isSeen(conn *redisconn.Connection, seen []*redisconn.Connection) bool {
+	for _, p := range seen {
+		if conn == p {
+			return true
+		}
+	}
+	return false
+}
+
+func (n *node) getConn(policy ConnHostPolicyEnum, needState int, seen []*redisconn.Connection) *redisconn.Connection {
 	if len(n.conns) == 1 {
+		if isSeen(n.conns[0], seen) {
+			return nil
+		}
 		if connHealthy(n.conns[0], needState) {
 			return n.conns[0]
 		}
@@ -240,6 +252,9 @@ func (n *node) getConn(policy ConnHostPolicyEnum, needState int) *redisconn.Conn
 	switch policy {
 	case ConnHostPreferFirst:
 		for _, conn := range n.conns {
+			if isSeen(conn, seen) {
+				continue
+			}
 			if connHealthy(conn, needState) {
 				return conn
 			}
@@ -255,6 +270,9 @@ func (n *node) getConn(policy ConnHostPolicyEnum, needState int) *redisconn.Conn
 			}
 			mask &^= 1 << k
 			conn := n.conns[k]
+			if isSeen(conn, seen) {
+				continue
+			}
 			if connHealthy(conn, needState) {
 				return conn
 			}

@@ -55,7 +55,7 @@ type Opts struct {
 	// Name
 	Name string
 	// Check interval - default cluster configuration reloading interval
-	// default: 5 seconds, min: 1 second, max: 10 minutes
+	// default: 5 seconds, min: 100 millisecond, max: 10 minutes
 	CheckInterval time.Duration
 	// Force interval - short interval for forcing reloading cluster configuration
 	// default: 100 milliseconds, min: 10 milliseconds, max: 1 second
@@ -137,8 +137,8 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 
 	if cluster.opts.CheckInterval <= 0 {
 		cluster.opts.CheckInterval = defaultCheckInterval
-	} else if cluster.opts.CheckInterval < time.Second {
-		cluster.opts.CheckInterval = time.Second
+	} else if cluster.opts.CheckInterval < 100*time.Millisecond {
+		cluster.opts.CheckInterval = 100 * time.Millisecond
 	} else if cluster.opts.CheckInterval > 10*time.Minute {
 		cluster.opts.CheckInterval = 10 * time.Minute
 	}
@@ -249,8 +249,10 @@ func (c *Cluster) reloadMapping() error {
 	return err
 }
 
-func (c *Cluster) forceReloading() {
-	atomic.StoreUint32(&c.forceReload, 1)
+func (c *Cluster) ForceReloading() {
+	if atomic.LoadUint32(&c.forceReload) == 0 {
+		atomic.StoreUint32(&c.forceReload, 1)
+	}
 }
 
 func reqSlot(req Request) (uint16, bool) {
@@ -317,14 +319,14 @@ func (c *Cluster) Send(req Request, cb Future, off uint64) {
 func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Future, off uint64) {
 	slot, ok := reqSlot(req)
 	if !ok {
-		c.forceReloading()
+		c.ForceReloading()
 		cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
 		return
 	}
 
 	policy = fixPolicy(req, policy)
 
-	conn, err := c.connForSlot(slot, policy)
+	conn, err := c.connForSlot(slot, policy, nil)
 	if err != nil {
 		cb.Resolve(err, off)
 		return
@@ -337,6 +339,8 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 		off:    off,
 		slot:   slot,
 		policy: policy,
+
+		lastconn: conn,
 	}
 	conn.Send(req, request, 0)
 }
@@ -351,13 +355,16 @@ type request struct {
 	c   *Cluster
 	req Request
 	cb  Future
+	off uint64
 
-	off    uint64
+	lastconn *redisconn.Connection
+	seen     []*redisconn.Connection
+
 	slot   uint16
 	policy ReplicaPolicyEnum
 
-	lastErrIsHard bool
-	try           uint8
+	hardErrs uint8
+	redir    uint8
 }
 
 func (r *request) Cancelled() bool {
@@ -395,34 +402,42 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 		}
 		fallthrough
 	case redis.ErrKindConnection, redis.ErrKindContext:
-		r.c.forceReloading()
+		r.c.ForceReloading()
 		// It is safe to retry readonly requests, and if request were
 		// not sent at all.
-		if r.lastErrIsHard {
+		tries := r.c.opts.ConnsPerHost
+		if r.policy != MasterOnly {
+			tries *= 2
+		}
+		if int(r.hardErrs) >= tries {
 			// on second try do no "smart" things,
 			// cause it is likely cluster is in unstable state
 			r.cb.Resolve(res, r.off)
 			return
 		}
-		r.lastErrIsHard = true
-		conn, err := r.c.connForSlot(r.slot, r.policy)
+		r.hardErrs++
+		r.seen = append(r.seen, r.lastconn)
+		conn, err := r.c.connForSlot(r.slot, r.policy, r.seen)
 		if err != nil {
 			r.cb.Resolve(err, r.off)
 		} else {
+			r.lastconn = conn
 			conn.Send(r.req, r, 0)
 		}
 	case redis.ErrKindResult:
 		if err.Code == redis.ErrMoved || err.Code == redis.ErrLoading {
-			r.c.forceReloading()
+			r.c.ForceReloading()
 		}
-		if (err.Code == redis.ErrMoved || err.Code == redis.ErrAsk) && int(r.try) < r.c.opts.MovedRetries {
-			r.try++
-			r.lastErrIsHard = false
+		if (err.Code == redis.ErrMoved || err.Code == redis.ErrAsk) && int(r.redir) < r.c.opts.MovedRetries {
+			r.redir++
+			r.hardErrs = 0
+			r.seen = nil
 			addr := err.Get("movedto").(string)
 			r.c.ensureConnForAddress(addr, func(conn *redisconn.Connection, cerr error) {
 				if cerr != nil {
 					r.cb.Resolve(cerr, r.off)
 				} else {
+					r.lastconn = conn
 					conn.SendAsk(r.req, r, 0, err.Code == redis.ErrAsk)
 				}
 			})
@@ -446,7 +461,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 		return
 	}
 
-	conn, err := c.connForSlot(slot, MasterOnly)
+	conn, err := c.connForSlot(slot, MasterOnly, nil)
 
 	if err != nil {
 		// ? no known alive connection for slot
@@ -454,7 +469,15 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 		return
 	}
 
-	t := &transaction{c: c, reqs: reqs, cb: cb, off: off, slot: slot}
+	t := &transaction{
+		c:    c,
+		reqs: reqs,
+		cb:   cb,
+		off:  off,
+		slot: slot,
+
+		lastconn: conn,
+	}
 	t.send(conn, false)
 }
 
@@ -464,15 +487,18 @@ type transaction struct {
 	cb   Future
 	off  uint64
 
-	r []interface{}
+	res []interface{}
 
-	lastErrIsHard bool
-	slot          uint16
-	try           uint8
+	lastconn *redisconn.Connection
+	seen     []*redisconn.Connection
+
+	hardErrs uint8
+	redir    uint8
+	slot     uint16
 }
 
 func (t *transaction) send(conn *redisconn.Connection, ask bool) {
-	t.r = make([]interface{}, len(t.reqs)+1)
+	t.res = make([]interface{}, len(t.reqs)+1)
 	flags := redisconn.DoTransaction
 	if ask {
 		flags |= redisconn.DoAsking
@@ -485,12 +511,12 @@ func (t *transaction) Cancelled() bool {
 }
 
 func (t *transaction) Resolve(res interface{}, n uint64) {
-	t.r[n] = res
+	t.res[n] = res
 	if int(n) != len(t.reqs) {
 		return
 	}
 
-	execres := t.r[len(t.reqs)]
+	execres := t.res[len(t.reqs)]
 	// do not retry if cluster is closed
 	select {
 	case <-t.c.ctx.Done():
@@ -518,17 +544,21 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		t.cb.Resolve(execres, t.off)
 		return
 	case redis.ErrKindConnection, redis.ErrKindContext:
-		t.c.forceReloading()
-		if t.lastErrIsHard {
-			t.cb.Resolve(execres, t.off)
+		t.c.ForceReloading()
+		if int(t.hardErrs) >= t.c.opts.ConnsPerHost {
+			// on second try do no "smart" things,
+			// cause it is likely cluster is in unstable state
+			t.cb.Resolve(res, t.off)
 			return
 		}
-		t.lastErrIsHard = true
+		t.hardErrs++
 
-		conn, err := t.c.connForSlot(t.slot, MasterOnly)
+		t.seen = append(t.seen, t.lastconn)
+		conn, err := t.c.connForSlot(t.slot, MasterOnly, t.seen)
 		if err != nil {
 			t.cb.Resolve(err, t.off)
 		} else {
+			t.lastconn = conn
 			t.send(conn, false)
 		}
 	case redis.ErrKindResult:
@@ -542,7 +572,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 			moving = true
 		} else if strings.HasPrefix(err.Msg(), "EXECABORT") {
 			// check if all partial responses were ASK or MOVED
-			responses := t.r[1 : len(t.r)-1]
+			responses := t.res[:len(t.res)-1]
 			for _, r := range responses {
 				err := redis.AsRedisError(r)
 				if err == nil || err.Code != redis.ErrMoved || err.Code != redis.ErrAsk {
@@ -557,10 +587,12 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 				}
 			}
 		}
-		if moved != "" && moving != asking && int(t.try) < t.c.opts.MovedRetries {
-			t.try++
+		if moved != "" && moving != asking && int(t.redir) < t.c.opts.MovedRetries {
+			t.redir++
+			t.hardErrs = 0
+			t.seen = nil
 			if moving {
-				t.c.forceReloading()
+				t.c.ForceReloading()
 			}
 			if !allmoved {
 				if asking {
@@ -589,19 +621,10 @@ func (t *transaction) sendMoved(addr string, asking bool) {
 		if cerr != nil {
 			t.cb.Resolve(cerr, t.off)
 		} else {
+			t.lastconn = conn
 			t.send(conn, asking)
 		}
 	})
-}
-
-func (c *Cluster) newConn(addr string) (*redisconn.Connection, error) {
-	node := c.addNode(addr)
-	conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected)
-	if conn == nil {
-		err := c.err(redis.ErrKindConnection, redis.ErrDial).With("address", addr)
-		return nil, err
-	}
-	return conn, nil
 }
 
 func (c *Cluster) err(kind redis.ErrorKind, code redis.ErrorCode) *redis.Error {

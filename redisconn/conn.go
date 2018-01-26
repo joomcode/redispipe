@@ -639,11 +639,11 @@ func (one *oneconn) setErr(neterr error, conn *Connection) {
 			rerr = redis.NewErrWrap(redis.ErrKindIO, redis.ErrIO, neterr)
 		}
 		one.err = rerr.With("connection", conn)
+		go conn.reconnect(neterr, one.c)
 	})
-	go conn.reconnect(neterr, one)
 }
 
-func (conn *Connection) reconnect(neterr error, one *oneconn) {
+func (conn *Connection) reconnect(neterr error, c net.Conn) {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 	if atomic.LoadUint32(&conn.state) == connClosed {
@@ -653,7 +653,7 @@ func (conn *Connection) reconnect(neterr error, one *oneconn) {
 		conn.Close()
 		return
 	}
-	if conn.c == one.c {
+	if conn.c == c {
 		conn.closeConnection(neterr, false)
 		conn.createConnection(true, nil)
 	}

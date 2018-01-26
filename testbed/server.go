@@ -3,9 +3,11 @@ package testbed
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
 )
@@ -62,11 +64,15 @@ func (s *Server) Start() {
 	s.Cmd.Dir = Dir
 
 	_stdout, _ := s.Cmd.StdoutPipe()
-	stdout := bufio.NewReader(_stdout)
+	logfile, err := os.Create(filepath.Join(s.Cmd.Dir, "log-"+port+".log"))
+	if err != nil {
+		panic(err)
+	}
+	_tee := io.TeeReader(_stdout, logfile)
+	stdout := bufio.NewReader(_tee)
 
 	err = s.Cmd.Start()
 	if err != nil {
-		s.Cmd = nil
 		panic(err)
 	}
 	for {
@@ -82,6 +88,7 @@ func (s *Server) Start() {
 		}
 	}
 	go func() {
+		defer logfile.Close()
 		for {
 			_, _, err := stdout.ReadLine()
 			if err != nil {
@@ -90,6 +97,14 @@ func (s *Server) Start() {
 		}
 	}()
 	s.Conn.Addr = s.Addr()
+}
+
+func (s *Server) Running() bool {
+	return s.Cmd != nil
+}
+
+func (s *Server) RunningNow() bool {
+	return s.Cmd != nil && !s.Paused
 }
 
 func (s *Server) Pause() {

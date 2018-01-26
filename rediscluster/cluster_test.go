@@ -68,8 +68,10 @@ var defopts = redisconn.Opts{
 }
 
 var clustopts = Opts{
-	HostOpts: defopts,
-	Name:     "default",
+	HostOpts:      defopts,
+	Name:          "default",
+	CheckInterval: 100 * time.Millisecond,
+	ForceInterval: 10 * time.Millisecond,
 }
 
 func TestCluster(t *testing.T) {
@@ -232,5 +234,141 @@ func (s *Suite) TestScan() {
 			allkeys[key] = struct{}{}
 		}
 	}
-	s.Len(allkeys, len(reqs))
+	s.Len(allkeys, len(reqs), "length doesn't match", len(allkeys), len(reqs))
+}
+
+func (s *Suite) TestFallbackToSlaveStop() {
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	key := slotkey("toslave", s.keys[1], "stop")
+	sconn.Do(s.ctx, "SET", key, "1")
+
+	s.cl.Node[0].Stop()
+	// test read from replica
+	for i := 0; i < 20; i++ {
+		s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key))
+	}
+
+	// wait replica becomes master
+	s.cl.WaitClusterOk()
+	time.Sleep(clustopts.CheckInterval)
+
+	s.Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
+
+	// return master
+	s.cl.Node[0].Start()
+	s.cl.WaitClusterOk()
+	s.cl.Node[3].Stop()
+	s.cl.WaitClusterOk()
+	s.cl.Node[3].Start()
+}
+
+func (s *Suite) TestFallbackToSlaveTimeout() {
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	key := slotkey("toslave", s.keys[1], "timeout")
+	sconn.Do(s.ctx, "SET", key, "1")
+
+	s.cl.Node[0].Pause()
+	// test read from replica
+	for i := 0; i < 20; i++ {
+		s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key))
+	}
+
+	// wait replica becomes master
+	s.cl.WaitClusterOk()
+	time.Sleep(clustopts.CheckInterval * 2)
+
+	s.Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
+
+	// return master
+	s.cl.Node[0].Resume()
+	s.cl.WaitClusterOk()
+	s.cl.Node[3].Stop()
+	s.cl.WaitClusterOk()
+	s.cl.Node[3].Start()
+
+}
+
+func (s *Suite) TestGetMoved() {
+	// delay configuration refresh
+	opts := clustopts
+	opts.CheckInterval = 5 * time.Second
+
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	key := slotkey("moved", s.keys[10999], "get")
+	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key))
+
+	s.cl.MoveSlot(10999, 1, 2)
+
+	s.Equal([]byte(key), sconn.Do(s.ctx, "GET", key))
+
+	s.cl.MoveSlot(10999, 2, 1)
+}
+
+func (s *Suite) TestSetMoved() {
+	// delay configuration refresh
+	opts := clustopts
+	opts.CheckInterval = 5 * time.Second
+
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	key := slotkey("moved", s.keys[10998], "set")
+	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key))
+
+	s.cl.MoveSlot(10998, 1, 2)
+
+	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key+"!"))
+
+	s.Equal([]byte(key+"!"), s.cl.Node[2].Do("GET", key))
+
+	s.cl.MoveSlot(10998, 2, 1)
+}
+
+func (s *Suite) TestAsk() {
+	// delay configuration refresh
+	opts := clustopts
+	opts.CheckInterval = 5 * time.Second
+
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	s.cl.InitMoveSlot(10997, 1, 2)
+
+	key := slotkey("ask", s.keys[10997])
+	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key))
+	s.Equal([]byte(key), sconn.Do(s.ctx, "GET", key))
+
+	// recheck that redis responses with correct errors
+	rerr := s.AsError(s.cl.Node[2].Do("GET", key))
+	s.Equal(redis.ErrKindResult, rerr.Kind)
+	s.Equal(redis.ErrMoved, rerr.Code)
+
+	rerr = s.AsError(s.cl.Node[1].Do("GET", key))
+	s.Equal(redis.ErrKindResult, rerr.Kind)
+	s.Equal(redis.ErrAsk, rerr.Code)
+
+	s.Equal(int64(1), sconn.Do(s.ctx, "DEL", key))
+
+	s.cl.CancelMoveSlot(10997)
 }

@@ -57,84 +57,84 @@ func (k ErrorKind) String() string {
 
 const (
 	// context is not passed to contructor
-	// (ErrKindOpts)
+	// (ErrKindOpts)		0x1
 	ErrContextIsNil ErrorCode = iota + 1
-	// (ErrKindOpts)
+	// (ErrKindOpts)		0x2
 	ErrNoAddressProvided
 	// context were explicitely closed (connection or cluster shut down)
-	// (ErrKindContext)
+	// (ErrKindContext)		0x3
 	ErrContextClosed
 	// connection were not established at the moment
-	// (ErrKindConnection)
+	// (ErrKindConnection)	0x4
 	ErrNotConnected
 	// connection establishing not successful
-	// (ErrKindConnection)
+	// (ErrKindConnection)	0x5
 	ErrDial
 	// password didn't match
-	// (ErrKindConnection)
+	// (ErrKindConnection)	0x6
 	ErrAuth
 	// other connection initializing error
-	// (ErrKindConnection)
+	// (ErrKindConnection)	0x7
 	ErrConnSetup
 	// connection were closed, or other read-write error
-	// (ErrKindIO or ErrKindConnection)
+	// (ErrKindIO or ErrKindConnection) 0x8
 	ErrIO
 	// Argument is not serializable
-	// (ErrKindRequest)
+	// (ErrKindRequest)		0x9
 	ErrArgumentType
 	// Some other command in batch is malformed
-	// (ErrKindRequest)
+	// (ErrKindRequest)		0xa
 	ErrBatchFormat
 	// Response is not valid Redis response
-	// (ErrKindResponse)
+	// (ErrKindResponse)	0xb
 	ErrResponseFormat
 	// Response is valid redis response, but its structure/type unexpected
-	// (ErrKindResponse)
+	// (ErrKindResponse)	0xc
 	ErrResponseUnexpected
 	// Header line too large
-	// (ErrKindResponse)
+	// (ErrKindResponse)	0xd
 	ErrHeaderlineTooLarge
 	// Header line is empty
-	// (ErrKindResponse)
+	// (ErrKindResponse)	0xe
 	ErrHeaderlineEmpty
 	// Integer malformed
-	// (ErrKindResponse)
+	// (ErrKindResponse)	0xf
 	ErrIntegerParsing
 	// No final "\r\n"
-	// (ErrKindResponse)
+	// (ErrKindResponse)	0x10
 	ErrNoFinalRN
 	// Unknown header type
-	// (ErrKindResponse)
+	// (ErrKindResponse)	0x11
 	ErrUnknownHeaderType
 	// Ping receives wrong response
-	// (ErrKindResponse)
+	// (ErrKindResponse)	0x12
 	ErrPing
 	// Just regular redis response
-	// (ErrKindResult)
+	// (ErrKindResult)		0x13
 	ErrResult
 	// Special case for MOVED
-	// (ErrKindResult)
+	// (ErrKindResult)		0x14
 	ErrMoved
 	// Special case for ASK
-	// (ErrKindResult)
+	// (ErrKindResult)		0x15
 	ErrAsk
 	// Special case for LOADING
-	// (ErrKindResult)
+	// (ErrKindResult)		0x16
 	ErrLoading
 	// No key to determine cluster slot
-	// (ErrKindRequest)
+	// (ErrKindRequest)		0x17
 	ErrNoSlotKey
 	// Fething slots failed
-	// (ErrKindCluster)
+	// (ErrKindCluster)		0x18
 	ErrClusterSlots
 	// EXEC returns nil (WATCH failed) (it is strange, cause we don't support WATCH)
-	// (ErrKindResult)
+	// (ErrKindResult)		0x19
 	ErrExecEmpty
 	// No addresses found in config
-	// (ErrKindCluster)
+	// (ErrKindCluster)		0x1a
 	ErrClusterConfigEmpty
 	// Request already cancelled
-	// (ErrKindRequest)
+	// (ErrKindRequest)		0x1b
 	ErrRequestCancelled
 )
 

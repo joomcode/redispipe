@@ -501,6 +501,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 			r.cb.Resolve(res, r.off)
 			return
 		}
+		DebugEvent("retry")
 		r.hardErrs++
 		r.seen = append(r.seen, r.lastconn)
 		conn, err := r.c.connForSlot(r.slot, r.policy, r.seen)
@@ -520,8 +521,10 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 			r.seen = nil
 			addr := err.Get("movedto").(string)
 			if err.Code == redis.ErrMoved {
+				DebugEvent("moved")
 				r.c.sendCommand("moved", r.slot, addr)
 			} else {
+				DebugEvent("asking")
 				r.c.sendCommand("asking", r.slot, "")
 			}
 			r.c.ensureConnForAddress(addr, func(conn *redisconn.Connection, cerr error) {
@@ -684,6 +687,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 			t.hardErrs = 0
 			t.seen = nil
 			t.c.addWaitToMigrate(func() { t.send(t.lastconn, t.asked) })
+			DebugEvent("transaction tryagain")
 			return
 		}
 		if moved != "" && moving != asking && int(t.redir) < t.c.opts.MovedRetries {
@@ -692,9 +696,10 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 			t.seen = nil
 			if moving {
 				t.c.sendCommand("moved", t.slot, moved)
-				t.c.ForceReloading()
+				DebugEvent("transaction moved")
 			} else {
 				t.c.sendCommand("asking", t.slot, "")
+				DebugEvent("transaction asking")
 			}
 			if !allmoved {
 				if asking {

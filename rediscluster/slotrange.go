@@ -196,6 +196,9 @@ func (c *Cluster) updateMappings(nandm nodesAndMigrating, ranges []redis.SlotsRa
 		if _, ok := nandm.migrating[uint16(cur)]; ok {
 			cur |= 0x4000
 		}
+		if _, ok := c.externalForceMasterOnly[uint16(cur)]; ok {
+			cur |= 0x4000
+		}
 		if i&1 == 0 {
 			sh = cur
 		} else {

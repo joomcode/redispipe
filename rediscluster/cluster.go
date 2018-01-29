@@ -80,6 +80,8 @@ type Cluster struct {
 	config    *clusterConfig
 	prevNodes nodeMap
 
+	externalForceMasterOnly map[uint16]struct{}
+
 	nodeWait struct {
 		sync.Mutex
 		promises map[string]*[]connThen
@@ -210,6 +212,38 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	go cluster.checker()
 
 	return cluster, nil
+}
+
+// Set slots, that will be migrating, to force them MasterOnly
+func (c *Cluster) SetSlotsForcedMasterOnly(slots []uint16) {
+	c.m.Lock()
+	defer c.m.Unlock()
+	if len(slots) == 0 {
+		if c.externalForceMasterOnly == nil {
+			return
+		}
+		c.externalForceMasterOnly = nil
+		c.ForceReloading()
+	} else {
+		if len(slots) == len(c.externalForceMasterOnly) {
+			equal := true
+			for _, slot := range slots {
+				if _, ok := c.externalForceMasterOnly[slot]; !ok {
+					equal = false
+					break
+				}
+			}
+			if equal {
+				return
+			}
+		}
+		efm := make(map[uint16]struct{}, len(slots))
+		for _, slot := range slots {
+			efm[slot] = struct{}{}
+		}
+		c.externalForceMasterOnly = efm
+		c.ForceReloading()
+	}
 }
 
 // Context of this connection

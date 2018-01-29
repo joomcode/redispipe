@@ -237,6 +237,10 @@ func (c *Cluster) checker() {
 	t := time.NewTicker(c.opts.CheckInterval)
 	defer t.Stop()
 
+	forceReload := c.forceReload
+	ft := time.NewTimer(time.Hour)
+	ft.Stop()
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -248,7 +252,11 @@ func (c *Cluster) checker() {
 		case cmd := <-c.commands:
 			c.execCommand(cmd)
 			continue
-		case <-c.forceReload:
+		case <-ft.C:
+			forceReload = c.forceReload
+		case <-forceReload:
+			forceReload = nil
+			ft.Reset(c.opts.ForceInterval)
 		case <-t.C:
 		}
 

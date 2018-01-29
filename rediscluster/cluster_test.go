@@ -468,3 +468,79 @@ func (s *Suite) TestMovedTransaction() {
 	s.Equal([]byte("3"), sconn.Do(s.ctx, "GET", key2))
 	s.Equal([]string{"transaction moved"}, DebugEvents)
 }
+
+func (s *Suite) fillMany(sconn redis.SyncCtx, prefix string) {
+	// prepare
+	reqs := make([]redis.Request, NumSlots)
+	for i, key := range s.keys {
+		reqs[i] = redis.Req("SET", slotkey(prefix, key), key)
+	}
+	ress := sconn.SendMany(s.ctx, reqs)
+	for _, res := range ress {
+		s.r().True("OK" == res)
+	}
+	time.Sleep(10 * time.Millisecond)
+}
+
+func (s *Suite) TestAllReturns_Good() {
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	s.fillMany(sconn, "allgood")
+
+	const N = 400
+	const K = 400
+	ch := make(chan struct{}, N)
+
+	for i := 0; i < N; i++ {
+		go func(i int) {
+			for j := 0; j < K; j++ {
+				skey := s.keys[(i*N+j)*127%NumSlots]
+				key := slotkey("allgood", skey)
+				res := sconn.Do(s.ctx, "GET", key)
+				if !s.Equal([]byte(skey), res) {
+					return
+				}
+
+				keya := slotkey("allgood", skey, "a")
+				keyb := slotkey("allgood", skey, "b")
+
+				z := i*53 + j*51
+				reverse := (z^z>>8)&1 == 0
+				if reverse {
+					keya, keyb = keyb, keya
+				}
+
+				reqs := []redis.Request{
+					redis.Req("SET", keya, keyb),
+					redis.Req("GET", keyb),
+				}
+				ress := sconn.SendMany(s.ctx, reqs)
+
+				if !s.Equal("OK", ress[0]) {
+					return
+				}
+				if ress[1] != nil && !s.Equal([]byte(keya), ress[1]) {
+					return
+				}
+			}
+			ch <- struct{}{}
+		}(i)
+	}
+
+	cnt := 0
+Loop:
+	for cnt < N {
+		select {
+		case <-s.ctx.Done():
+			break Loop
+		case <-ch:
+			cnt++
+		}
+	}
+	s.Equal(N, cnt, "Not all goroutines finished")
+	s.Equal([]string(nil), DebugEvents)
+}

@@ -2,14 +2,15 @@ package rediscluster
 
 import (
 	"bytes"
+	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/joomcode/redispipe/redis"
 )
 
-func (c *Cluster) SlotRanges() ([]redis.SlotsRange, error) {
-	nodes := c.getNodeMap()
+func (c *Cluster) nodesAndSlotRanges() (nodesAndMigrating, []redis.SlotsRange, error) {
+	nodes := c.getConfig().nodes
 	for _, searchConnected := range []bool{true, false} {
 		for _, node := range nodes {
 			for i := len(node.conns) - 1; i >= 0; i-- {
@@ -21,27 +22,90 @@ func (c *Cluster) SlotRanges() ([]redis.SlotsRange, error) {
 					maySend = conn.MayBeConnected()
 				}
 				if maySend {
-					res := redis.Sync{conn}.Do("CLUSTER SLOTS")
-					slotsres, err := redis.ParseSlotsInfo(res)
-					if err == nil {
-						return slotsres, nil
+					ress := redis.Sync{conn}.SendMany([]Request{
+						redis.Req("CLUSTER NODES"),
+						redis.Req("CLUSTER SLOTS"),
+					})
+					nandm, err := parseNodes(ress[0])
+					if err != nil {
+						c.report(LogClusterSlotsError, conn, err)
+						continue
 					}
-					c.report(LogClusterSlotsError, conn, err)
+					slotsres, err := redis.ParseSlotsInfo(ress[1])
+					if err != nil {
+						c.report(LogClusterSlotsError, conn, err)
+						continue
+					}
+					return nandm, slotsres, nil
 				}
 			}
 		}
 	}
 	c.report(LogClusterSlotsError)
-	return nil, c.err(redis.ErrKindCluster, redis.ErrClusterSlots)
+	return nodesAndMigrating{}, nil, c.err(redis.ErrKindCluster, redis.ErrClusterSlots)
 }
 
-func (c *Cluster) updateMappings(ranges []redis.SlotsRange) {
+type nodesAndMigrating struct {
+	addrs     []string
+	migrating map[uint16]struct{}
+}
+
+func parseNodes(res interface{}) (nodesAndMigrating, error) {
+	if err := redis.AsError(res); err != nil {
+		return nodesAndMigrating{}, err
+	}
+	buf, ok := res.([]byte)
+	if !ok {
+		return nodesAndMigrating{}, redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseUnexpected, "CLUSTER NODES returns not string").With("response", res)
+	}
+	lines := bytes.Split(buf, []byte("\n"))
+	result := nodesAndMigrating{
+		addrs:     make([]string, 0, len(lines)),
+		migrating: make(map[uint16]struct{}),
+	}
+	for _, line := range lines {
+		parts := bytes.Split(line, []byte(" "))
+		if len(parts) >= 7 {
+			addr := bytes.Split(parts[1], []byte("@"))[0]
+			result.addrs = append(result.addrs, string(addr))
+		} else if len(parts) > 1 || len(parts) == 1 && len(parts[0]) > 0 {
+			return nodesAndMigrating{}, redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseUnexpected, "CLUSTER NODES return is in unknown format").With("result", string(buf)).With("line", string(line)).With("parts", parts)
+		}
+		for i := 8; i < len(parts); i++ {
+			p := parts[i]
+			if p[0] != '[' {
+				continue
+			}
+			t := bytes.IndexByte(p, '-')
+			if t == -1 {
+				// should we report error here ???
+				continue
+			}
+			slot, err := strconv.Atoi(string(p[1:t]))
+			if err != nil {
+				// should we report error here too ???
+				continue
+			}
+			result.migrating[uint16(slot)] = struct{}{}
+		}
+	}
+	if len(result.migrating) == 0 {
+		// to speedup lookup a bit
+		result.migrating = nil
+	}
+	return result, nil
+}
+
+func (c *Cluster) updateMappings(nandm nodesAndMigrating, ranges []redis.SlotsRange) {
 	shards := make(map[string][]string)
 	for _, r := range ranges {
 		shards[r.Addrs[0]] = r.Addrs
 	}
 
 	uniqaddrs := make(map[string]struct{})
+	for _, addr := range nandm.addrs {
+		uniqaddrs[addr] = struct{}{}
+	}
 	for _, s := range shards {
 		for _, a := range s {
 			uniqaddrs[a] = struct{}{}
@@ -51,86 +115,72 @@ func (c *Cluster) updateMappings(ranges []redis.SlotsRange) {
 	c.m.Lock()
 	defer c.m.Unlock()
 
-	mayclose := make(chan struct{})
-	defer close(mayclose)
+	oldConfig := c.getConfig()
+	oldNodes := c.prevNodes
+	c.prevNodes = oldConfig.nodes
 
-	version := atomic.AddUint32(&c.version, 1)
+	newConfig := *oldConfig
+	newConfig.nodes = make(nodeMap, len(c.prevNodes))
 
-	oldNodes := c.getNodeMap()
-	tmpNodes := make(nodeMap, len(oldNodes))
-
-	for a, n := range oldNodes {
-		tmpNodes[a] = n
-	}
 	for addr := range uniqaddrs {
-		if node, ok := oldNodes[addr]; ok {
-			node.copyVersion(c)
+		if node, ok := c.prevNodes[addr]; ok {
+			atomic.AddUint32(&node.refcnt, 1)
+			newConfig.nodes[addr] = node
+		} else if node, ok := oldNodes[addr]; ok {
+			atomic.AddUint32(&node.refcnt, 1)
+			newConfig.nodes[addr] = node
 		} else {
 			node, _ = c.newNode(addr, false)
-			tmpNodes[addr] = node
+			newConfig.nodes[addr] = node
 		}
 	}
 
-	oldShards := c.getShardMap()
-	newShards := make(shardMap, len(oldShards))
-	tmpShards := make(shardMap, len(oldShards))
-
-	oldMasters := c.getMasterMap()
-	newMasters := make(masterMap, len(oldMasters))
-
-	for shardn, addrs := range oldShards {
-		tmpShards[shardn] = addrs
-	}
+	newConfig.shards = make(shardMap, len(oldConfig.shards))
+	newConfig.masters = make(masterMap, len(oldConfig.masters))
 
 	var random uint16
 	for master, addrs := range shards {
-		var sh *shard
-		shardn, ok := func() (uint16, bool) {
+		shardno := uint16(len(newConfig.shards))
+
+		oldshard := func() *shard {
 			var ok bool
 			var oldnum uint16
-			oldnum, ok = oldMasters[master]
+			oldnum, ok = oldConfig.masters[master]
 			if !ok {
-				return 0, false
+				return nil
 			}
-			sh, ok = oldShards[oldnum]
+			sh, ok := oldConfig.shards[oldnum]
 			if !ok {
-				return 0, false
+				return nil
 			}
 			if len(addrs) != len(sh.addr) {
-				return 0, false
+				return nil
 			}
 			for i, addr := range addrs {
 				if sh.addr[i] != addr {
-					return 0, false
+					return nil
 				}
 			}
-			return oldnum, ok
+			return sh
 		}()
-		if !ok {
-			for {
-				shardn = c.nextShard
-				c.nextShard++
-				if _, ok := tmpShards[shardn]; !ok {
-					break
-				}
+
+		if oldshard != nil {
+			newConfig.shards[shardno] = oldshard
+		} else {
+			newConfig.shards[shardno] = &shard{
+				addr: addrs,
+				good: (uint32(1) << uint(len(addrs))) - 1,
 			}
-			sh = &shard{addr: addrs, good: (uint32(1) << uint(len(addrs))) - 1}
-			tmpShards[shardn] = sh
 		}
-		newMasters[master] = shardn
-		newShards[shardn] = sh
-		random = shardn
+		newConfig.masters[addrs[0]] = shardno
+		random = shardno
 	}
 
 	c.nodeWait.Lock()
 	c.nodeWait.promises = nil
 	c.nodeWait.Unlock()
 
-	c.nodeMap.Store(tmpNodes)
-	c.shardMap.Store(tmpShards)
-	c.masterMap.Store(newMasters)
-
-	go c.setConnRoles(newShards)
+	go newConfig.setConnRoles()
 
 	var sh uint32
 	for i := 0; i < NumSlots; i++ {
@@ -141,40 +191,27 @@ func (c *Cluster) updateMappings(ranges []redis.SlotsRange) {
 		if len(ranges) == 0 || i < ranges[0].From {
 			cur = uint32(random)
 		} else {
-			cur = uint32(newMasters[ranges[0].Addrs[0]])
+			cur = uint32(newConfig.masters[ranges[0].Addrs[0]])
+		}
+		if _, ok := nandm.migrating[uint16(cur)]; ok {
+			cur |= 0x4000
 		}
 		if i&1 == 0 {
 			sh = cur
 		} else {
 			sh |= cur << 16
-			old := atomic.LoadUint32(&c.slotMap[i/2])
-			// if shard numbers without flags are same, do not overwrite 7 times of 8
-			// flags are: 0x4000 - slot is "asking", so it has to be with MasterOnly policy
-			if old&^0xc000c000 != sh || version&7 == 0 {
-				atomic.StoreUint32(&c.slotMap[i/2], sh)
-			}
+			newConfig.slots[i/2] = sh
 		}
 	}
 
-	time.AfterFunc(time.Millisecond, func() {
-		newNodes := make(nodeMap, len(tmpNodes))
-		delNodes := make([]*node, 0, len(tmpNodes))
-		c.m.Lock()
-		if c.version == version {
-			c.shardMap.Store(newShards)
-		}
-		tmpNodes := c.getNodeMap()
-		for a, n := range tmpNodes {
-			if n.isOlder(version) {
-				delNodes = append(delNodes, n)
-			} else {
-				newNodes[a] = n
+	c.storeConfig(&newConfig)
+
+	time.AfterFunc(3*time.Millisecond, func() {
+		for _, node := range oldNodes {
+			if atomic.AddUint32(&node.refcnt, ^uint32(0)) != 0 {
+				continue
 			}
-		}
-		c.nodeMap.Store(newNodes)
-		c.m.Unlock()
-		for _, n := range delNodes {
-			for _, conn := range n.conns {
+			for _, conn := range node.conns {
 				conn.Close()
 			}
 		}
@@ -210,10 +247,10 @@ func (s *shard) setReplicaInfo(res interface{}, n uint64) {
 	}
 }
 
-func (c *Cluster) setConnRoles(shards shardMap) {
-	for _, sh := range shards {
+func (cfg *clusterConfig) setConnRoles() {
+	for _, sh := range cfg.shards {
 		for i, addr := range sh.addr {
-			node := c.getNode(addr)
+			node := cfg.nodes[addr]
 			if node == nil {
 				continue
 			}

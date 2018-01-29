@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/joomcode/redispipe/redis"
@@ -78,27 +77,29 @@ type Cluster struct {
 
 	m sync.Mutex
 
-	version uint32
+	config    *clusterConfig
+	prevNodes nodeMap
 
-	shardMap  atomic.Value // map[uint32][]string
-	masterMap atomic.Value // map[string]uint32
-	nextShard uint16
-
-	nodeMap  atomic.Value // map[string]*host
 	nodeWait struct {
 		sync.Mutex
 		promises map[string]*[]connThen
 	}
 
-	// map of slot to shard
-	slotMap []uint32
-
 	forceReload chan struct{}
 	commands    chan clusterCommand
 
+	// for requests, waiting for retry
 	wheelm    sync.Mutex
 	wheelt    *time.Timer
 	waitwheel [2][]func()
+}
+
+type clusterConfig struct {
+	shards  shardMap
+	masters masterMap
+	nodes   nodeMap
+
+	slots [NumSlots / 2]uint32
 }
 
 type shard struct {
@@ -111,11 +112,11 @@ type masterMap map[string]uint16
 type nodeMap map[string]*node
 
 type node struct {
-	addr    string
-	rr      uint32
-	version uint32
-	opts    redisconn.Opts
-	conns   []*redisconn.Connection
+	addr   string
+	rr     uint32
+	refcnt uint32
+	opts   redisconn.Opts
+	conns  []*redisconn.Connection
 }
 
 type clusterCommand struct {
@@ -182,19 +183,17 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 		cluster.opts.WaitToMigrate = 100 * time.Millisecond
 	}
 
-	nodes := make(nodeMap)
-	shards := make(shardMap)
-	masters := make(masterMap)
-	cluster.nodeMap.Store(nodes)
-	cluster.shardMap.Store(shards)
-	cluster.masterMap.Store(masters)
-
-	cluster.slotMap = make([]uint32, NumSlots/2)
+	cluster.config = &clusterConfig{
+		nodes:   make(nodeMap),
+		shards:  make(shardMap),
+		masters: make(masterMap),
+	}
 
 	var err error
 	for _, addr := range init_addrs {
-		if _, ok := masters[addr]; !ok {
-			nodes[addr], err = cluster.newNode(addr, true)
+		if _, ok := cluster.config.masters[addr]; !ok {
+			cluster.config.nodes[addr], err = cluster.newNode(addr, true)
+			// since we connecting asynchronously, it can be only configuration error
 			if err != nil {
 				cluster.cancel()
 				return nil, err
@@ -202,6 +201,7 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 		}
 	}
 
+	// case if no nodes are accessible is handled here
 	if err := cluster.reloadMapping(); err != nil {
 		cluster.cancel()
 		return nil, err
@@ -265,9 +265,9 @@ func (c *Cluster) checker() {
 }
 
 func (c *Cluster) reloadMapping() error {
-	slotsRanges, err := c.SlotRanges()
+	nodes, slotsRanges, err := c.nodesAndSlotRanges()
 	if err == nil {
-		c.updateMappings(slotsRanges)
+		c.updateMappings(nodes, slotsRanges)
 	}
 	return err
 }
@@ -297,7 +297,7 @@ func (c *Cluster) callbackMigrate() {
 
 func (c *Cluster) sendCommand(cmd string, slot uint16, addr string) {
 	if cmd == "asking" {
-		if c.slotIsAsking(slot) {
+		if c.getConfig().slotIsAsking(slot) {
 			return
 		}
 	}
@@ -315,27 +315,31 @@ func (c *Cluster) ForceReloading() {
 }
 
 func (c *Cluster) execCommand(cmd clusterCommand) {
+	config := c.getConfig()
 	switch cmd.cmd {
 	case "moved":
-		masterMap := c.getMasterMap()
-		addrshard, ok := masterMap[cmd.addr]
+		addrshard, ok := config.masters[cmd.addr]
 		if !ok {
 			return
 		}
-		slotshard := c.slot2shardno(cmd.slot)
+		slotshard := config.slot2shardno(cmd.slot)
 		if addrshard == slotshard {
 			return
 		}
 		c.m.Lock()
 		defer c.m.Unlock()
-		masterMap = c.getMasterMap()
-		addrshard, ok = masterMap[cmd.addr]
+		config = c.getConfig()
+		addrshard, ok = config.masters[cmd.addr]
 		if !ok {
 			return
 		}
-		c.slotSetShard(cmd.slot, addrshard)
+		slotshard = config.slot2shardno(cmd.slot)
+		if addrshard == slotshard {
+			return
+		}
+		config.slotSetShard(cmd.slot, addrshard)
 	case "asking":
-		c.slotMarkAsking(cmd.slot)
+		config.slotMarkAsking(cmd.slot)
 	}
 }
 
@@ -382,7 +386,7 @@ var readonly = func() map[string]bool {
 }()
 
 func (c *Cluster) fixPolicy(slot uint16, req Request, policy ReplicaPolicyEnum) ReplicaPolicyEnum {
-	if c.slotIsAsking(slot) {
+	if c.getConfig().slotIsAsking(slot) {
 		return MasterOnly
 	}
 	switch policy {

@@ -15,9 +15,9 @@ func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
 	var addrs []string
 
 	if opts.Cmd == "" || opts.Cmd == "SCAN" {
-		masters := c.getMasterMap()
-		addrs = make([]string, 0, len(masters))
-		for addr := range masters {
+		cfg := c.getConfig()
+		addrs = make([]string, 0, len(cfg.masters))
+		for addr := range cfg.masters {
 			addrs = append(addrs, addr)
 		}
 		if len(addrs) == 0 {
@@ -29,7 +29,7 @@ func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
 		// other commands operates on single key
 		key := opts.Key
 		slot := Slot(key)
-		shard := c.slot2shard(slot)
+		shard := c.getConfig().slot2shard(slot)
 		addrs = shard.addr[:1]
 	}
 

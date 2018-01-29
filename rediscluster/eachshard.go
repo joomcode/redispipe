@@ -5,16 +5,9 @@ import (
 )
 
 func (c *Cluster) EachShard(cb func(redis.Sender, error) bool) {
-	masters := c.getMasterMap()
-	shards := c.getShardMap()
-	nodes := c.getNodeMap()
-	for _, shno := range masters {
-		shard := shards[shno]
-		if shard == nil {
-			cb(nil, c.err(redis.ErrKindConnection, redis.ErrDial))
-			return
-		}
-		node := nodes[shard.addr[0]]
+	cfg := c.getConfig()
+	for _, shard := range cfg.shards {
+		node := cfg.nodes[shard.addr[0]]
 		if node == nil {
 			cb(nil, c.err(redis.ErrKindConnection, redis.ErrDial))
 			return

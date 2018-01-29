@@ -2,6 +2,7 @@ package rediscluster_test
 
 import (
 	"context"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,6 +43,7 @@ func (s *Suite) SetupSuite() {
 func (s *Suite) SetupTest() {
 	s.cl.Start()
 	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 10*time.Second)
+	DebugDisable = false
 	DebugEvents = nil
 }
 
@@ -65,7 +67,7 @@ func (s *Suite) AsError(v interface{}) *redis.Error {
 }
 
 var defopts = redisconn.Opts{
-	IOTimeout: 10 * time.Millisecond,
+	IOTimeout: 50 * time.Millisecond,
 }
 
 var clustopts = Opts{
@@ -73,6 +75,14 @@ var clustopts = Opts{
 	Name:          "default",
 	CheckInterval: 200 * time.Millisecond,
 	ForceInterval: 10 * time.Millisecond,
+
+	ConnHostPolicy: ConnHostRoundRobin,
+}
+
+var longcheckopts = Opts{
+	HostOpts:      defopts,
+	Name:          "default",
+	CheckInterval: 1 * time.Second,
 }
 
 func TestCluster(t *testing.T) {
@@ -239,7 +249,7 @@ func (s *Suite) TestScan() {
 }
 
 func (s *Suite) TestFallbackToSlaveStop() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -255,7 +265,7 @@ func (s *Suite) TestFallbackToSlaveStop() {
 
 	// wait replica becomes master
 	s.cl.WaitClusterOk()
-	time.Sleep(clustopts.CheckInterval)
+	time.Sleep(longcheckopts.CheckInterval)
 
 	s.Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
 
@@ -268,7 +278,7 @@ func (s *Suite) TestFallbackToSlaveStop() {
 }
 
 func (s *Suite) TestFallbackToSlaveTimeout() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -284,7 +294,7 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 
 	// wait replica becomes master
 	s.cl.WaitClusterOk()
-	time.Sleep(clustopts.CheckInterval * 2)
+	time.Sleep(longcheckopts.CheckInterval)
 
 	s.Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
 
@@ -298,11 +308,7 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 }
 
 func (s *Suite) TestGetMoved() {
-	// delay configuration refresh
-	opts := clustopts
-	opts.CheckInterval = 5 * time.Second
-
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -320,11 +326,7 @@ func (s *Suite) TestGetMoved() {
 }
 
 func (s *Suite) TestSetMoved() {
-	// delay configuration refresh
-	opts := clustopts
-	opts.CheckInterval = 5 * time.Second
-
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -344,11 +346,7 @@ func (s *Suite) TestSetMoved() {
 }
 
 func (s *Suite) TestAsk() {
-	// delay configuration refresh
-	opts := clustopts
-	opts.CheckInterval = 5 * time.Second
-
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -376,9 +374,7 @@ func (s *Suite) TestAsk() {
 }
 
 func (s *Suite) TestAskTransaction() {
-	// delay configuration refresh
-	opts := clustopts
-	opts.CheckInterval = 5 * time.Second
+	opts := longcheckopts
 	opts.MovedRetries = 4
 
 	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
@@ -440,9 +436,7 @@ func (s *Suite) TestAskTransaction() {
 }
 
 func (s *Suite) TestMovedTransaction() {
-	// delay configuration refresh
-	opts := clustopts
-	opts.CheckInterval = 5 * time.Second
+	opts := longcheckopts
 	opts.MovedRetries = 4
 
 	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
@@ -543,4 +537,155 @@ Loop:
 	}
 	s.Equal(N, cnt, "Not all goroutines finished")
 	s.Equal([]string(nil), DebugEvents)
+}
+
+func (s *Suite) TestAllReturns_Bad() {
+	s.ctxcancel()
+	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 2*time.Minute)
+	DebugDisable = true
+
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	s.fillMany(sconn, "allbad")
+
+	const N = 200
+	fin := make(chan struct{})
+	goods := make([]chan bool, N)
+	checks := make(chan bool, N)
+	finch := make(chan struct{}, N)
+
+	for i := 0; i < N; i++ {
+		goods[i] = make(chan bool, 1)
+		go func(i int) {
+			check := true
+		Loop:
+			for j := 0; ; j++ {
+				select {
+				case <-goods[i]:
+					check = true
+				case <-fin:
+					break Loop
+				case <-s.ctx.Done():
+					break Loop
+				default:
+				}
+
+				skey := s.keys[(i*N+j)*127%NumSlots]
+				key := slotkey("allbad", skey)
+				res := sconn.Do(s.ctx, "GET", key)
+
+				keya := slotkey("allbad", skey, "a")
+				keyb := slotkey("allbad", skey, "b")
+				z := i*53 + j*51
+				reverse := (z^z>>8)&1 == 0
+				if reverse {
+					keya, keyb = keyb, keya
+				}
+				reqs := []redis.Request{
+					redis.Req("SET", keya, keyb),
+					redis.Req("GET", keyb),
+				}
+				ress := sconn.SendMany(s.ctx, reqs)
+
+				if check {
+					ok := s.Equal([]byte(skey), res)
+					ok = ok && s.Equal("OK", ress[0])
+					if ress[1] != nil {
+						ok = ok && s.Equal([]byte(keya), ress[1])
+					}
+					checks <- ok
+				}
+				check = false
+				runtime.Gosched()
+			}
+			finch <- struct{}{}
+		}(i)
+	}
+
+	isAllGood := true
+	sendgoods := func() bool {
+		for i := 0; i < N; i++ {
+			select {
+			case <-s.ctx.Done():
+				isAllGood = false
+				return false
+			case goods[i] <- true:
+			}
+		}
+		return true
+	}
+	allgood := func() bool {
+		ok := true
+		for i := 0; i < N; i++ {
+			select {
+			case <-s.ctx.Done():
+				isAllGood = false
+				return false
+			case cur := <-checks:
+				ok = ok && cur
+			}
+		}
+		isAllGood = ok
+		return ok
+	}
+
+	time.Sleep(defopts.IOTimeout * 2)
+	for k := 0; k < 3*len(s.cl.Node); k++ {
+		n := k % len(s.cl.Node)
+		node := &s.cl.Node[n]
+
+		if !allgood() {
+			break
+		}
+
+		node.Stop()
+		s.cl.WaitClusterOk()
+		time.Sleep(clustopts.CheckInterval * 2)
+		if !sendgoods() || !allgood() {
+			break
+		}
+
+		node.Start()
+		s.cl.WaitClusterOk()
+		time.Sleep(clustopts.CheckInterval * 2)
+		if !sendgoods() || !allgood() {
+			break
+		}
+
+		node.Pause()
+		s.cl.WaitClusterOk()
+		time.Sleep(clustopts.CheckInterval * 2)
+		if !sendgoods() || !allgood() {
+			break
+		}
+
+		node.Resume()
+		s.cl.WaitClusterOk()
+		time.Sleep(clustopts.CheckInterval * 2)
+		if !sendgoods() {
+			break
+		}
+	}
+
+	if isAllGood {
+		s.True(allgood())
+	}
+
+	close(fin)
+
+	cnt := 0
+Loop:
+	for cnt < N {
+		select {
+		case <-s.ctx.Done():
+			break Loop
+		case <-finch:
+			cnt++
+		}
+	}
+	s.Equal(N, cnt, "Not all goroutines finished")
 }

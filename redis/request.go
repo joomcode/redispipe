@@ -14,7 +14,10 @@ func (req Request) Key() (string, bool) {
 		return "RANDOMKEY", false
 	}
 	n := 0
-	if req.Cmd == "EVAL" || req.Cmd == "EVALSHA" || req.Cmd == "BITOP" {
+	if req.Cmd == "EVAL" || req.Cmd == "EVALSHA" {
+		n = 2
+	}
+	if req.Cmd == "BITOP" {
 		n = 1
 	}
 	if len(req.Args) <= n {

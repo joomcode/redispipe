@@ -26,11 +26,11 @@ func TestRequestKey(t *testing.T) {
 	assert.Equal(t, "RANDOMKEY", k)
 	assert.False(t, ok)
 
-	k, ok = Req("EVAL", 1, 2, 3).Key()
+	k, ok = Req("EVAL", "return KEY[1]", 1, 2, 3).Key()
 	assert.Equal(t, "2", k)
 	assert.True(t, ok)
 
-	k, ok = Req("EVALSHA", 1, 2, 3).Key()
+	k, ok = Req("EVALSHA", "1234abcdef", 1, 2, 3).Key()
 	assert.Equal(t, "2", k)
 	assert.True(t, ok)
 

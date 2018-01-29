@@ -58,11 +58,13 @@ func parseNodes(res interface{}) (nodesAndMigrating, error) {
 	if !ok {
 		return nodesAndMigrating{}, redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseUnexpected, "CLUSTER NODES returns not string").With("response", res)
 	}
+
 	lines := bytes.Split(buf, []byte("\n"))
 	result := nodesAndMigrating{
 		addrs:     make([]string, 0, len(lines)),
 		migrating: make(map[uint16]struct{}),
 	}
+
 	for _, line := range lines {
 		parts := bytes.Split(line, []byte(" "))
 		if len(parts) >= 7 {
@@ -71,6 +73,7 @@ func parseNodes(res interface{}) (nodesAndMigrating, error) {
 		} else if len(parts) > 1 || len(parts) == 1 && len(parts[0]) > 0 {
 			return nodesAndMigrating{}, redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseUnexpected, "CLUSTER NODES return is in unknown format").With("result", string(buf)).With("line", string(line)).With("parts", parts)
 		}
+
 		for i := 8; i < len(parts); i++ {
 			p := parts[i]
 			if p[0] != '[' {
@@ -89,6 +92,7 @@ func parseNodes(res interface{}) (nodesAndMigrating, error) {
 			result.migrating[uint16(slot)] = struct{}{}
 		}
 	}
+
 	if len(result.migrating) == 0 {
 		// to speedup lookup a bit
 		result.migrating = nil

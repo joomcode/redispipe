@@ -70,7 +70,7 @@ var defopts = redisconn.Opts{
 var clustopts = Opts{
 	HostOpts:      defopts,
 	Name:          "default",
-	CheckInterval: 100 * time.Millisecond,
+	CheckInterval: 200 * time.Millisecond,
 	ForceInterval: 10 * time.Millisecond,
 }
 
@@ -330,12 +330,12 @@ func (s *Suite) TestSetMoved() {
 	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key))
 
 	s.cl.MoveSlot(10998, 1, 2)
+	defer s.cl.MoveSlot(10998, 2, 1)
 
 	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key+"!"))
 
 	s.Equal([]byte(key+"!"), s.cl.Node[2].Do("GET", key))
 
-	s.cl.MoveSlot(10998, 2, 1)
 }
 
 func (s *Suite) TestAsk() {
@@ -350,6 +350,7 @@ func (s *Suite) TestAsk() {
 	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
 
 	s.cl.InitMoveSlot(10997, 1, 2)
+	defer s.cl.CancelMoveSlot(10997)
 
 	key := slotkey("ask", s.keys[10997])
 	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key))
@@ -366,7 +367,6 @@ func (s *Suite) TestAsk() {
 
 	s.Equal(int64(1), sconn.Do(s.ctx, "DEL", key))
 
-	s.cl.CancelMoveSlot(10997)
 }
 
 func (s *Suite) TestAskTransaction() {
@@ -423,4 +423,33 @@ func (s *Suite) TestAskTransaction() {
 
 	s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key2))
 	s.Equal([]byte("2"), sconn.Do(s.ctx, "GET", key3))
+}
+
+func (s *Suite) TestMovedTransaction() {
+	// delay configuration refresh
+	opts := clustopts
+	opts.CheckInterval = 5 * time.Second
+	opts.MovedRetries = 4
+
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	key1 := slotkey("movetran", s.keys[10995], "1")
+	key2 := slotkey("movetran", s.keys[10995], "2")
+
+	s.cl.MoveSlot(10995, 1, 2)
+	defer s.cl.MoveSlot(10995, 2, 1)
+
+	res, err := sconn.SendTransaction(s.ctx, []redis.Request{
+		redis.Req("SET", key1, "2"),
+		redis.Req("SET", key2, "3"),
+	})
+	s.Nil(err)
+	s.Equal([]interface{}{"OK", "OK"}, res)
+
+	s.Equal([]byte("2"), sconn.Do(s.ctx, "GET", key1))
+	s.Equal([]byte("3"), sconn.Do(s.ctx, "GET", key2))
 }

@@ -639,7 +639,7 @@ func (one *oneconn) setErr(neterr error, conn *Connection) {
 			rerr = redis.NewErrWrap(redis.ErrKindIO, redis.ErrIO, neterr)
 		}
 		one.err = rerr.With("connection", conn)
-		go conn.reconnect(neterr, one.c)
+		go conn.reconnect(one.err, one.c)
 	})
 }
 

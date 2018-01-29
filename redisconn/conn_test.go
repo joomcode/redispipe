@@ -2,7 +2,6 @@ package redisconn_test
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
@@ -320,7 +319,6 @@ func (s *Suite) TestAllReturns_Bad() {
 	defer conn.Close()
 
 	const N = 200
-	const K = 200
 	fin := make(chan struct{})
 	goods := make([]chan bool, N)
 	checks := make(chan bool, N)
@@ -398,7 +396,6 @@ func (s *Suite) TestAllReturns_Bad() {
 		if !allgood() {
 			break
 		}
-		fmt.Println("first allgood")
 
 		s.s.Stop()
 		time.Sleep(defopts.IOTimeout * 3)
@@ -406,21 +403,18 @@ func (s *Suite) TestAllReturns_Bad() {
 			break
 		}
 
-		fmt.Println("second allgood")
 		s.s.Start()
 		time.Sleep(defopts.IOTimeout * 2)
 		if !sendgoods(true) || !allgood() {
 			break
 		}
 
-		fmt.Println("third allgood")
 		s.s.Pause()
 		time.Sleep(defopts.IOTimeout * 2)
 		if !sendgoods(false) || !allgood() {
 			break
 		}
 
-		fmt.Println("forth allgood")
 		s.s.Resume()
 		time.Sleep(defopts.IOTimeout * 2)
 		if !sendgoods(true) {

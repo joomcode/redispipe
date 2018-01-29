@@ -373,7 +373,7 @@ var readonly = func() map[string]bool {
 		"SINTER SISMEMBER SMEMBERS SRANDMEMBER STRLEN SUNION " +
 		"ZCARD ZCOUNT ZLEXCOUNT ZRANGE ZRANGEBYLEX ZREVRANGEBYLEX " +
 		"ZRANGEBYSCORE ZRANK ZREVRANGE ZREVRANGEBYSCORE ZREVRANK " +
-		"SCAN SSCAN HSCAN ZSCAN"
+		"SCAN SSCAN HSCAN ZSCAN PING ECHO"
 	ro := make(map[string]bool)
 	for _, str := range strings.Split(cmds, " ") {
 		ro[str] = true

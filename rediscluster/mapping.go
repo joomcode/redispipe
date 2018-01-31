@@ -170,10 +170,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 		if node == nil {
 			break /*switch*/
 		}
-		conn = node.getConn(c.opts.ConnHostPolicy, needConnected, seen)
-		if conn == nil {
-			conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected, seen)
-		}
+		conn = node.getConn(c.opts.ConnHostPolicy, preferConnected, seen)
 	case MasterAndSlaves, PreferSlaves:
 		n, a := uint32(len(shard.addr))*3, uint32(0)
 		if policy == PreferSlaves {
@@ -217,11 +214,7 @@ func (c *Cluster) connForAddress(addr string) *redisconn.Connection {
 		return nil
 	}
 
-	conn := node.getConn(c.opts.ConnHostPolicy, needConnected, nil)
-	if conn == nil {
-		conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected, nil)
-	}
-	return conn
+	return node.getConn(c.opts.ConnHostPolicy, preferConnected, nil)
 }
 
 func connHealthy(c *redisconn.Connection, needState int) bool {
@@ -253,7 +246,17 @@ func (n *node) getConn(policy ConnHostPolicyEnum, needState int, seen []*redisco
 		}
 		return nil
 	}
+	if needState == preferConnected {
+		conn := n.getConnConcreteNeed(policy, needConnected, seen)
+		if conn == nil {
+			conn = n.getConnConcreteNeed(policy, mayBeConnected, seen)
+		}
+		return conn
+	}
+	return n.getConnConcreteNeed(policy, needState, seen)
+}
 
+func (n *node) getConnConcreteNeed(policy ConnHostPolicyEnum, needState int, seen []*redisconn.Connection) *redisconn.Connection {
 	switch policy {
 	case ConnHostPreferFirst:
 		for _, conn := range n.conns {

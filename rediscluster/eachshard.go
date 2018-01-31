@@ -12,10 +12,7 @@ func (c *Cluster) EachShard(cb func(redis.Sender, error) bool) {
 			cb(nil, c.err(redis.ErrKindConnection, redis.ErrDial))
 			return
 		}
-		conn := node.getConn(c.opts.ConnHostPolicy, needConnected, nil)
-		if conn == nil {
-			conn = node.getConn(c.opts.ConnHostPolicy, mayBeConnected, nil)
-		}
+		conn := node.getConn(c.opts.ConnHostPolicy, preferConnected, nil)
 		if conn == nil {
 			cb(nil, c.err(redis.ErrKindConnection, redis.ErrDial))
 			return

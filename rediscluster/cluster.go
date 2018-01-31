@@ -35,6 +35,7 @@ const (
 
 	needConnected = iota
 	mayBeConnected
+	preferConnected
 )
 
 type Opts struct {

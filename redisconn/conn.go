@@ -104,7 +104,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 
 	maxprocs := uint32(runtime.GOMAXPROCS(-1))
 	if opts.Concurrency == 0 || opts.Concurrency > maxprocs*128 {
-		conn.opts.Concurrency = maxprocs * 2
+		conn.opts.Concurrency = maxprocs
 	}
 
 	conn.shard = make([]connShard, conn.opts.Concurrency)
@@ -511,7 +511,7 @@ func (conn *Connection) dial() error {
 
 	one := &oneconn{
 		c:       connection,
-		futures: make(chan []future, conn.opts.Concurrency*8),
+		futures: make(chan []future, conn.opts.Concurrency/2+1),
 		control: make(chan struct{}),
 	}
 
@@ -673,12 +673,9 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 		case <-one.control:
 			return
 		default:
-			runtime.Gosched()
-			if len(conn.dirtyShard) == 0 {
-				if err := w.Flush(); err != nil {
-					one.setErr(err, conn)
-					return
-				}
+			if err := w.Flush(); err != nil {
+				one.setErr(err, conn)
+				return
 			}
 			select {
 			case shardn = <-conn.dirtyShard:
@@ -705,12 +702,12 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 		select {
 		case one.futures <- futures:
 		default:
-			if err := w.Flush(); err != nil {
-				one.futures <- futures
+			err := w.Flush()
+			one.futures <- futures
+			if err != nil {
 				one.setErr(err, conn)
 				return
 			}
-			one.futures <- futures
 		}
 
 		l, err := w.Write(packet)

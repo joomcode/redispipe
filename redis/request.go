@@ -13,12 +13,14 @@ func (req Request) Key() (string, bool) {
 	if req.Cmd == "RANDOMKEY" {
 		return "RANDOMKEY", false
 	}
-	n := 0
-	if req.Cmd == "EVAL" || req.Cmd == "EVALSHA" {
+	var n int
+	switch req.Cmd {
+	case "EVAL", "EVALSHA":
 		n = 2
-	}
-	if req.Cmd == "BITOP" {
+	case "BITOP":
 		n = 1
+	default:
+		n = 0
 	}
 	if len(req.Args) <= n {
 		return "", false

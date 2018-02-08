@@ -153,6 +153,12 @@ func (cfg *clusterConfig) slot2shard(slot uint16) *shard {
 	return shard
 }
 
+type defaultRoundRobinSeed uint32
+
+func (d *defaultRoundRobinSeed) Current() uint32 {
+	return atomic.AddUint32((*uint32)(d), 1)
+}
+
 func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*redisconn.Connection) (*redisconn.Connection, error) {
 	// We are not synchronizing by locks, so we need to spin until we have
 	// consistent configuration, ie for shard number we have a shard in a shardmap
@@ -176,7 +182,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 		if policy == PreferSlaves {
 			n, a = n-2, 2
 		}
-		off := atomic.AddUint32(&shard.rr, 1)
+		off := c.opts.RoundRobinSeed.Current()
 		for _, needState := range []int{needConnected, mayBeConnected} {
 			mask := atomic.LoadUint32(&shard.good)
 			for mask != 0 && conn == nil {

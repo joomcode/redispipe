@@ -68,6 +68,13 @@ type Opts struct {
 	WaitToMigrate time.Duration
 	// Logger
 	Logger Logger
+
+	// RoundRobinSeed - used to choose between master and replica.
+	// Best implementation should return same number during 100 milliseconds, ie
+	// uint32(time.Now().UnixNano()/int64(100*time.Millisecond))
+	RoundRobinSeed interface {
+		Current() uint32
+	}
 }
 
 type Cluster struct {
@@ -150,6 +157,9 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	}
 	if cluster.opts.Logger == nil {
 		cluster.opts.Logger = DefaultLogger{}
+	}
+	if cluster.opts.RoundRobinSeed == nil {
+		cluster.opts.RoundRobinSeed = new(defaultRoundRobinSeed)
 	}
 
 	if cluster.opts.ConnsPerHost < 1 {

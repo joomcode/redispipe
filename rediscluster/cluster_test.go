@@ -248,8 +248,16 @@ func (s *Suite) TestScan() {
 	s.Len(allkeys, len(reqs), "length doesn't match", len(allkeys), len(reqs))
 }
 
+type alwaysZero struct{}
+
+func (a alwaysZero) Current() uint32 {
+	return 0
+}
+
 func (s *Suite) TestFallbackToSlaveStop() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
+	opts := longcheckopts
+	opts.RoundRobinSeed = alwaysZero{}
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -278,7 +286,9 @@ func (s *Suite) TestFallbackToSlaveStop() {
 }
 
 func (s *Suite) TestFallbackToSlaveTimeout() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
+	opts := longcheckopts
+	opts.RoundRobinSeed = alwaysZero{}
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 

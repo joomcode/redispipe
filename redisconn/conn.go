@@ -462,10 +462,14 @@ func (conn *Connection) dial() error {
 	if conn.opts.DB != 0 {
 		req, _ = redis.AppendRequest(req, Request{"SELECT", []interface{}{conn.opts.DB}})
 	}
+	if conn.opts.IOTimeout > 0 {
+		connection.SetWriteDeadline(time.Now().Add(conn.opts.IOTimeout))
+	}
 	if _, err = dc.Write(req); err != nil {
 		connection.Close()
 		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err)
 	}
+	connection.SetWriteDeadline(time.Time{})
 	var res interface{}
 	// Password response
 	if conn.opts.Password != "" {
@@ -736,20 +740,26 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 	var futures []future
 	var res interface{}
-Outter:
-	for futures = range one.futures {
-		for i, fut := range futures {
-			res = redis.ReadResponse(r)
-			futures[i].Future = nil
-			if rerr := redis.AsRedisError(res); rerr.HardError() {
-				one.setErr(rerr, conn)
-				conn.call(fut, one.err)
-				break Outter
-			}
-			conn.call(fut, res)
+	var ok bool
+
+	for {
+		res = redis.ReadResponse(r)
+		if rerr := redis.AsRedisError(res); rerr.HardError() {
+			one.setErr(rerr, conn)
+			break
 		}
-		futures = nil
+		if len(futures) == 0 {
+			futures, ok = <-one.futures
+			if !ok {
+				break
+			}
+		}
+		fut := futures[0]
+		futures[0].Future = nil
+		futures = futures[1:]
+		conn.call(fut, res)
 	}
+
 	for _, fut := range futures {
 		conn.call(fut, one.err)
 	}

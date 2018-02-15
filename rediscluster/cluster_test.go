@@ -269,7 +269,6 @@ func (s *Suite) TestFallbackToSlaveStop() {
 	s.cl.Node[0].Stop()
 	// test read from replica
 	s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key))
-	s.Contains(DebugEvents, "retry")
 
 	// wait replica becomes master
 	s.cl.WaitClusterOk()

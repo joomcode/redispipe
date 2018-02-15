@@ -134,7 +134,6 @@ func (s *Suite) TestStopped_Reconnects() {
 	s.waitReconnect(conn)
 
 	s.s.Stop()
-	s.badPing(conn, redis.ErrKindIO, redis.ErrIO, 0)
 	time.Sleep(1 * time.Millisecond)
 	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
 
@@ -150,7 +149,6 @@ func (s *Suite) TestStopped_Reconnects2() {
 	s.goodPing(conn, 0)
 
 	s.s.Stop()
-	s.badPing(conn, redis.ErrKindIO, redis.ErrIO, 0)
 	time.Sleep(1 * time.Millisecond)
 	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
 
@@ -158,7 +156,6 @@ func (s *Suite) TestStopped_Reconnects2() {
 	s.waitReconnect(conn)
 
 	s.s.Stop()
-	s.badPing(conn, redis.ErrKindIO, redis.ErrIO, 0)
 	time.Sleep(1 * time.Millisecond)
 	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
 

@@ -19,7 +19,6 @@ func newDeadlineIO(c net.Conn, to time.Duration) io.ReadWriter {
 }
 
 func (d *deadlineIO) Write(b []byte) (int, error) {
-	d.c.SetWriteDeadline(time.Now().Add(d.to))
 	return d.c.Write(b)
 }
 

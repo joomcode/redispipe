@@ -322,6 +322,7 @@ func (s *Suite) TestAllReturns_Bad() {
 	finch := make(chan struct{}, N)
 
 	sconn := redis.SyncCtx{conn}
+	ctx := s.ctx
 	for i := 0; i < N; i++ {
 		goods[i] = make(chan bool, 1)
 		go func(i int) {
@@ -333,13 +334,13 @@ func (s *Suite) TestAllReturns_Bad() {
 					check = true
 				case <-fin:
 					break Loop
-				case <-s.ctx.Done():
+				case <-ctx.Done():
 					break Loop
 				default:
 				}
 				sij := strconv.Itoa(i*N + j)
-				res := sconn.Do(s.ctx, "PING", sij)
-				ress := sconn.SendMany(s.ctx, []redis.Request{
+				res := sconn.Do(ctx, "PING", sij)
+				ress := sconn.SendMany(ctx, []redis.Request{
 					redis.Req("PING", "a"+sij),
 					redis.Req("PING", "b"+sij),
 				})

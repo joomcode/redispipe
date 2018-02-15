@@ -198,3 +198,16 @@ func ArgToString(arg interface{}) (string, bool) {
 	}
 	return string(buf), true
 }
+
+func CheckArgs(req Request) *Error {
+	for i, arg := range req.Args {
+		switch val := arg.(type) {
+		case string, []byte, int, uint, int64, uint64, int32, uint32, int8, uint8, int16, uint16, bool, float32, float64, nil:
+			// ok
+		default:
+			return NewErr(ErrKindRequest, ErrArgumentType).
+				With("val", val).With("argpos", i)
+		}
+	}
+	return nil
+}

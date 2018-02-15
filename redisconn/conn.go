@@ -84,7 +84,6 @@ type oneconn struct {
 
 type connShard struct {
 	sync.Mutex
-	buf     []byte
 	futures []future
 	_pad    [16]uint64
 }
@@ -269,21 +268,17 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 	case connDisconnected:
 		return redis.NewErr(redis.ErrKindConnection, redis.ErrNotConnected)
 	}
-	buf := shard.buf
-	futures := shard.futures
-	var err *redis.Error
-	if asking {
-		buf = append(buf, askingReq...)
-		futures = append(futures, future{dumb, 0, 0, Request{}})
-	}
-	if buf, err = redis.AppendRequest(buf, req); err != nil {
+	if err := redis.CheckArgs(req); err != nil {
 		return err
 	}
+	futures := shard.futures
+	if asking {
+		futures = append(futures, future{dumb, 0, 0, Request{"ASKING", nil}})
+	}
 	futures = append(futures, future{cb, n, nownano(), req})
-	if len(shard.buf) == 0 {
+	if len(shard.futures) == 0 {
 		conn.dirtyShard <- shardn
 	}
-	shard.buf = buf
 	shard.futures = futures
 	return nil
 }
@@ -303,78 +298,81 @@ func (conn *Connection) SendBatch(requests []Request, cb Future, start uint64) {
 }
 
 func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint64, flags int) {
-	commonerr, pos, err := conn.doSendBatch(requests, cb, start, flags)
+	var err *redis.Error
+	var commonerr *redis.Error
+	errpos := -1
+	for i, req := range requests {
+		if err = redis.CheckArgs(req); err != nil {
+			err = err.With("connection", conn).With("request", requests[i])
+			commonerr = conn.err(redis.ErrKindRequest, redis.ErrBatchFormat).
+				Wrap(err).
+				With("requests", requests).
+				With("request", requests[i])
+			errpos = i
+			break
+		}
+	}
+	if commonerr == nil {
+		commonerr = conn.doSendBatch(requests, cb, start, flags)
+	}
 	if commonerr != nil {
 		for i := 0; i < len(requests); i++ {
-			if i != pos {
+			if i != errpos {
 				cb.Resolve(commonerr, start+uint64(i))
 			} else {
 				cb.Resolve(err, start+uint64(i))
 			}
 		}
+		if flags&DoTransaction != 0 {
+			cb.Resolve(commonerr, start+uint64(len(requests)))
+		}
 	}
 }
 
-func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64, flags int) (error, int, error) {
+func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64, flags int) *redis.Error {
 	if len(requests) == 0 {
-		return nil, 0, nil
+		return nil
 	}
 
 	if cb.Cancelled() {
 		err := conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
-		return err, -1, nil
+		return err
 	}
 
 	shardn, shard := conn.getShard()
 	shard.Lock()
 	defer shard.Unlock()
 
-	var err *redis.Error
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		err = conn.err(redis.ErrKindContext, redis.ErrContextClosed).Wrap(conn.ctx.Err())
-		return err, -1, nil
+		return conn.err(redis.ErrKindContext, redis.ErrContextClosed).Wrap(conn.ctx.Err())
 	case connDisconnected:
-		err = conn.err(redis.ErrKindConnection, redis.ErrNotConnected)
-		return err, -1, nil
+		return conn.err(redis.ErrKindConnection, redis.ErrNotConnected)
 	}
 
-	buf := shard.buf
 	futures := shard.futures
 	if flags&DoAsking != 0 {
-		buf = append(buf, askingReq...)
-		futures = append(futures, future{dumb, 0, 0, Request{}})
+		futures = append(futures, future{dumb, 0, 0, Request{"ASKING", nil}})
 	}
 	if flags&DoTransaction != 0 {
-		buf = append(buf, multiReq...)
-		futures = append(futures, future{dumb, 0, 0, Request{}})
+		futures = append(futures, future{dumb, 0, 0, Request{"MULTI", nil}})
 	}
 
 	now := nownano()
 
 	for i, req := range requests {
-		buf, err = redis.AppendRequest(buf, req)
-		if err != nil {
-			err = err.With("connection", conn).With("request", requests[i])
-			commonerr := conn.err(redis.ErrKindRequest, redis.ErrBatchFormat).
-				Wrap(err).
-				With("requests", requests).
-				With("request", requests[i])
-			return commonerr, i, err
-		}
 		futures = append(futures, future{cb, start + uint64(i), now, req})
 	}
+
 	if flags&DoTransaction != 0 {
-		buf = append(buf, execReq...)
 		futures = append(futures, future{cb, start + uint64(len(requests)), now, Request{"EXEC", nil}})
 	}
 
-	if len(shard.buf) == 0 {
+	if len(shard.futures) == 0 {
 		conn.dirtyShard <- shardn
 	}
-	shard.buf = buf
 	shard.futures = futures
-	return nil, -1, nil
+	return nil
 }
 
 type wrapped struct {
@@ -581,8 +579,7 @@ Loop:
 		for _, fut := range sh.futures {
 			conn.call(fut, err)
 		}
-		sh.buf = sh.buf[:0]
-		sh.futures = sh.futures[:0]
+		sh.futures = nil
 	}
 }
 
@@ -692,14 +689,25 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 
 		shard := &conn.shard[shardn]
 		shard.Lock()
-		packet, shard.buf = shard.buf, packet
 		futures, shard.futures = shard.futures, futures
 		shard.Unlock()
 
-		if len(packet) == 0 {
-			if len(futures) != 0 {
-				panic("len(packet) == 0 && len(futures) != 0")
+		i := 0
+		for j, fut := range futures {
+			newpack, err := redis.AppendRequest(packet, fut.req)
+			if err != nil {
+				conn.call(fut, err)
+				continue
 			}
+			if i != j {
+				futures[i] = fut
+			}
+			packet = newpack
+			i++
+		}
+		futures = futures[:i]
+
+		if len(futures) == 0 {
 			continue
 		}
 

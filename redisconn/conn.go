@@ -80,6 +80,7 @@ type oneconn struct {
 	control chan struct{}
 	err     error
 	erronce sync.Once
+	futpool chan []future
 }
 
 type connShard struct {
@@ -450,7 +451,6 @@ func (conn *Connection) dial() error {
 	}
 	dc := newDeadlineIO(connection, conn.opts.IOTimeout)
 	r := bufio.NewReaderSize(dc, 128*1024)
-	w := bufio.NewWriterSize(dc, 128*1024)
 
 	var req []byte
 	if conn.opts.Password != "" {
@@ -515,9 +515,10 @@ func (conn *Connection) dial() error {
 		c:       connection,
 		futures: make(chan []future, conn.opts.Concurrency/2+1),
 		control: make(chan struct{}),
+		futpool: make(chan []future, conn.opts.Concurrency/2+1),
 	}
 
-	go conn.writer(w, one)
+	go conn.writer(one)
 	go conn.reader(r, one)
 
 	return nil
@@ -660,12 +661,38 @@ func (conn *Connection) reconnect(neterr error, c net.Conn) {
 	}
 }
 
-func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
+func (conn *Connection) writer(one *oneconn) {
 	var shardn uint32
 	var packet []byte
 	var futures []future
-	defer close(one.futures)
+	//var packetfutures []future
+
+	t := time.NewTimer(24 * time.Hour)
+	t.Stop()
+
+	defer func() {
+		if len(futures) != 0 {
+			one.futures <- futures
+		}
+		close(one.futures)
+	}()
+
 	round := 1023
+	write := func() bool {
+		if _, err := one.c.Write(packet); err != nil {
+			one.setErr(err, conn)
+			return false
+		}
+		if round--; round == 0 {
+			round = 1023
+			if cap(packet) > 64*1024 {
+				packet = nil
+			}
+		}
+		packet = packet[:0]
+		return true
+	}
+
 	for {
 		select {
 		case shardn = <-conn.dirtyShard:
@@ -673,29 +700,23 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 			return
 		case <-one.control:
 			return
-		default:
-			if err := w.Flush(); err != nil {
-				one.setErr(err, conn)
+		case <-t.C:
+			if len(packet) != 0 && !write() {
 				return
 			}
-			select {
-			case shardn = <-conn.dirtyShard:
-			case <-conn.ctx.Done():
-				return
-			case <-one.control:
-				return
-			}
+			continue
 		}
-
 		shard := &conn.shard[shardn]
 		shard.Lock()
 		futures, shard.futures = shard.futures, futures
 		shard.Unlock()
 
+		wasempty := len(packet) == 0
 		i := 0
 		for j, fut := range futures {
 			newpack, err := redis.AppendRequest(packet, fut.req)
 			if err != nil {
+				packet = newpack[:len(packet)]
 				conn.call(fut, err)
 				continue
 			}
@@ -713,40 +734,30 @@ func (conn *Connection) writer(w *bufio.Writer, one *oneconn) {
 
 		select {
 		case one.futures <- futures:
+			if wasempty {
+				t.Reset(100 * time.Microsecond)
+			}
 		default:
-			err := w.Flush()
-			one.futures <- futures
-			if err != nil {
-				one.setErr(err, conn)
+			if !wasempty {
+				t.Stop()
+			}
+			if !write() {
 				return
 			}
+			one.futures <- futures
 		}
 
-		l, err := w.Write(packet)
-		if err != nil {
-			one.setErr(err, conn)
-			return
+		select {
+		case futures = <-one.futpool:
+		default:
+			futures = make([]future, 0, len(futures)*2)
 		}
-		if l != len(packet) {
-			panic("Wrong length written")
-		}
-
-		if round--; round == 0 {
-			// occasionally free buffer
-			round = 1023
-			packet = nil
-		} else {
-			packet = packet[0:0]
-		}
-		capa := 1
-		for ; capa < len(futures); capa *= 2 {
-		}
-		futures = make([]future, 0, capa)
 	}
 }
 
 func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 	var futures []future
+	var packetfutures []future
 	var res interface{}
 	var ok bool
 
@@ -757,10 +768,15 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 			break
 		}
 		if len(futures) == 0 {
-			futures, ok = <-one.futures
+			select {
+			case one.futpool <- packetfutures[:0]:
+			default:
+			}
+			packetfutures, ok = <-one.futures
 			if !ok {
 				break
 			}
+			futures = packetfutures
 		}
 		fut := futures[0]
 		futures[0].Future = nil

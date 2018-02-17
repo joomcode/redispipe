@@ -83,7 +83,7 @@ func (s *Server) Start() {
 		if isPrefix {
 			panic("logline too long")
 		}
-		if bytes.Contains(l, []byte("Ready to accept connections")) {
+		if bytes.Contains(l, []byte("eady to accept connections")) {
 			break
 		}
 	}

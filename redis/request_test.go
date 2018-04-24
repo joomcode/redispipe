@@ -47,6 +47,10 @@ func TestArgToString(t *testing.T) {
 	assert.Equal(t, "0", k)
 	assert.True(t, ok)
 
+	k, ok = ArgToString(uint(0))
+	assert.Equal(t, "0", k)
+	assert.True(t, ok)
+
 	k, ok = ArgToString(uint(1))
 	assert.Equal(t, "1", k)
 	assert.True(t, ok)

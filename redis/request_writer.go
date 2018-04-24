@@ -95,6 +95,10 @@ func appendInt(b []byte, i int64) []byte {
 }
 
 func appendUint(b []byte, u uint64) []byte {
+	if u <= 9 {
+		b = append(b, byte(u)+'0')
+		return b
+	}
 	digits := [20]byte{}
 	p := 20
 	for u > 0 {

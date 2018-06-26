@@ -134,7 +134,7 @@ func (cfg *clusterConfig) slotSetShard(slot, shard uint16) {
 
 func (cfg *clusterConfig) slotMarkAsking(slot uint16) {
 	sh32 := atomic.LoadUint32(&cfg.slots[slot/2])
-	flag := uint32(0x4000 << (16 * (slot & 1)))
+	flag := uint32(MasterOnlyFlag << (16 * (slot & 1)))
 	if sh32&flag == 0 {
 		sh32 |= flag
 		atomic.StoreUint32(&cfg.slots[slot/2], sh32)
@@ -143,7 +143,7 @@ func (cfg *clusterConfig) slotMarkAsking(slot uint16) {
 
 func (cfg *clusterConfig) slotIsAsking(slot uint16) bool {
 	sh32 := atomic.LoadUint32(&cfg.slots[slot/2])
-	flag := uint32(0x4000 << (16 * (slot & 1)))
+	flag := uint32(MasterOnlyFlag << (16 * (slot & 1)))
 	return sh32&flag != 0
 }
 

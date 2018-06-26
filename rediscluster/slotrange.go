@@ -2,118 +2,89 @@ package rediscluster
 
 import (
 	"bytes"
-	"strconv"
 	"sync/atomic"
 	"time"
 
+	"sync"
+
 	"github.com/joomcode/redispipe/redis"
+	"github.com/joomcode/redispipe/redisconn"
 )
 
-func (c *Cluster) nodesAndSlotRanges() (nodesAndMigrating, []redis.SlotsRange, error) {
-	nodes := c.getConfig().nodes
-	for _, searchConnected := range []bool{true, false} {
-		for _, node := range nodes {
-			for i := len(node.conns) - 1; i >= 0; i-- {
-				conn := node.conns[i]
-				var maySend bool
-				if searchConnected {
-					maySend = conn.ConnectedNow()
-				} else {
-					maySend = conn.MayBeConnected()
-				}
-				if maySend {
-					ress := redis.Sync{conn}.SendMany([]Request{
-						redis.Req("CLUSTER NODES"),
-						redis.Req("CLUSTER SLOTS"),
-					})
-					nandm, err := parseNodes(ress[0])
-					if err != nil {
-						c.report(LogClusterSlotsError, conn, err)
-						continue
-					}
-					slotsres, err := redis.ParseSlotsInfo(ress[1])
-					if err != nil {
-						c.report(LogClusterSlotsError, conn, err)
-						continue
-					}
-					return nandm, slotsres, nil
-				}
-			}
-		}
-	}
-	c.report(LogClusterSlotsError)
-	return nodesAndMigrating{}, nil, c.err(redis.ErrKindCluster, redis.ErrClusterSlots)
-}
+const MasterOnlyFlag = 0x4000
 
 type nodesAndMigrating struct {
-	addrs     []string
-	migrating map[uint16]struct{}
+	addrs      map[string]struct{}
+	migrating  map[uint16]struct{}
+	slotRanges []redis.SlotsRange
 }
 
-func parseNodes(res interface{}) (nodesAndMigrating, error) {
-	if err := redis.AsError(res); err != nil {
-		return nodesAndMigrating{}, err
-	}
-	buf, ok := res.([]byte)
-	if !ok {
-		return nodesAndMigrating{}, redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseUnexpected, "CLUSTER NODES returns not string").With("response", res)
-	}
+func (c *Cluster) nodesAndSlotRanges() (nodesAndMigrating, error) {
+	nodes := c.getConfig().nodes
 
-	lines := bytes.Split(buf, []byte("\n"))
-	result := nodesAndMigrating{
-		addrs:     make([]string, 0, len(lines)),
-		migrating: make(map[uint16]struct{}),
-	}
-
-	for _, line := range lines {
-		parts := bytes.Split(line, []byte(" "))
-		if len(parts) >= 7 {
-			addr := bytes.Split(parts[1], []byte("@"))[0]
-			result.addrs = append(result.addrs, string(addr))
-		} else if len(parts) > 1 || len(parts) == 1 && len(parts[0]) > 0 {
-			return nodesAndMigrating{}, redis.NewErrMsg(redis.ErrKindResponse, redis.ErrResponseUnexpected, "CLUSTER NODES return is in unknown format").With("result", string(buf)).With("line", string(line)).With("parts", parts)
-		}
-
-		for i := 8; i < len(parts); i++ {
-			p := parts[i]
-			if p[0] != '[' {
-				continue
-			}
-			t := bytes.IndexByte(p, '-')
-			if t == -1 {
-				// should we report error here ???
-				continue
-			}
-			slot, err := strconv.Atoi(string(p[1:t]))
-			if err != nil {
-				// should we report error here too ???
-				continue
-			}
-			result.migrating[uint16(slot)] = struct{}{}
+	conns := make([]*redisconn.Connection, 0, len(nodes)*2)
+	for _, node := range nodes {
+		for _, conn := range node.conns {
+			conns = append(conns, conn)
 		}
 	}
 
-	if len(result.migrating) == 0 {
-		// to speedup lookup a bit
-		result.migrating = nil
+	responses := make([]interface{}, len(conns))
+	var wg sync.WaitGroup
+	wg.Add(len(conns))
+	fut := redis.FuncFuture(func(res interface{}, i uint64) {
+		responses[i] = res
+		wg.Done()
+	})
+
+	for i, conn := range conns {
+		conn.Send(redis.Req("CLUSTER NODES"), fut, uint64(i))
 	}
-	return result, nil
+	wg.Wait()
+
+	type infosCnt struct {
+		infos redis.ClusterInstanceInfos
+		cnt   int
+	}
+
+	allInfos := make(map[uint64]infosCnt)
+	for i, resp := range responses {
+		infos, err := redis.ParseClusterInfo(resp)
+		if err != nil {
+			c.report(LogClusterSlotsError, conns[i], err)
+			continue
+		}
+		hsh := infos.HashSum()
+		ic := allInfos[hsh]
+		ic.infos = infos
+		ic.cnt++
+		allInfos[hsh] = ic
+	}
+	if len(allInfos) == 0 {
+		c.report(LogClusterSlotsError)
+		return nodesAndMigrating{}, c.err(redis.ErrKindCluster, redis.ErrClusterSlots)
+	}
+
+	addrMap := make(map[string]struct{})
+	moveMap := make(map[uint16]struct{})
+	mostCommonMap := infosCnt{nil, -1}
+	for _, ic := range allInfos {
+		ic.infos.CollectAddressesAndMigrations(addrMap, moveMap)
+		if ic.cnt > mostCommonMap.cnt {
+			mostCommonMap = ic
+		}
+	}
+	return nodesAndMigrating{
+		addrs:      addrMap,
+		migrating:  moveMap,
+		slotRanges: mostCommonMap.infos.SlotsRanges(),
+	}, nil
 }
 
-func (c *Cluster) updateMappings(nandm nodesAndMigrating, ranges []redis.SlotsRange) {
+func (c *Cluster) updateMappings(nandm nodesAndMigrating) {
 	shards := make(map[string][]string)
-	for _, r := range ranges {
+	for _, r := range nandm.slotRanges {
 		shards[r.Addrs[0]] = r.Addrs
-	}
-
-	uniqaddrs := make(map[string]struct{})
-	for _, addr := range nandm.addrs {
-		uniqaddrs[addr] = struct{}{}
-	}
-	for _, s := range shards {
-		for _, a := range s {
-			uniqaddrs[a] = struct{}{}
-		}
 	}
 
 	c.m.Lock()
@@ -126,7 +97,7 @@ func (c *Cluster) updateMappings(nandm nodesAndMigrating, ranges []redis.SlotsRa
 	newConfig := *oldConfig
 	newConfig.nodes = make(nodeMap, len(c.prevNodes))
 
-	for addr := range uniqaddrs {
+	for addr := range nandm.addrs {
 		if node, ok := c.prevNodes[addr]; ok {
 			atomic.AddUint32(&node.refcnt, 1)
 			newConfig.nodes[addr] = node
@@ -187,6 +158,7 @@ func (c *Cluster) updateMappings(nandm nodesAndMigrating, ranges []redis.SlotsRa
 	go newConfig.setConnRoles()
 
 	var sh uint32
+	ranges := nandm.slotRanges
 	for i := 0; i < NumSlots; i++ {
 		var cur uint32
 		if len(ranges) != 0 && i > ranges[0].To {
@@ -198,10 +170,10 @@ func (c *Cluster) updateMappings(nandm nodesAndMigrating, ranges []redis.SlotsRa
 			cur = uint32(newConfig.masters[ranges[0].Addrs[0]])
 		}
 		if _, ok := nandm.migrating[uint16(cur)]; ok {
-			cur |= 0x4000
+			cur |= MasterOnlyFlag
 		}
 		if _, ok := c.externalForceMasterOnly[uint16(cur)]; ok {
-			cur |= 0x4000
+			cur |= MasterOnlyFlag
 		}
 		if i&1 == 0 {
 			sh = cur

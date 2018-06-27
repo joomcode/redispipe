@@ -169,10 +169,11 @@ func (c *Cluster) updateMappings(nandm nodesAndMigrating) {
 		} else {
 			cur = uint32(newConfig.masters[ranges[0].Addrs[0]])
 		}
-		if _, ok := nandm.migrating[uint16(cur)]; ok {
+		if _, ok := nandm.migrating[uint16(i)]; ok {
 			cur |= MasterOnlyFlag
+			DebugEvent("automatic masteronly")
 		}
-		if _, ok := c.externalForceMasterOnly[uint16(cur)]; ok {
+		if _, ok := c.externalForceMasterOnly[uint16(i)]; ok {
 			cur |= MasterOnlyFlag
 		}
 		if i&1 == 0 {

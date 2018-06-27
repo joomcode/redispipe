@@ -354,6 +354,24 @@ func (s *Suite) TestSetMoved() {
 
 }
 
+func (s *Suite) TestMasterOnly() {
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+	defer func() { DebugEvents = nil }()
+
+	for i := 0; i < 10; i++ {
+		func() {
+			DebugEvents = nil
+			s.cl.InitMoveSlot(10997, 1, 2)
+			defer s.cl.CancelMoveSlot(10997)
+
+			time.Sleep(clustopts.CheckInterval * 2)
+			s.Contains(DebugEvents, "automatic masteronly")
+		}()
+	}
+}
+
 func (s *Suite) TestAsk() {
 	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
 	s.r().Nil(err)

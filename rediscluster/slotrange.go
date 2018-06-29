@@ -7,6 +7,8 @@ import (
 
 	"sync"
 
+	"strconv"
+
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
 )
@@ -74,6 +76,37 @@ func (c *Cluster) nodesAndSlotRanges() (nodesAndMigrating, error) {
 			mostCommonMap = ic
 		}
 	}
+
+	// look for reminder about future migrations
+	// Note: it is not bulletproof
+	res := redis.Sync{c}.Do("SMEMBERS", "CLUSTER_SELF:MASTER_ONLY")
+	var internalForce map[uint16]struct{}
+	internalForceSet := false
+	if slots, ok := res.([]interface{}); ok {
+		internalForce = make(map[uint16]struct{})
+		internalForceSet = true
+		for _, sl := range slots {
+			if b, ok := sl.([]byte); ok {
+				slot, err := strconv.Atoi(string(b))
+				if err == nil {
+					internalForce[uint16(slot)] = struct{}{}
+				}
+			}
+		}
+	} else if res == nil {
+		internalForceSet = true
+	}
+	c.m.Lock()
+	if internalForceSet {
+		c.internallyForceMasterOnly = internalForce
+	} else {
+		internalForce = c.internallyForceMasterOnly
+	}
+	c.m.Unlock()
+	for k := range internalForce {
+		moveMap[k] = struct{}{}
+	}
+
 	return nodesAndMigrating{
 		addrs:      addrMap,
 		migrating:  moveMap,

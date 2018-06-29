@@ -88,7 +88,8 @@ type Cluster struct {
 	config    *clusterConfig
 	prevNodes nodeMap
 
-	externalForceMasterOnly map[uint16]struct{}
+	externalForceMasterOnly   map[uint16]struct{}
+	internallyForceMasterOnly map[uint16]struct{}
 
 	nodeWait struct {
 		sync.Mutex
@@ -215,6 +216,11 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	}
 
 	// case if no nodes are accessible is handled here
+	if err := cluster.reloadMapping(); err != nil {
+		cluster.cancel()
+		return nil, err
+	}
+	// do it once again to fetch moving slots if any
 	if err := cluster.reloadMapping(); err != nil {
 		cluster.cancel()
 		return nil, err

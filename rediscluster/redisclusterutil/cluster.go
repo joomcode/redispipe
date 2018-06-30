@@ -1,4 +1,4 @@
-package redis
+package redisclusterutil
 
 import (
 	"fmt"
@@ -6,13 +6,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	. "github.com/joomcode/redispipe/redis"
 )
 
-type ClusterSlotMoving byte
+type SlotMoving byte
 
 const (
-	ClusterSlotMigrating ClusterSlotMoving = 1
-	ClusterSlotImporting ClusterSlotMoving = 2
+	SlotMigrating SlotMoving = 1
+	SlotImporting SlotMoving = 2
 )
 
 type SlotsRange struct {
@@ -82,7 +84,7 @@ func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 	return ranges, nil
 }
 
-type ClusterInstanceInfo struct {
+type InstanceInfo struct {
 	Uuid      string
 	IpPort    string
 	Ip        string
@@ -92,22 +94,22 @@ type ClusterInstanceInfo struct {
 	MySelf    bool
 	SlaveOf   string
 	Slots     [][2]uint16
-	Migrating []ClusterSlotMigration
+	Migrating []SlotMigration
 }
 
-type ClusterInstanceInfos []ClusterInstanceInfo
+type InstanceInfos []InstanceInfo
 
-type ClusterSlotMigration struct {
+type SlotMigration struct {
 	Number uint16
-	Moving ClusterSlotMoving
+	Moving SlotMoving
 	Peer   string
 }
 
-func (ii *ClusterInstanceInfo) IsMaster() bool {
+func (ii *InstanceInfo) IsMaster() bool {
 	return ii.SlaveOf == ""
 }
 
-func (iis ClusterInstanceInfos) HashSum() uint64 {
+func (iis InstanceInfos) HashSum() uint64 {
 	hsh := fnv.New64a()
 	for _, ii := range iis {
 		fmt.Fprintf(hsh, "%s\t%s\t%d\t%v\t%s", ii.Uuid, ii.IpPort, ii.Port2, ii.Fail, ii.SlaveOf)
@@ -119,7 +121,7 @@ func (iis ClusterInstanceInfos) HashSum() uint64 {
 	return hsh.Sum64()
 }
 
-func (iis ClusterInstanceInfos) CollectAddressesAndMigrations(addrs map[string]struct{}, migrating map[uint16]struct{}) {
+func (iis InstanceInfos) CollectAddressesAndMigrations(addrs map[string]struct{}, migrating map[uint16]struct{}) {
 	for _, ii := range iis {
 		if ii.Ip > "" && ii.Port != 0 {
 			addrs[ii.IpPort] = struct{}{}
@@ -130,7 +132,7 @@ func (iis ClusterInstanceInfos) CollectAddressesAndMigrations(addrs map[string]s
 	}
 }
 
-func (iis ClusterInstanceInfos) SlotsRanges() []SlotsRange {
+func (iis InstanceInfos) SlotsRanges() []SlotsRange {
 	uuid2addrs := make(map[string][]string)
 	for _, ii := range iis {
 		if ii.IsMaster() {
@@ -158,13 +160,13 @@ func (iis ClusterInstanceInfos) SlotsRanges() []SlotsRange {
 	return ranges
 }
 
-func ParseClusterInfo(res interface{}) (ClusterInstanceInfos, error) {
+func ParseClusterInfo(res interface{}) (InstanceInfos, error) {
 	var err error
 	if err = AsError(res); err != nil {
 		return nil, err
 	}
 
-	errf := func(f string, args ...interface{}) (ClusterInstanceInfos, error) {
+	errf := func(f string, args ...interface{}) (InstanceInfos, error) {
 		msg := fmt.Sprintf(f, args...)
 		err := NewErrMsg(ErrKindResponse, ErrResponseUnexpected, msg)
 		return nil, err
@@ -176,7 +178,7 @@ func ParseClusterInfo(res interface{}) (ClusterInstanceInfos, error) {
 	}
 	info := string(infob)
 	lines := strings.Split(info, "\n")
-	infos := ClusterInstanceInfos{}
+	infos := InstanceInfos{}
 	for _, line := range lines {
 		if len(line) < 16 {
 			continue
@@ -187,7 +189,7 @@ func ParseClusterInfo(res interface{}) (ClusterInstanceInfos, error) {
 		if len(ipp) != 2 || len(addrparts) != 2 {
 			return errf("ip-port is not in 'ip:port@port2' format, but %q", line)
 		}
-		node := ClusterInstanceInfo{
+		node := InstanceInfo{
 			Uuid:   parts[0],
 			IpPort: ipp[0],
 		}
@@ -204,7 +206,7 @@ func ParseClusterInfo(res interface{}) (ClusterInstanceInfos, error) {
 			if slot[0] == '[' {
 				var uuid string
 				var slotn int
-				dir := ClusterSlotImporting
+				dir := SlotImporting
 
 				if ix := strings.Index(slot, "-<-"); ix != -1 {
 					slotn, err = strconv.Atoi(slot[1:ix])
@@ -218,9 +220,9 @@ func ParseClusterInfo(res interface{}) (ClusterInstanceInfos, error) {
 						return errf("slot number is not an integer: %q", slot[1:ix])
 					}
 					uuid = slot[ix+3 : len(slot)-1]
-					dir = ClusterSlotMigrating
+					dir = SlotMigrating
 				}
-				migrating := ClusterSlotMigration{
+				migrating := SlotMigration{
 					Number: uint16(slotn),
 					Moving: dir,
 					Peer:   uuid,

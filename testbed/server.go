@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+
+	"github.com/joomcode/redispipe/redisdumb"
 )
 
 var Binary = func() string { p, _ := exec.LookPath("redis-server"); return p }()
@@ -37,7 +39,7 @@ type Server struct {
 	Args   []string
 	Cmd    *exec.Cmd
 	Paused bool
-	Conn   Conn
+	Conn   redisdumb.Conn
 }
 
 func (s *Server) PortStr() string {

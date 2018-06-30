@@ -1,8 +1,10 @@
-package rediscluster
+package redisclusterutil
 
 // copied from github.com/mediocregopher/radix.v2/cluster/crc16.go
 
-import "strings"
+import (
+	"strings"
+)
 
 var tab = [256]uint16{
 	0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,

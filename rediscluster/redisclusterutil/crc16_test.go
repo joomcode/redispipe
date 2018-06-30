@@ -1,11 +1,9 @@
-package rediscluster_test
+package redisclusterutil
 
 // copied from github.com/mediocregopher/radix.v2/cluster/crc16.go
 
 import (
 	"testing"
-
-	. "github.com/joomcode/redispipe/rediscluster"
 )
 
 func TestCRC16(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/joomcode/redispipe/redis"
+	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 	"github.com/joomcode/redispipe/redisconn"
 )
 
@@ -18,7 +19,7 @@ const MasterOnlyFlag = 0x4000
 type nodesAndMigrating struct {
 	addrs      map[string]struct{}
 	migrating  map[uint16]struct{}
-	slotRanges []redis.SlotsRange
+	slotRanges []redisclusterutil.SlotsRange
 }
 
 func (c *Cluster) nodesAndSlotRanges() (nodesAndMigrating, error) {
@@ -45,13 +46,13 @@ func (c *Cluster) nodesAndSlotRanges() (nodesAndMigrating, error) {
 	wg.Wait()
 
 	type infosCnt struct {
-		infos redis.ClusterInstanceInfos
+		infos redisclusterutil.InstanceInfos
 		cnt   int
 	}
 
 	allInfos := make(map[uint64]infosCnt)
 	for i, resp := range responses {
-		infos, err := redis.ParseClusterInfo(resp)
+		infos, err := redisclusterutil.ParseClusterInfo(resp)
 		if err != nil {
 			c.report(LogClusterSlotsError, conns[i], err)
 			continue

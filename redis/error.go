@@ -136,6 +136,9 @@ const (
 	// Request already cancelled
 	// (ErrKindRequest)		0x1b
 	ErrRequestCancelled
+	// Address could not be resolved
+	// (ErrAddressNotResolved) 0x1c
+	ErrAddressNotResolved
 )
 
 var codeName = map[ErrorCode]string{

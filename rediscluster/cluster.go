@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/joomcode/redispipe/redis"
+	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 	"github.com/joomcode/redispipe/redisconn"
 )
 
@@ -205,6 +206,10 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 
 	var err error
 	for _, addr := range init_addrs {
+		addr, err = redisclusterutil.Resolve(addr)
+		if err != nil {
+			return nil, redis.NewErrWrap(redis.ErrKindCluster, redis.ErrAddressNotResolved, err)
+		}
 		if _, ok := cluster.config.masters[addr]; !ok {
 			cluster.config.nodes[addr], err = cluster.newNode(addr, true)
 			// since we connecting asynchronously, it can be only configuration error

@@ -5,98 +5,41 @@ import (
 	"sync/atomic"
 	"time"
 
-	"sync"
-
-	"strconv"
-
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
-	"github.com/joomcode/redispipe/redisconn"
 )
 
 const MasterOnlyFlag = 0x4000
 
 type nodesAndMigrating struct {
-	addrs      map[string]struct{}
 	migrating  map[uint16]struct{}
 	slotRanges []redisclusterutil.SlotsRange
 }
 
-func (c *Cluster) nodesAndSlotRanges() (nodesAndMigrating, error) {
+func (c *Cluster) slotRangesAndInternalMasterOnly() ([]redisclusterutil.SlotsRange, error) {
 	nodes := c.getConfig().nodes
 
-	conns := make([]*redisconn.Connection, 0, len(nodes)*2)
+	var ranges []redisclusterutil.SlotsRange
+	var err error
+Outter:
 	for _, node := range nodes {
 		for _, conn := range node.conns {
-			conns = append(conns, conn)
-		}
-	}
-
-	responses := make([]interface{}, len(conns))
-	var wg sync.WaitGroup
-	wg.Add(len(conns))
-	fut := redis.FuncFuture(func(res interface{}, i uint64) {
-		responses[i] = res
-		wg.Done()
-	})
-
-	for i, conn := range conns {
-		conn.Send(redis.Req("CLUSTER NODES"), fut, uint64(i))
-	}
-	wg.Wait()
-
-	type infosCnt struct {
-		infos redisclusterutil.InstanceInfos
-		cnt   int
-	}
-
-	allInfos := make(map[uint64]infosCnt)
-	for i, resp := range responses {
-		infos, err := redisclusterutil.ParseClusterInfo(resp)
-		if err != nil {
-			c.report(LogClusterSlotsError, conns[i], err)
+			resp := redis.Sync{conn}.Do("CLUSTER SLOTS")
+			ranges, err = redisclusterutil.ParseSlotsInfo(resp)
+			if err == nil {
+				break Outter
+			}
+			c.report(LogClusterSlotsError, conn, err)
 			continue
 		}
-		hsh := infos.HashSum()
-		ic := allInfos[hsh]
-		ic.infos = infos
-		ic.cnt++
-		allInfos[hsh] = ic
 	}
-	if len(allInfos) == 0 {
+	if err != nil {
 		c.report(LogClusterSlotsError)
-		return nodesAndMigrating{}, c.err(redis.ErrKindCluster, redis.ErrClusterSlots)
-	}
-
-	addrMap := make(map[string]struct{})
-	moveMap := make(map[uint16]struct{})
-	mostCommonMap := infosCnt{nil, -1}
-	for _, ic := range allInfos {
-		ic.infos.CollectAddressesAndMigrations(addrMap, moveMap)
-		if ic.cnt > mostCommonMap.cnt {
-			mostCommonMap = ic
-		}
+		return nil, c.err(redis.ErrKindCluster, redis.ErrClusterSlots)
 	}
 
 	// look for reminder about future migrations
-	// Note: it is not bulletproof
-	res := redis.Sync{c}.Do("SMEMBERS", "CLUSTER_SELF:MASTER_ONLY")
-	var internalForce map[uint16]struct{}
-	internalForceSet := false
-	if slots, ok := res.([]interface{}); ok {
-		internalForce = make(map[uint16]struct{})
-		internalForceSet = true
-		for _, sl := range slots {
-			if b, ok := sl.([]byte); ok {
-				slot, err := strconv.Atoi(string(b))
-				if err == nil {
-					internalForce[uint16(slot)] = struct{}{}
-				}
-			}
-		}
-	} else if res == nil {
-		internalForceSet = true
-	}
+	internalForce, internalForceSet, _ := redisclusterutil.RequestMasterOnly(c, "")
 	c.m.Lock()
 	if internalForceSet {
 		c.internallyForceMasterOnly = internalForce
@@ -104,21 +47,21 @@ func (c *Cluster) nodesAndSlotRanges() (nodesAndMigrating, error) {
 		internalForce = c.internallyForceMasterOnly
 	}
 	c.m.Unlock()
-	for k := range internalForce {
-		moveMap[k] = struct{}{}
-	}
 
-	return nodesAndMigrating{
-		addrs:      addrMap,
-		migrating:  moveMap,
-		slotRanges: mostCommonMap.infos.SlotsRanges(),
-	}, nil
+	return ranges, nil
 }
 
-func (c *Cluster) updateMappings(nandm nodesAndMigrating) {
+func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 	shards := make(map[string][]string)
-	for _, r := range nandm.slotRanges {
+	for _, r := range slotRanges {
 		shards[r.Addrs[0]] = r.Addrs
+	}
+
+	addrs := make(map[string]struct{})
+	for _, rng := range slotRanges {
+		for _, addr := range rng.Addrs {
+			addrs[addr] = struct{}{}
+		}
 	}
 
 	c.m.Lock()
@@ -131,7 +74,7 @@ func (c *Cluster) updateMappings(nandm nodesAndMigrating) {
 	newConfig := *oldConfig
 	newConfig.nodes = make(nodeMap, len(c.prevNodes))
 
-	for addr := range nandm.addrs {
+	for addr := range addrs {
 		if node, ok := c.prevNodes[addr]; ok {
 			atomic.AddUint32(&node.refcnt, 1)
 			newConfig.nodes[addr] = node
@@ -192,18 +135,17 @@ func (c *Cluster) updateMappings(nandm nodesAndMigrating) {
 	go newConfig.setConnRoles()
 
 	var sh uint32
-	ranges := nandm.slotRanges
 	for i := 0; i < NumSlots; i++ {
 		var cur uint32
-		if len(ranges) != 0 && i > ranges[0].To {
-			ranges = ranges[1:]
+		if len(slotRanges) != 0 && i > slotRanges[0].To {
+			slotRanges = slotRanges[1:]
 		}
-		if len(ranges) == 0 || i < ranges[0].From {
+		if len(slotRanges) == 0 || i < slotRanges[0].From {
 			cur = uint32(random)
 		} else {
-			cur = uint32(newConfig.masters[ranges[0].Addrs[0]])
+			cur = uint32(newConfig.masters[slotRanges[0].Addrs[0]])
 		}
-		if _, ok := nandm.migrating[uint16(i)]; ok {
+		if _, ok := c.internallyForceMasterOnly[uint16(i)]; ok {
 			cur |= MasterOnlyFlag
 			DebugEvent("automatic masteronly")
 		}

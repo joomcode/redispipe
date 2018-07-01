@@ -126,8 +126,10 @@ func (iis InstanceInfos) CollectAddressesAndMigrations(addrs map[string]struct{}
 		if ii.Ip > "" && ii.Port != 0 {
 			addrs[ii.IpPort] = struct{}{}
 		}
-		for _, m := range ii.Migrating {
-			migrating[m.Number] = struct{}{}
+		if migrating != nil {
+			for _, m := range ii.Migrating {
+				migrating[m.Number] = struct{}{}
+			}
 		}
 	}
 }

@@ -321,7 +321,7 @@ func (c *Cluster) checker() {
 }
 
 func (c *Cluster) reloadMapping() error {
-	nodes, err := c.nodesAndSlotRanges()
+	nodes, err := c.slotRangesAndInternalMasterOnly()
 	if err == nil {
 		c.updateMappings(nodes)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/joomcode/redispipe/redis"
 	. "github.com/joomcode/redispipe/rediscluster"
+	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 	"github.com/joomcode/redispipe/redisconn"
 	"github.com/joomcode/redispipe/testbed"
 	"github.com/stretchr/testify/require"
@@ -363,11 +364,17 @@ func (s *Suite) TestMasterOnly() {
 	for i := 0; i < 10; i++ {
 		func() {
 			DebugEvents = nil
-			s.cl.InitMoveSlot(10997, 1, 2)
-			defer s.cl.CancelMoveSlot(10997)
 
+			err = redisclusterutil.SetMasterOnly(cl, "", []uint16{1, 2})
+			s.r().Nil(err)
 			time.Sleep(clustopts.CheckInterval * 2)
 			s.Contains(DebugEvents, "automatic masteronly")
+
+			DebugEvents = nil
+			err = redisclusterutil.UnsetMasterOnly(cl, "", []uint16{1, 2})
+			s.r().Nil(err)
+			time.Sleep(clustopts.CheckInterval * 2)
+			s.NotContains(DebugEvents, "automatic masteronly")
 		}()
 	}
 }

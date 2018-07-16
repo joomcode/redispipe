@@ -40,6 +40,9 @@ func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 	if rawranges, ok = res.([]interface{}); !ok {
 		return errf("type is not array: %+v", res)
 	}
+	if len(rawranges) == 0 {
+		return errf("host doesn't know about slots (probably it is not in cluster)")
+	}
 
 	ranges := make([]SlotsRange, len(rawranges))
 	for i, rawelem := range rawranges {

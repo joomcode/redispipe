@@ -665,7 +665,6 @@ func (conn *Connection) writer(one *oneconn) {
 	var shardn uint32
 	var packet []byte
 	var futures []future
-	//var packetfutures []future
 
 	t := time.NewTimer(24 * time.Hour)
 	t.Stop()
@@ -763,9 +762,13 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 
 	for {
 		res = redis.ReadResponse(r)
-		if rerr := redis.AsRedisError(res); rerr.HardError() {
-			one.setErr(rerr, conn)
-			break
+		if rerr := redis.AsRedisError(res); rerr != nil {
+			if rerr.HardError() {
+				one.setErr(rerr, conn)
+				break
+			} else {
+				res = rerr.With("connection", conn)
+			}
 		}
 		if len(futures) == 0 {
 			select {

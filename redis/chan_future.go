@@ -6,7 +6,7 @@ type ChanFutured struct {
 
 func (s ChanFutured) Send(r Request) *ChanFuture {
 	f := &ChanFuture{wait: make(chan struct{})}
-	s.S.Send(r, Future(f), 0)
+	s.S.Send(r, f, 0)
 	return f
 }
 

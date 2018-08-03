@@ -89,12 +89,13 @@ func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 
 type InstanceInfo struct {
 	Uuid      string
-	IpPort    string
-	Ip        string
+	Addr      string
+	IP        string
 	Port      int
 	Port2     int
 	Fail      bool
 	MySelf    bool
+	NoAddr    bool
 	SlaveOf   string
 	Slots     [][2]uint16
 	Migrating []SlotMigration
@@ -108,6 +109,11 @@ type SlotMigration struct {
 	Peer   string
 }
 
+func (ii *InstanceInfo) HasAddr() bool {
+	// if it is address less instance (replaced with instance with other UUID), it will have no port
+	return !ii.NoAddr && ii.Port != 0
+}
+
 func (ii *InstanceInfo) IsMaster() bool {
 	return ii.SlaveOf == ""
 }
@@ -115,7 +121,7 @@ func (ii *InstanceInfo) IsMaster() bool {
 func (iis InstanceInfos) HashSum() uint64 {
 	hsh := fnv.New64a()
 	for _, ii := range iis {
-		fmt.Fprintf(hsh, "%s\t%s\t%d\t%v\t%s", ii.Uuid, ii.IpPort, ii.Port2, ii.Fail, ii.SlaveOf)
+		fmt.Fprintf(hsh, "%s\t%s\t%d\t%v\t%s", ii.Uuid, ii.Addr, ii.Port2, ii.Fail, ii.SlaveOf)
 		for _, slots := range ii.Slots {
 			fmt.Fprintf(hsh, "\t%d-%d", slots[0], slots[1])
 		}
@@ -126,8 +132,8 @@ func (iis InstanceInfos) HashSum() uint64 {
 
 func (iis InstanceInfos) CollectAddressesAndMigrations(addrs map[string]struct{}, migrating map[uint16]struct{}) {
 	for _, ii := range iis {
-		if ii.Ip > "" && ii.Port != 0 {
-			addrs[ii.IpPort] = struct{}{}
+		if ii.IP > "" && ii.Port != 0 {
+			addrs[ii.Addr] = struct{}{}
 		}
 		if migrating != nil {
 			for _, m := range ii.Migrating {
@@ -141,9 +147,9 @@ func (iis InstanceInfos) SlotsRanges() []SlotsRange {
 	uuid2addrs := make(map[string][]string)
 	for _, ii := range iis {
 		if ii.IsMaster() {
-			uuid2addrs[ii.Uuid] = append([]string{ii.IpPort}, uuid2addrs[ii.Uuid]...)
+			uuid2addrs[ii.Uuid] = append([]string{ii.Addr}, uuid2addrs[ii.Uuid]...)
 		} else {
-			uuid2addrs[ii.SlaveOf] = append(uuid2addrs[ii.SlaveOf], ii.IpPort)
+			uuid2addrs[ii.SlaveOf] = append(uuid2addrs[ii.SlaveOf], ii.Addr)
 		}
 	}
 	ranges := make([]SlotsRange, 0, 16)
@@ -165,7 +171,64 @@ func (iis InstanceInfos) SlotsRanges() []SlotsRange {
 	return ranges
 }
 
-func ParseClusterInfo(res interface{}) (InstanceInfos, error) {
+func (iis InstanceInfos) MySelf() *InstanceInfo {
+	for _, ii := range iis {
+		if ii.MySelf {
+			return &ii
+		}
+	}
+	return nil
+}
+
+func (iis InstanceInfos) MergeWith(other InstanceInfos) InstanceInfos {
+	// assume they are sorted by uuid
+	// common case : they are same
+	if len(iis) == len(other) {
+		for i := range iis {
+			if iis[i].Uuid != other[i].Uuid {
+				goto RealMerge
+			}
+		}
+		return iis
+	}
+RealMerge:
+	res := make(InstanceInfos, 0, len(iis))
+	i, j := 0, 0
+	for i < len(iis) && j < len(other) {
+		if iis[i].Uuid == other[j].Uuid {
+			if !other[j].MySelf {
+				res = append(res, iis[i])
+			} else {
+				res = append(res, other[j])
+			}
+			i++
+			j++
+		} else if iis[i].Uuid < other[j].Uuid {
+			res = append(res, iis[i])
+			i++
+		} else {
+			res = append(res, other[j])
+			j++
+		}
+	}
+	if i < len(iis) {
+		res = append(res, iis[i:]...)
+	}
+	if j < len(other) {
+		res = append(res, iis[j:]...)
+	}
+	return res
+}
+
+func (iis InstanceInfos) Hosts() []string {
+	res := make([]string, len(iis))
+	for i := range iis {
+		res[i] = iis[i].Addr
+	}
+	return res
+}
+
+func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 	var err error
 	if err = AsError(res); err != nil {
 		return nil, err
@@ -195,10 +258,10 @@ func ParseClusterInfo(res interface{}) (InstanceInfos, error) {
 			return errf("ip-port is not in 'ip:port@port2' format, but %q", line)
 		}
 		node := InstanceInfo{
-			Uuid:   parts[0],
-			IpPort: ipp[0],
+			Uuid: parts[0],
+			Addr: ipp[0],
 		}
-		node.Ip = addrparts[0]
+		node.IP = addrparts[0]
 		node.Port, _ = strconv.Atoi(addrparts[1])
 		node.Port2, _ = strconv.Atoi(ipp[1])
 
@@ -206,6 +269,7 @@ func ParseClusterInfo(res interface{}) (InstanceInfos, error) {
 		if strings.Contains(parts[2], "slave") {
 			node.SlaveOf = parts[3]
 		}
+		node.NoAddr = strings.Contains(parts[2], "noaddr")
 
 		for _, slot := range parts[8:] {
 			if slot[0] == '[' {
@@ -254,14 +318,7 @@ func ParseClusterInfo(res interface{}) (InstanceInfos, error) {
 		infos = append(infos, node)
 	}
 	sort.Slice(infos, func(i, j int) bool {
-		// masters first: it will help further
-		if infos[i].IsMaster() && !infos[j].IsMaster() {
-			return true
-		}
-		if !infos[i].IsMaster() && infos[j].IsMaster() {
-			return false
-		}
-		return infos[i].Uuid < infos[i].Uuid
+		return infos[i].Uuid < infos[j].Uuid
 	})
 	return infos, nil
 }

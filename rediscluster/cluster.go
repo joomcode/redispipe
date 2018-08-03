@@ -3,7 +3,6 @@ package rediscluster
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -399,32 +398,6 @@ func (c *Cluster) execCommand(cmd clusterCommand) {
 	}
 }
 
-func reqSlot(req Request) (uint16, bool) {
-	key, ok := req.Key()
-	if key == "RANDOMKEY" && !ok {
-		return uint16(rand.Intn(NumSlots)), true
-	}
-	return Slot(key), ok
-}
-
-func batchSlot(reqs []Request) (uint16, bool) {
-	var slot uint16
-	var set bool
-	for _, req := range reqs {
-		s, ok := reqSlot(req)
-		if !ok {
-			continue
-		}
-		if !set {
-			slot = s
-			set = true
-		} else if slot != s {
-			return 0, false
-		}
-	}
-	return slot, set
-}
-
 var readonly = func() map[string]bool {
 	cmds := "BITCOUNT BITPOS DUMP EXISTS GEOHASH GEOPOS GEODIST " +
 		"GEORADIUS GEORADIUSBYMEMBER GET GETBIT GETRANGE " +
@@ -464,7 +437,7 @@ func (c *Cluster) Send(req Request, cb Future, off uint64) {
 }
 
 func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Future, off uint64) {
-	slot, ok := reqSlot(req)
+	slot, ok := redisclusterutil.ReqSlot(req)
 	if !ok {
 		cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req), off)
 		return
@@ -607,7 +580,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 	if len(reqs) == 0 {
 		return
 	}
-	slot, ok := batchSlot(reqs)
+	slot, ok := redisclusterutil.BatchSlot(reqs)
 	if !ok {
 		err := c.err(redis.ErrKindRequest, redis.ErrNoSlotKey).
 			With("requests", reqs)

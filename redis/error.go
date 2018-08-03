@@ -2,6 +2,7 @@ package redis
 
 import (
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -252,6 +253,10 @@ func (e Error) Error() string {
 	} else {
 		return fmt.Sprintf("%s (%s)", msg, typ)
 	}
+}
+
+func (e Error) Format(f fmt.State, c rune) {
+	io.WriteString(f, e.Error())
 }
 
 func (e Error) Msg() string {

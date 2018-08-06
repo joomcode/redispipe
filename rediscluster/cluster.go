@@ -459,6 +459,11 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 		slot:   slot,
 		policy: policy,
 
+		// can retry if it is readonly command or if user forced to use slaves
+		// (and then user is sure that command is readonly, for example, complex
+		// readonly lua script.)
+		mayRetry: readonly[req.Cmd] || policy != MasterOnly,
+
 		lastconn: conn,
 	}
 	conn.Send(req, request, 0)
@@ -482,6 +487,7 @@ type request struct {
 	slot   uint16
 	policy ReplicaPolicyEnum
 
+	mayRetry bool
 	hardErrs uint8
 	redir    uint8
 }
@@ -514,7 +520,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 
 	switch err.Kind {
 	case redis.ErrKindIO:
-		if r.policy == MasterOnly {
+		if !r.mayRetry {
 			// It is not safe to retry read-write operation
 			r.cb.Resolve(res, r.off)
 			return
@@ -525,7 +531,9 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 		// It is safe to retry readonly requests, and if request were
 		// not sent at all.
 		tries := r.c.opts.ConnsPerHost
-		if r.policy != MasterOnly {
+		if r.mayRetry {
+			// if it is readonly request then even with MasterOnly policy and single connection
+			// we may try to send it after reconnect.
 			tries *= 2
 		}
 		if int(r.hardErrs) >= tries {

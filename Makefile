@@ -4,8 +4,8 @@ testredis:
 	go test ./redis
 
 testconn:
-	go test ./redisconn
+	go test -count 1 ./redisconn
 
 testcluster:
-	go test -tags debugredis ./rediscluster
+	go test -count 1 -tags debugredis ./rediscluster
 

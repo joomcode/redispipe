@@ -270,6 +270,7 @@ func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 			node.SlaveOf = parts[3]
 		}
 		node.NoAddr = strings.Contains(parts[2], "noaddr")
+		node.MySelf = strings.Contains(parts[2], "myself")
 
 		for _, slot := range parts[8:] {
 			if slot[0] == '[' {

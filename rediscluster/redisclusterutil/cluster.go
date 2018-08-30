@@ -184,12 +184,17 @@ func (iis InstanceInfos) MergeWith(other InstanceInfos) InstanceInfos {
 	// assume they are sorted by uuid
 	// common case : they are same
 	if len(iis) == len(other) {
-		for i := range iis {
-			if iis[i].Uuid != other[i].Uuid {
+		res := make(InstanceInfos, len(iis))
+		copy(res, iis)
+		for i := range res {
+			if res[i].Uuid != other[i].Uuid {
 				goto RealMerge
 			}
+			if !res[i].MySelf && other[i].MySelf {
+				res[i] = other[i]
+			}
 		}
-		return iis
+		return res
 	}
 RealMerge:
 	res := make(InstanceInfos, 0, len(iis))

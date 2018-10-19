@@ -570,7 +570,10 @@ func (conn *Connection) dropShardFutures(err error) {
 Loop:
 	for {
 		select {
-		case <-conn.dirtyShard:
+		case _, ok := <-conn.dirtyShard:
+			if !ok {
+				break Loop
+			}
 		default:
 			break Loop
 		}
@@ -597,6 +600,10 @@ func (conn *Connection) closeConnection(neterr error, forever bool) error {
 
 	conn.lockShards()
 	defer conn.unlockShards()
+	if forever {
+		close(conn.dirtyShard)
+	}
+
 	if conn.c != nil {
 		err = conn.c.Close()
 		conn.c = nil
@@ -693,10 +700,12 @@ func (conn *Connection) writer(one *oneconn) {
 	}
 
 	for {
+		var ok bool
 		select {
-		case shardn = <-conn.dirtyShard:
-		case <-conn.ctx.Done():
-			return
+		case shardn, ok = <-conn.dirtyShard:
+			if !ok {
+				return
+			}
 		case <-one.control:
 			return
 		case <-t.C:

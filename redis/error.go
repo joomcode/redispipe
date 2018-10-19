@@ -56,6 +56,10 @@ func (k ErrorKind) String() string {
 	return fmt.Sprintf("ErrKindUnknown%d", k)
 }
 
+func (k ErrorKind) GoString() string {
+	return k.String()
+}
+
 const (
 	// context is not passed to contructor
 	// (ErrKindOpts)		0x1
@@ -177,6 +181,10 @@ func (c ErrorCode) String() string {
 		return s
 	}
 	return fmt.Sprintf("ErrUnknown%d", c)
+}
+
+func (c ErrorCode) GoString() string {
+	return c.String()
 }
 
 var defMessage = map[ErrorCode]string{

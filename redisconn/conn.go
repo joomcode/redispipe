@@ -672,9 +672,7 @@ func (conn *Connection) writer(one *oneconn) {
 	var shardn uint32
 	var packet []byte
 	var futures []future
-
-	t := time.NewTimer(24 * time.Hour)
-	t.Stop()
+	var ok bool
 
 	defer func() {
 		if len(futures) != 0 {
@@ -691,7 +689,7 @@ func (conn *Connection) writer(one *oneconn) {
 		}
 		if round--; round == 0 {
 			round = 1023
-			if cap(packet) > 64*1024 {
+			if cap(packet) > 128*1024 {
 				packet = nil
 			}
 		}
@@ -699,27 +697,24 @@ func (conn *Connection) writer(one *oneconn) {
 		return true
 	}
 
-	for {
-		var ok bool
-		select {
-		case shardn, ok = <-conn.dirtyShard:
-			if !ok {
-				return
-			}
-		case <-one.control:
+BigLoop:
+	select {
+	case shardn, ok = <-conn.dirtyShard:
+		if !ok {
 			return
-		case <-t.C:
-			if len(packet) != 0 && !write() {
-				return
-			}
-			continue
 		}
+	case <-one.control:
+		return
+	}
+
+	time.Sleep(10 * time.Microsecond)
+
+	for {
 		shard := &conn.shard[shardn]
 		shard.Lock()
 		futures, shard.futures = shard.futures, futures
 		shard.Unlock()
 
-		wasempty := len(packet) == 0
 		i := 0
 		for j, fut := range futures {
 			newpack, err := redis.AppendRequest(packet, fut.req)
@@ -737,18 +732,15 @@ func (conn *Connection) writer(one *oneconn) {
 		futures = futures[:i]
 
 		if len(futures) == 0 {
-			continue
+			goto control
 		}
 
 		select {
 		case one.futures <- futures:
-			if wasempty {
-				t.Reset(100 * time.Microsecond)
+			if len(packet) > 64*1024 && !write() {
+				return
 			}
 		default:
-			if !wasempty {
-				t.Stop()
-			}
 			if !write() {
 				return
 			}
@@ -759,6 +751,25 @@ func (conn *Connection) writer(one *oneconn) {
 		case futures = <-one.futpool:
 		default:
 			futures = make([]future, 0, len(futures)*2)
+		}
+
+	control:
+		select {
+		case <-one.control:
+			return
+		default:
+		}
+
+		select {
+		case shardn, ok = <-conn.dirtyShard:
+			if !ok {
+				return
+			}
+		default:
+			if len(packet) != 0 && !write() {
+				return
+			}
+			goto BigLoop
 		}
 	}
 }

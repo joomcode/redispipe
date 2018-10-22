@@ -23,7 +23,8 @@ const (
 	connConnected    = 2
 	connClosed       = 3
 
-	defaultIOTimeout = 1 * time.Second
+	defaultIOTimeout  = 1 * time.Second
+	defaultWritePause = 10 * time.Microsecond
 )
 
 type Opts struct {
@@ -50,6 +51,10 @@ type Opts struct {
 	Handle interface{}
 	// Concurrency - number for shards. Default is runtime.GOMAXPROCS(-1)*4
 	Concurrency uint32
+	// WritePause - write loop pauses for this time to collect more requests.
+	// Default is 10microseconds. Set < 0 to disable.
+	// It is not wise to set it larger than 100 microseconds.
+	WritePause time.Duration
 	// Logger
 	Logger Logger
 	// Async - do not establish connection immediately
@@ -129,6 +134,10 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	}
 	if conn.opts.TCPKeepAlive < 0 {
 		conn.opts.TCPKeepAlive = 0
+	}
+
+	if conn.opts.WritePause == 0 {
+		conn.opts.WritePause = defaultWritePause
 	}
 
 	if conn.opts.Logger == nil {
@@ -707,7 +716,9 @@ BigLoop:
 		return
 	}
 
-	time.Sleep(10 * time.Microsecond)
+	if conn.opts.WritePause > 0 {
+		time.Sleep(conn.opts.WritePause)
+	}
 
 	for {
 		shard := &conn.shard[shardn]

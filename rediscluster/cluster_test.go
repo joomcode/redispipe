@@ -45,7 +45,7 @@ func (s *Suite) SetupTest() {
 	s.cl.Start()
 	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 10*time.Second)
 	DebugDisable = false
-	DebugEvents = nil
+	DebugEventsReset()
 }
 
 func (s *Suite) TearDownTest() {
@@ -300,7 +300,7 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 	s.cl.Node[0].Pause()
 	// test read from replica
 	s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key))
-	s.Contains(DebugEvents, "retry")
+	s.Contains(DebugEvents(), "retry")
 
 	// wait replica becomes master
 	s.cl.WaitClusterOk()
@@ -330,7 +330,7 @@ func (s *Suite) TestGetMoved() {
 	s.cl.MoveSlot(10999, 1, 2)
 
 	s.Equal([]byte(key), sconn.Do(s.ctx, "GET", key))
-	s.Contains(DebugEvents, "moved")
+	s.Contains(DebugEvents(), "moved")
 
 	s.cl.MoveSlot(10999, 2, 1)
 }
@@ -349,7 +349,7 @@ func (s *Suite) TestSetMoved() {
 	defer s.cl.MoveSlot(10998, 2, 1)
 
 	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key+"!"))
-	s.Contains(DebugEvents, "moved")
+	s.Contains(DebugEvents(), "moved")
 
 	s.Equal([]byte(key+"!"), s.cl.Node[2].Do("GET", key))
 
@@ -359,22 +359,21 @@ func (s *Suite) TestMasterOnly() {
 	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
-	defer func() { DebugEvents = nil }()
 
 	for i := 0; i < 10; i++ {
 		func() {
-			DebugEvents = nil
+			DebugEventsReset()
 
 			err = redisclusterutil.SetMasterOnly(cl, "", []uint16{1, 2})
 			s.r().Nil(err)
 			time.Sleep(clustopts.CheckInterval * 2)
-			s.Contains(DebugEvents, "automatic masteronly")
+			s.Contains(DebugEvents(), "automatic masteronly")
 
-			DebugEvents = nil
+			DebugEventsReset()
 			err = redisclusterutil.UnsetMasterOnly(cl, "", []uint16{1, 2})
 			s.r().Nil(err)
 			time.Sleep(clustopts.CheckInterval * 2)
-			s.NotContains(DebugEvents, "automatic masteronly")
+			s.NotContains(DebugEvents(), "automatic masteronly")
 		}()
 	}
 }
@@ -392,7 +391,7 @@ func (s *Suite) TestAsk() {
 	key := slotkey("ask", s.keys[10997])
 	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key))
 	s.Equal([]byte(key), sconn.Do(s.ctx, "GET", key))
-	s.Contains(DebugEvents, "asking")
+	s.Contains(DebugEvents(), "asking")
 
 	// recheck that redis responses with correct errors
 	rerr := s.AsError(s.cl.Node[2].Do("GET", key))
@@ -428,7 +427,7 @@ func (s *Suite) TestAskTransaction() {
 	sconn.Do(s.ctx, "SET", key1, "3")
 	sconn.Do(s.ctx, "SET", key2, "3")
 
-	DebugEvents = nil
+	DebugEventsReset()
 	// if all keys are in new shard, then redis allows transaction to execute
 	// on new shard.
 	res, err := sconn.SendTransaction(s.ctx, []redis.Request{
@@ -437,26 +436,26 @@ func (s *Suite) TestAskTransaction() {
 	})
 	s.Nil(err)
 	s.Equal([]interface{}{"OK", "OK"}, res)
-	s.Contains(DebugEvents, "transaction asking")
+	s.Contains(DebugEvents(), "transaction asking")
 
 	s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key1))
 
-	DebugEvents = nil
+	DebugEventsReset()
 	// if some keys are absent in new shard, then redis returns TRYAGAIN error
 	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
 		redis.Req("SET", key2, "1"),
 		redis.Req("SET", key3, "2"),
 	})
 	s.True(strings.HasPrefix(s.AsError(err).Msg(), "TRYAGAIN"))
-	s.Contains(DebugEvents, "transaction asking")
-	s.Contains(DebugEvents, "transaction tryagain")
+	s.Contains(DebugEvents(), "transaction asking")
+	s.Contains(DebugEvents(), "transaction tryagain")
 
 	// lets add key3 to make transaction happy
 	time.AfterFunc(5*time.Millisecond, func() {
 		sconn.Do(s.ctx, "SET", key3, "3")
 	})
 
-	DebugEvents = nil
+	DebugEventsReset()
 	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
 		redis.Req("SET", key2, "1"),
 		redis.Req("SET", key3, "2"),
@@ -465,8 +464,8 @@ func (s *Suite) TestAskTransaction() {
 
 	s.Equal([]byte("1"), sconn.Do(s.ctx, "GET", key2))
 	s.Equal([]byte("2"), sconn.Do(s.ctx, "GET", key3))
-	s.Contains(DebugEvents, "transaction asking")
-	s.Contains(DebugEvents, "transaction tryagain")
+	s.Contains(DebugEvents(), "transaction asking")
+	s.Contains(DebugEvents(), "transaction tryagain")
 }
 
 func (s *Suite) TestMovedTransaction() {
@@ -494,7 +493,7 @@ func (s *Suite) TestMovedTransaction() {
 
 	s.Equal([]byte("2"), sconn.Do(s.ctx, "GET", key1))
 	s.Equal([]byte("3"), sconn.Do(s.ctx, "GET", key2))
-	s.Equal([]string{"transaction moved"}, DebugEvents)
+	s.Equal([]string{"transaction moved"}, DebugEvents())
 }
 
 func (s *Suite) fillMany(sconn redis.SyncCtx, prefix string) {
@@ -570,7 +569,7 @@ Loop:
 		}
 	}
 	s.Equal(N, cnt, "Not all goroutines finished")
-	s.Equal([]string(nil), DebugEvents)
+	s.Equal([]string(nil), DebugEvents())
 }
 
 func (s *Suite) TestAllReturns_Bad() {

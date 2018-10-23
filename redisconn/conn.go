@@ -794,7 +794,7 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 	for {
 		res = redis.ReadResponse(r)
 		if rerr := redis.AsRedisError(res); rerr != nil {
-			if rerr.HardError() {
+			if redis.HardError(rerr) {
 				one.setErr(rerr, conn)
 				break
 			} else {

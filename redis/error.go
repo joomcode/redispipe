@@ -245,7 +245,7 @@ func (copy Error) With(name string, value interface{}) *Error {
 	return &copy
 }
 
-func (e *Error) HardError() bool {
+func HardError(e *Error) bool {
 	return e != nil && e.Kind != ErrKindResult
 }
 

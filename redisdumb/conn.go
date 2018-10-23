@@ -104,7 +104,7 @@ func (c *Conn) SendTransaction(reqs []redis.Request, cb redis.Future, n uint64) 
 	}
 	for _, r := range reqs {
 		res = c.Do(r.Cmd, r.Args...)
-		if err := redis.AsRedisError(res); err.HardError() {
+		if err := redis.AsRedisError(res); redis.HardError(err) {
 			cb.Resolve(res, n)
 			return
 		}

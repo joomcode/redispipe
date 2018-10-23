@@ -18,10 +18,14 @@ func newDeadlineIO(c net.Conn, to time.Duration) io.ReadWriter {
 	return c
 }
 
+// Write implements io.Writer.
+// It doesn't set write deadline.
 func (d *deadlineIO) Write(b []byte) (int, error) {
 	return d.c.Write(b)
 }
 
+// Read implements io.Reader
+// It sets read deadline before each call to Read.
 func (d *deadlineIO) Read(b []byte) (int, error) {
 	d.c.SetReadDeadline(time.Now().Add(d.to))
 	return d.c.Read(b)

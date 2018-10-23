@@ -16,6 +16,7 @@ type Sender interface {
 	// - first request's response will be passed as cb.Resolve(response, n)
 	// - second request's response will be passed as cb.Resolve(response, n+1)
 	// - third ... cb.Resolve(response, n+2)
+	// Note: responses could arrive in arbitrary order.
 	SendMany(r []Request, cb Future, n uint64)
 	// SendTransaction sends several requests as MULTI+EXEC redis transaction.
 	// Response will be passed only once as an array of responses to commands (as EXEC does)

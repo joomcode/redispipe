@@ -18,6 +18,10 @@ type Logger interface {
 	ReqStat(conn *Connection, req Request, res interface{}, nanos int64)
 }
 
+func (conn *Connection) report(event LogKind, v ...interface{}) {
+	conn.opts.Logger.Report(event, conn, v...)
+}
+
 type defaultLogger struct{}
 
 func (d defaultLogger) Report(event LogKind, conn *Connection, v ...interface{}) {

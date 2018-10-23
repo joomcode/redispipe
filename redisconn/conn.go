@@ -61,6 +61,8 @@ type Opts struct {
 	Async bool
 }
 
+// Connection represents single connection to single redis instance.
+// Underlying net.Conn is re-established as necessary.
 type Connection struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -177,28 +179,30 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	return conn, nil
 }
 
-// Context of this connection
+// Ctx returns context of this connection
 func (conn *Connection) Ctx() context.Context {
 	return conn.ctx
 }
 
-// Connection is certainly connected now
+// ConnectedNow answers if connection is certainly connected at the moment
 func (conn *Connection) ConnectedNow() bool {
 	return atomic.LoadUint32(&conn.state) == connConnected
 }
 
-// MayBeConnected: connection either connected or connecting
+// MayBeConnected answers if connection either connected or connecting at the moment.
+// Ie it returns false if connection is disconnected at the moment, and reconnection is not started yet.
 func (conn *Connection) MayBeConnected() bool {
 	s := atomic.LoadUint32(&conn.state)
 	return s == connConnected || s == connConnecting
 }
 
-// Close connection forever
+// Close closes connection forever
 func (conn *Connection) Close() {
 	conn.cancel()
 }
 
-// Remote is address of Redis socket
+// RemoteAddr is address of Redis socket
+// Attention: do not call this method from Logger.Report, because it could lead to deadlock!
 func (conn *Connection) RemoteAddr() string {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
@@ -209,6 +213,7 @@ func (conn *Connection) RemoteAddr() string {
 }
 
 // LocalAddr is outgoing socket addr
+// Attention: do not call this method from Logger.Report, because it could lead to deadlock!
 func (conn *Connection) LocalAddr() string {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
@@ -218,6 +223,7 @@ func (conn *Connection) LocalAddr() string {
 	return conn.c.LocalAddr().String()
 }
 
+// Addr retuns configurred address
 func (conn *Connection) Addr() string {
 	return conn.addr
 }
@@ -227,6 +233,7 @@ func (conn *Connection) Handle() interface{} {
 	return conn.opts.Handle
 }
 
+// Ping sends ping request synchronously
 func (conn *Connection) Ping() error {
 	res := redis.Sync{conn}.Do("PING")
 	if err := redis.AsError(res); err != nil {
@@ -238,11 +245,13 @@ func (conn *Connection) Ping() error {
 	return nil
 }
 
+// choose next "shard" to send query to
 func (conn *Connection) getShard() (uint32, *connShard) {
 	shardn := atomic.AddUint32(&conn.shardid, 1) % conn.opts.Concurrency
 	return shardn, &conn.shard[shardn]
 }
 
+// dumb redis.Future implementation
 type dumbcb struct{}
 
 func (d dumbcb) Cancelled() bool             { return false }
@@ -250,10 +259,15 @@ func (d dumbcb) Resolve(interface{}, uint64) {}
 
 var dumb dumbcb
 
+// Send implements redis.Sender.Send
+// It sends request asynchronously. At some moment in a future it will call cb.Resolve(result, n)
+// But if cb is cancelled, then cb.Resolve will be called immediately.
 func (conn *Connection) Send(req Request, cb Future, n uint64) {
 	conn.SendAsk(req, cb, n, false)
 }
 
+// SendAsk is a helper method for redis-cluster client implementation.
+// It will send request with ASKING request sent before.
 func (conn *Connection) SendAsk(req Request, cb Future, n uint64, asking bool) {
 	if cb == nil {
 		cb = dumb
@@ -268,24 +282,31 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 		return conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
 	}
 
+	// Since we do not pack request here, we need to be sure it could be packed
+	if err := redis.CheckArgs(req); err != nil {
+		return err
+	}
+
 	shardn, shard := conn.getShard()
 	shard.Lock()
 	defer shard.Unlock()
 
+	// we need to check conn.state first
+	// since we do not lock connection itself, we need to use atomics.
+	// Note: we do not check for connConnecting, ie we will try to send request after connection established.
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
 		return redis.NewErrWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err())
 	case connDisconnected:
 		return redis.NewErr(redis.ErrKindConnection, redis.ErrNotConnected)
 	}
-	if err := redis.CheckArgs(req); err != nil {
-		return err
-	}
 	futures := shard.futures
 	if asking {
+		// send ASKING request before actual
 		futures = append(futures, future{dumb, 0, 0, Request{"ASKING", nil}})
 	}
 	futures = append(futures, future{cb, n, nownano(), req})
+	// should notify writer about this shard having queries
 	if len(shard.futures) == 0 {
 		conn.dirtyShard <- shardn
 	}
@@ -293,7 +314,12 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 	return nil
 }
 
+// SendMany implements redis.Sender.SendMany
+// Sends several requests asynchronously. Fills with cb.Resolve(res, n), cb.Resolve(res, n+1), ... etc.
+// Note: it could resolve requests in arbitrary order.
 func (conn *Connection) SendMany(requests []Request, cb Future, start uint64) {
+	// split requests by chunks of 16 to not block shards for a long time.
+	// Also it could help a bit to save pipeline with writer loop.
 	for i := 0; i < len(requests); i += 16 {
 		j := i + 16
 		if j > len(requests) {
@@ -303,14 +329,25 @@ func (conn *Connection) SendMany(requests []Request, cb Future, start uint64) {
 	}
 }
 
+// SendBatch sends several requests in preserved order.
+// They will be serialized to network in the order passed.
 func (conn *Connection) SendBatch(requests []Request, cb Future, start uint64) {
 	conn.SendBatchFlags(requests, cb, start, 0)
 }
 
+// SendBatchFlags sends several requests in preserved order with addition ASKING, MULTI+EXEC commands.
+// If flag&DoAsking != 0 , then "ASKING" command is prepended.
+// If flag&DoTransaction != 0, then "MULTI" command is prepended, and "EXEC" command appended.
+// Note: cb.Resolve will be also called with start+len(requests) index with result of EXEC command.
+// It is mostly helper method for SendTransaction for single connect and cluster implementations.
+//
+// Note: since it is used for transaction, single wrong argument in single request
+// will result in error for all commands in a batch.
 func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint64, flags int) {
 	var err *redis.Error
 	var commonerr *redis.Error
 	errpos := -1
+	// check arguments of all commands. If single
 	for i, req := range requests {
 		if err = redis.CheckArgs(req); err != nil {
 			err = err.With("connection", conn).With("request", requests[i])
@@ -413,10 +450,6 @@ func (conn *Connection) String() string {
 }
 
 /********** private api **************/
-
-func (conn *Connection) report(event LogKind, v ...interface{}) {
-	conn.opts.Logger.Report(event, conn, v...)
-}
 
 func (conn *Connection) lockShards() {
 	for i := range conn.shard {

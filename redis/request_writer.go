@@ -4,6 +4,9 @@ import (
 	"strconv"
 )
 
+// AppendRequest appends request to byte slice as RESP request (ie as array of strings).
+// It could fail if some request value is not nil, integer, float, string or byte slice.
+// In case of error it still returns modified buffer, but truncated to original size, it could be used save reallocation.
 func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
 	space := -1
 	for i, c := range []byte(req.Cmd) {
@@ -13,26 +16,26 @@ func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
 		}
 	}
 	if space == -1 {
-		buf = appendHead(buf, '*', int64(len(req.Args)+1))
-		buf = appendHead(buf, '$', int64(len(req.Cmd)))
+		buf = appendHead(buf, '*', len(req.Args)+1)
+		buf = appendHead(buf, '$', len(req.Cmd))
 		buf = append(buf, req.Cmd...)
 		buf = append(buf, '\r', '\n')
 	} else {
-		buf = appendHead(buf, '*', int64(len(req.Args)+2))
-		buf = appendHead(buf, '$', int64(space))
+		buf = appendHead(buf, '*', len(req.Args)+2)
+		buf = appendHead(buf, '$', space)
 		buf = append(buf, req.Cmd[:space]...)
 		buf = append(buf, '\r', '\n')
-		buf = appendHead(buf, '$', int64(len(req.Cmd)-space-1))
+		buf = appendHead(buf, '$', len(req.Cmd)-space-1)
 		buf = append(buf, req.Cmd[space+1:]...)
 		buf = append(buf, '\r', '\n')
 	}
 	for _, val := range req.Args {
 		switch v := val.(type) {
 		case string:
-			buf = appendHead(buf, '$', int64(len(v)))
+			buf = appendHead(buf, '$', len(v))
 			buf = append(buf, v...)
 		case []byte:
-			buf = appendHead(buf, '$', int64(len(v)))
+			buf = appendHead(buf, '$', len(v))
 			buf = append(buf, v...)
 		case int:
 			buf = appendBulkInt(buf, int64(v))
@@ -62,11 +65,11 @@ func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
 			}
 		case float32:
 			str := strconv.FormatFloat(float64(v), 'f', -1, 32)
-			buf = appendHead(buf, '$', int64(len(str)))
+			buf = appendHead(buf, '$', len(str))
 			buf = append(buf, str...)
 		case float64:
 			str := strconv.FormatFloat(v, 'f', -1, 64)
-			buf = appendHead(buf, '$', int64(len(str)))
+			buf = appendHead(buf, '$', len(str))
 			buf = append(buf, str...)
 		case nil:
 			buf = append(buf, "$0\r\n"...)
@@ -110,9 +113,12 @@ func appendUint(b []byte, u uint64) []byte {
 	return append(b, digits[p:]...)
 }
 
-func appendHead(b []byte, t byte, i int64) []byte {
+func appendHead(b []byte, t byte, i int) []byte {
+	if i < 0 {
+		panic("negative length header")
+	}
 	b = append(b, t)
-	b = appendInt(b, i)
+	b = appendUint(b, uint64(i))
 	return append(b, '\r', '\n')
 }
 
@@ -139,7 +145,7 @@ func appendBulkUint(b []byte, i uint64) []byte {
 	if i <= 999999999 {
 		b = append(b, '$', '0', '\r', '\n')
 	} else {
-		b = append(b, '$', '1', '0', '\r', '\n')
+		b = append(b, '$', '0', '0', '\r', '\n')
 	}
 	l := len(b)
 	b = appendUint(b, i)
@@ -203,6 +209,7 @@ func ArgToString(arg interface{}) (string, bool) {
 	return string(buf), true
 }
 
+// CheckArgs checks that all values could be used in redis request.
 func CheckArgs(req Request) *Error {
 	for i, arg := range req.Args {
 		switch val := arg.(type) {

@@ -5,14 +5,24 @@ import (
 	"sync/atomic"
 )
 
+// SyncCtx (like Sync) provides convenient synchronous interface over asynchronous Sender.
+// Its methods accept context.Context to allow early request cancelling.
+// Note that if context were cancelled after request were send, redis still will execute it,
+// but you will have no way to know about that fact.
 type SyncCtx struct {
 	S Sender
 }
 
+// Do is convenient method to construct and send request.
+// Returns value that could be either result or error.
+// When context is cancelled, Do returns ErrRequestCancelled error.
 func (s SyncCtx) Do(ctx context.Context, cmd string, args ...interface{}) interface{} {
 	return s.Send(ctx, Request{cmd, args})
 }
 
+// Send sends request to redis.
+// Returns value that could be either result or error.
+// When context is cancelled, Send returns ErrRequestCancelled error.
 func (s SyncCtx) Send(ctx context.Context, r Request) interface{} {
 	res := ctxRes{active: newActive(ctx)}
 
@@ -20,12 +30,15 @@ func (s SyncCtx) Send(ctx context.Context, r Request) interface{} {
 
 	select {
 	case <-ctx.Done():
-		return NewErr(ErrKindRequest, ErrRequestCancelled)
+		return NewErrWrap(ErrKindRequest, ErrRequestCancelled, ctx.Err())
 	case <-res.ch:
 		return res.r
 	}
 }
 
+// SendMany sends several requests in "parallel" and returns slice or results in a same order.
+// Each result could be value or error.
+// When context is cancelled, SendMany returns slice of ErrRequestCancelled errors.
 func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
 	if len(reqs) == 0 {
 		return nil
@@ -42,7 +55,7 @@ func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
 
 	select {
 	case <-ctx.Done():
-		err := NewErr(ErrKindRequest, ErrRequestCancelled)
+		err := NewErrWrap(ErrKindRequest, ErrRequestCancelled, ctx.Err())
 		for i := range res.o {
 			res.Resolve(err, uint64(i))
 		}
@@ -52,6 +65,11 @@ func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
 	return res.r
 }
 
+// SendTransaction sends several requests as a single MULTI+EXEC transaction.
+// It returns array of responses and an error, if transaction fails.
+// Since Redis transaction either fully executed or fully failed,
+// all values are valid if err == nil.
+// When context is cancelled, SendTransaction returns ErrRequestCancelled error.
 func (s SyncCtx) SendTransaction(ctx context.Context, reqs []Request) ([]interface{}, error) {
 	res := ctxRes{active: newActive(ctx)}
 
@@ -60,7 +78,7 @@ func (s SyncCtx) SendTransaction(ctx context.Context, reqs []Request) ([]interfa
 	var r interface{}
 	select {
 	case <-ctx.Done():
-		r = NewErr(ErrKindRequest, ErrRequestCancelled)
+		r = NewErrWrap(ErrKindRequest, ErrRequestCancelled, ctx.Err())
 	case <-res.ch:
 		r = res.r
 	}
@@ -68,6 +86,8 @@ func (s SyncCtx) SendTransaction(ctx context.Context, reqs []Request) ([]interfa
 	return TransactionResponse(r)
 }
 
+// Scanner returns synchronous iterator over redis keyspace/key.
+// Scanner will stop iteration if context were cancelled.
 func (s SyncCtx) Scanner(ctx context.Context, opts ScanOpts) SyncCtxIterator {
 	return SyncCtxIterator{ctx, s.S.Scanner(opts)}
 }
@@ -81,6 +101,7 @@ func newActive(ctx context.Context) active {
 	return active{ctx, make(chan struct{})}
 }
 
+// Cancelled implements Future.Cancelled
 func (c active) Cancelled() bool {
 	select {
 	case <-c.ctx.Done():
@@ -99,6 +120,7 @@ type ctxRes struct {
 	r interface{}
 }
 
+// Resolve implements Future.Resolve
 func (c *ctxRes) Resolve(r interface{}, _ uint64) {
 	c.r = r
 	c.done()
@@ -111,6 +133,7 @@ type ctxBatch struct {
 	cnt uint32
 }
 
+// Resolve implements Future.Resolve
 func (s *ctxBatch) Resolve(res interface{}, i uint64) {
 	if atomic.CompareAndSwapUint32(&s.o[i], 0, 1) {
 		s.r[i] = res
@@ -120,11 +143,16 @@ func (s *ctxBatch) Resolve(res interface{}, i uint64) {
 	}
 }
 
+// SyncCtxIterator is synchronous iterator over repeating *SCAN command.
+// It will stop iteration if context were cancelled.
 type SyncCtxIterator struct {
 	ctx context.Context
 	s   Scanner
 }
 
+// Next returns next bunch of keys, or error.
+// ScanEOF error signals for regular iteration completion.
+// It will return ErrRequestCancelled error if context were cancelled.
 func (s SyncCtxIterator) Next() ([]string, error) {
 	res := ctxRes{active: newActive(s.ctx)}
 	s.s.Next(&res)

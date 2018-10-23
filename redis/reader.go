@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// ReadResponse reads single RESP answer from bufio.Reader
 func ReadResponse(b *bufio.Reader) interface{} {
 	line, isPrefix, err := b.ReadLine()
 	if err != nil {

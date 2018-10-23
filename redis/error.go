@@ -6,11 +6,17 @@ import (
 	"strings"
 )
 
+// ErrorKind is a kind of error
 type ErrorKind uint32
+
+// ErrorCode is a code of error
 type ErrorCode uint32
 
+// Error is an error returned by connector
 type Error struct {
+	// Kind is a kind of error
 	Kind ErrorKind
+	// Code is a error code
 	Code ErrorCode
 	*kv
 }
@@ -49,6 +55,7 @@ var kindName = map[ErrorKind]string{
 	ErrKindResult:     "ErrKindResult",
 }
 
+// String implements fmt.Stringer
 func (k ErrorKind) String() string {
 	if s, ok := kindName[k]; ok {
 		return s
@@ -56,6 +63,7 @@ func (k ErrorKind) String() string {
 	return fmt.Sprintf("ErrKindUnknown%d", k)
 }
 
+// GoString implements fmt.GoStringer
 func (k ErrorKind) GoString() string {
 	return k.String()
 }
@@ -129,7 +137,7 @@ const (
 	// No key to determine cluster slot
 	// (ErrKindRequest)		0x17
 	ErrNoSlotKey
-	// Fething slots failed
+	// Fetching slots failed
 	// (ErrKindCluster)		0x18
 	ErrClusterSlots
 	// EXEC returns nil (WATCH failed) (it is strange, cause we don't support WATCH)
@@ -176,6 +184,7 @@ var codeName = map[ErrorCode]string{
 	ErrUnknownHeaderType:  "ErrUnknownHeaderType",
 }
 
+// String implements fmt.Stringer
 func (c ErrorCode) String() string {
 	if s, ok := codeName[c]; ok {
 		return s
@@ -183,6 +192,7 @@ func (c ErrorCode) String() string {
 	return fmt.Sprintf("ErrUnknown%d", c)
 }
 
+// GoString implements fmt.GoStringer
 func (c ErrorCode) GoString() string {
 	return c.String()
 }
@@ -218,37 +228,43 @@ var defMessage = map[ErrorCode]string{
 	//ErrResult:         "",
 }
 
+// NewErr creates new error with kind and code
 func NewErr(kind ErrorKind, code ErrorCode) *Error {
 	return &Error{Kind: kind, Code: code}
 }
 
+// NewErrMsg creates new error with kind and code and message
 func NewErrMsg(kind ErrorKind, code ErrorCode, msg string) *Error {
 	return Error{Kind: kind, Code: code}.With("message", msg)
 }
 
+// NewErrMsg creates new error with kind and code and wrapped error
 func NewErrWrap(kind ErrorKind, code ErrorCode, err error) *Error {
 	return Error{Kind: kind, Code: code}.With("cause", err)
 }
 
+// WithMsg returns copy of error with new message.
 func (copy Error) WithMsg(msg string) *Error {
 	return copy.With("message", msg)
 }
 
+// Wrap returns copy of error with wrapped cause.
 func (copy Error) Wrap(err error) *Error {
 	return copy.With("cause", err)
 }
 
+// With returns copy of error with name-value pair attached
 func (copy Error) With(name string, value interface{}) *Error {
-	// This could be called from many places concurrently, so need to
-	// copy error
 	copy.kv = &kv{name: name, value: value, next: copy.kv}
 	return &copy
 }
 
+// HardError returns true if error is not nil and it is not kind of ErrKindResult (ie not error returned by redis).
 func HardError(e *Error) bool {
 	return e != nil && e.Kind != ErrKindResult
 }
 
+// Error implements error.Error.
 func (e Error) Error() string {
 	typ := e.Code.String()
 	if typ == "" {
@@ -263,12 +279,33 @@ func (e Error) Error() string {
 	}
 }
 
+// Format implements fmt.Formatter.Format.
 func (e Error) Format(f fmt.State, c rune) {
 	io.WriteString(f, e.Error())
 }
 
+// Msg returns message associated with error (value, associated with "message" key).
+// If message were not set explicit, but cause were set, then cause.Error() is taken.
+// If cause is not set, then default message for code is taken.
+// Otherwise "generic"
 func (e Error) Msg() string {
-	msg, ok := e.Get("message").(string)
+	var msg string
+	var ok bool
+	if msgo := e.Get("message"); msgo != nil {
+		switch m := msgo.(type) {
+		case string:
+			msg = m
+		case fmt.Stringer:
+			msg = m.String()
+		case fmt.GoStringer:
+			msg = m.GoString()
+		case error:
+			msg = m.Error()
+		default:
+			msg = fmt.Sprint(m)
+		}
+		ok = true
+	}
 	if !ok {
 		if err := e.Cause(); err != nil {
 			msg = err.Error()
@@ -278,12 +315,13 @@ func (e Error) Msg() string {
 	if !ok {
 		msg = defMessage[e.Code]
 		if msg == "" {
-			msg = "generic "
+			msg = "generic"
 		}
 	}
 	return msg
 }
 
+// Cause returns wrapped error (in fact, value associated with "cause" key).
 func (e Error) Cause() error {
 	if ierr := e.Get("cause"); ierr != nil {
 		if err, ok := ierr.(error); ok {
@@ -309,6 +347,7 @@ func (e Error) restAsString() string {
 	}
 }
 
+// ToMap returns information assiciated with error as a map.
 func (e Error) ToMap() map[string]interface{} {
 	res := map[string]interface{}{
 		"kind": e.Kind,
@@ -328,6 +367,7 @@ type kv struct {
 	next  *kv
 }
 
+// Get searches corresponding key.
 func (kv *kv) Get(name string) interface{} {
 	for kv != nil {
 		if kv.name == name {

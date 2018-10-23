@@ -4,11 +4,14 @@ import (
 	"fmt"
 )
 
+// AsError casts interface to error (if it is error)
 func AsError(v interface{}) error {
 	e, _ := v.(error)
 	return e
 }
 
+// AsRedisError casts interface to *redis.Error.
+// It panics if value is error but not *redis.Error.
 func AsRedisError(v interface{}) *Error {
 	e, _ := v.(*Error)
 	if e == nil {
@@ -19,7 +22,7 @@ func AsRedisError(v interface{}) *Error {
 	return e
 }
 
-// parse response of Scan command
+// ScanResponse parses response of Scan command, returns iterator and array of keys.
 func ScanResponse(res interface{}) ([]byte, []string, error) {
 	if err := AsError(res); err != nil {
 		return nil, nil, err
@@ -52,7 +55,7 @@ wrong:
 	return nil, nil, NewErr(ErrKindResponse, ErrResponseUnexpected).With("response", res)
 }
 
-// parse response of EXEC command
+// TransactionResponse parses response of EXEC command, returns array of answers.
 func TransactionResponse(res interface{}) ([]interface{}, error) {
 	if arr, ok := res.([]interface{}); ok {
 		return arr, nil

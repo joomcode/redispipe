@@ -43,7 +43,7 @@ func (s *Suite) SetupSuite() {
 
 func (s *Suite) SetupTest() {
 	s.cl.Start()
-	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 10*time.Second)
+	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 1000*time.Second)
 	DebugDisable = false
 	DebugEventsReset()
 }
@@ -574,7 +574,7 @@ Loop:
 
 func (s *Suite) TestAllReturns_Bad() {
 	s.ctxcancel()
-	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 2*time.Minute)
+	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 10*time.Minute)
 	DebugDisable = true
 
 	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)

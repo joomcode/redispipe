@@ -17,9 +17,8 @@ func (c *Cluster) EachShard(cb func(redis.Sender, error) bool) {
 			cb(nil, c.err(redis.ErrKindConnection, redis.ErrDial))
 			return
 		}
-		if cb(conn, nil) {
+		if !cb(conn, nil) {
 			return
 		}
 	}
-	cb(nil, nil)
 }

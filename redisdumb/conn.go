@@ -126,7 +126,7 @@ func (c *Conn) EachShard(f func(redis.Sender, error) bool) {
 		for _, nodeInfo := range nodeInfos {
 			if nodeInfo.IsMaster() {
 				con := &Conn{Addr: nodeInfo.Addr}
-				if f(con, nil) {
+				if !f(con, nil) {
 					return
 				}
 			}

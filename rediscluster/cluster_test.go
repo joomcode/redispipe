@@ -63,6 +63,9 @@ func (s *Suite) r() *require.Assertions {
 }
 
 func (s *Suite) AsError(v interface{}) *redis.Error {
+	if v == nil {
+		return nil
+	}
 	s.r().IsType((*redis.Error)(nil), v)
 	return v.(*redis.Error)
 }

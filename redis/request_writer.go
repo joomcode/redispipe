@@ -7,7 +7,8 @@ import (
 // AppendRequest appends request to byte slice as RESP request (ie as array of strings).
 // It could fail if some request value is not nil, integer, float, string or byte slice.
 // In case of error it still returns modified buffer, but truncated to original size, it could be used save reallocation.
-func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
+func AppendRequest(buf []byte, req Request) ([]byte, error) {
+	oldSize := len(buf)
 	space := -1
 	for i, c := range []byte(req.Cmd) {
 		if c == ' ' {
@@ -74,7 +75,7 @@ func AppendRequest(buf []byte, req Request) ([]byte, *Error) {
 		case nil:
 			buf = append(buf, "$0\r\n"...)
 		default:
-			return nil, NewErr(ErrKindRequest, ErrArgumentType).
+			return buf[:oldSize], NewErr(ErrKindRequest, ErrArgumentType).
 				With("val", val).With("request", req)
 		}
 		buf = append(buf, '\r', '\n')

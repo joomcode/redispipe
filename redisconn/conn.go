@@ -728,16 +728,14 @@ BigLoop:
 
 		i := 0
 		for j, fut := range futures {
-			newpack, err := redis.AppendRequest(packet, fut.req)
-			if err != nil {
-				packet = newpack[:len(packet)]
+			var err error
+			if packet, err = redis.AppendRequest(packet, fut.req); err != nil {
 				conn.call(fut, err)
 				continue
 			}
 			if i != j {
 				futures[i] = fut
 			}
-			packet = newpack
 			i++
 		}
 		futures = futures[:i]

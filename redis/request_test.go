@@ -166,7 +166,7 @@ func TestArgToString(t *testing.T) {
 
 func TestAppendRequestArgument(t *testing.T) {
 	var k []byte
-	var err *Error
+	var err error
 
 	k, err = AppendRequest(nil, Req("CMD", int(0)))
 	assert.Equal(t, []byte("*2\r\n$3\r\nCMD\r\n$1\r\n0\r\n"), k)
@@ -296,15 +296,16 @@ func TestAppendRequestArgument(t *testing.T) {
 	assert.Nil(t, err)
 
 	k, err = AppendRequest(nil, Req("CMD", make(chan int)))
-	assert.Nil(t, k)
+	assert.Len(t, k, 0)
 	assert.NotNil(t, err)
-	assert.Equal(t, ErrKindRequest, err.Kind)
-	assert.Equal(t, ErrArgumentType, err.Code)
+	rerr := AsRedisError(err)
+	assert.Equal(t, ErrKindRequest, rerr.Kind)
+	assert.Equal(t, ErrArgumentType, rerr.Code)
 }
 
 func TestAppendRequestCmdAndArgcount(t *testing.T) {
 	var k []byte
-	var err *Error
+	var err error
 
 	k, err = AppendRequest(nil, Req("CMD", "hi"))
 	assert.Equal(t, []byte("*2\r\n$3\r\nCMD\r\n$2\r\nhi\r\n"), k)

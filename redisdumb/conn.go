@@ -35,7 +35,6 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 	if c.C != nil {
 		try = 2
 	}
-	var rerr *redis.Error
 	var req []byte
 	var err error
 	var asking bool
@@ -51,27 +50,30 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 			c.Do("ASKING")
 		}
 		c.C.SetDeadline(time.Now().Add(timeout))
-		req, rerr = redis.AppendRequest(nil, redis.Request{cmd, args})
-		if rerr == nil {
+		req, err = redis.AppendRequest(nil, redis.Request{cmd, args})
+		if err == nil {
 			if _, err = c.C.Write(req); err == nil {
 				res := redis.ReadResponse(c.R)
-				if rerr = redis.AsRedisError(res); rerr == nil {
+				if rerr := redis.AsRedisError(res); rerr == nil {
 					return res
-				} else if c.Type == TypeCluster && (rerr.Code == redis.ErrAsk || rerr.Code == redis.ErrMoved) {
-					asking = rerr.Code == redis.ErrAsk
-					c.Addr = rerr.Get("movedto").(string)
-					if try < 5 {
-						try++
+				} else {
+					err = rerr
+					if c.Type == TypeCluster && (rerr.Code == redis.ErrAsk || rerr.Code == redis.ErrMoved) {
+						asking = rerr.Code == redis.ErrAsk
+						c.Addr = rerr.Get("movedto").(string)
+						if try < 5 {
+							try++
+						}
 					}
 				}
 			} else {
-				rerr = redis.NewErr(redis.ErrKindIO, redis.ErrIO).Wrap(err)
+				err = redis.NewErr(redis.ErrKindIO, redis.ErrIO).Wrap(err)
 			}
 		}
 		c.C.Close()
 		c.C = nil
 	}
-	return rerr
+	return err
 }
 
 func (c *Conn) Send(r redis.Request, cb redis.Future, n uint64) {

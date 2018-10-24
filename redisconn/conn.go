@@ -306,7 +306,9 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 		futures = append(futures, future{dumb, 0, 0, Request{"ASKING", nil}})
 	}
 	futures = append(futures, future{cb, n, nownano(), req})
-	// should notify writer about this shard having queries
+
+	// should notify writer about this shard having queries.
+	// Since we are under shard lock, it is safe to send notification before assigning futures.
 	if len(shard.futures) == 0 {
 		conn.dirtyShard <- shardn
 	}
@@ -347,7 +349,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 	var err *redis.Error
 	var commonerr *redis.Error
 	errpos := -1
-	// check arguments of all commands. If single
+	// check arguments of all commands. If single request is malformed, then all requests will be aborted.
 	for i, req := range requests {
 		if err = redis.CheckArgs(req); err != nil {
 			err = err.With("connection", conn).With("request", requests[i])
@@ -371,6 +373,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 			}
 		}
 		if flags&DoTransaction != 0 {
+			// resolve EXEC request as well
 			cb.Resolve(commonerr, start+uint64(len(requests)))
 		}
 	}
@@ -378,18 +381,23 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 
 func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64, flags int) *redis.Error {
 	if len(requests) == 0 {
+		if flags&DoTransaction != 0 {
+			cb.Resolve([]interface{}{}, start)
+		}
 		return nil
 	}
 
 	if cb.Cancelled() {
-		err := conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
-		return err
+		return conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
 	}
 
 	shardn, shard := conn.getShard()
 	shard.Lock()
 	defer shard.Unlock()
 
+	// we need to check conn.state first
+	// since we do not lock connection itself, we need to use atomics.
+	// Note: we do not check for connConnecting, ie we will try to send request after connection established.
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
 		return conn.err(redis.ErrKindContext, redis.ErrContextClosed).Wrap(conn.ctx.Err())
@@ -399,9 +407,11 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 
 	futures := shard.futures
 	if flags&DoAsking != 0 {
+		// send ASKING request before actual
 		futures = append(futures, future{dumb, 0, 0, Request{"ASKING", nil}})
 	}
 	if flags&DoTransaction != 0 {
+		// send MULTI request for transaction start
 		futures = append(futures, future{dumb, 0, 0, Request{"MULTI", nil}})
 	}
 
@@ -412,9 +422,12 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	}
 
 	if flags&DoTransaction != 0 {
+		// send EXEC request for transaction end
 		futures = append(futures, future{cb, start + uint64(len(requests)), now, Request{"EXEC", nil}})
 	}
 
+	// should notify writer about this shard having queries
+	// Since we are under shard lock, it is safe to send notification before assigning futures.
 	if len(shard.futures) == 0 {
 		conn.dirtyShard <- shardn
 	}
@@ -422,35 +435,37 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	return nil
 }
 
-type wrapped struct {
+// wrapped preserves Cancelled method of wrapped future, but redefines Resolve
+type transactionFuture struct {
 	Future
-	f func(res interface{}, n uint64)
+	l   int
+	off uint64
 }
 
-func (cw wrapped) Resolve(res interface{}, n uint64) {
-	cw.f(res, n)
+func (cw transactionFuture) Resolve(res interface{}, n uint64) {
+	if n == uint64(cw.l) {
+		cw.Future.Resolve(res, cw.off)
+	}
 }
 
+// SendTransaction implements redis.Sender.SendTransaction
 func (conn *Connection) SendTransaction(reqs []Request, cb Future, off uint64) {
 	if cb.Cancelled() {
 		cb.Resolve(conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled), off)
 		return
 	}
-	l := uint64(len(reqs))
-	resolve := func(res interface{}, n uint64) {
-		if n == l {
-			cb.Resolve(res, off)
-		}
-	}
-	conn.SendBatchFlags(reqs, wrapped{cb, resolve}, 0, DoTransaction)
+	conn.SendBatchFlags(reqs, transactionFuture{cb, len(reqs), off}, 0, DoTransaction)
 }
 
+// String implements fmt.Stringer
 func (conn *Connection) String() string {
 	return fmt.Sprintf("*redisconn.Connection{addr: %s}", conn.addr)
 }
 
 /********** private api **************/
 
+// lock all shards to prevent creation of new requests.
+// Under this lock, all already sent requiests are revoked.
 func (conn *Connection) lockShards() {
 	for i := range conn.shard {
 		conn.shard[i].Lock()

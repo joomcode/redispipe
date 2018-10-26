@@ -78,7 +78,6 @@ var clustopts = Opts{
 	HostOpts:      defopts,
 	Name:          "default",
 	CheckInterval: 200 * time.Millisecond,
-	ForceInterval: 10 * time.Millisecond,
 
 	ConnHostPolicy: ConnHostRoundRobin,
 }
@@ -325,7 +324,7 @@ func (s *Suite) TestGetMoved() {
 	s.r().Nil(err)
 	defer cl.Close()
 
-	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+	sconn := redis.SyncCtx{cl}
 
 	key := slotkey("moved", s.keys[10999], "get")
 	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key))
@@ -343,7 +342,7 @@ func (s *Suite) TestSetMoved() {
 	s.r().Nil(err)
 	defer cl.Close()
 
-	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+	sconn := redis.SyncCtx{cl}
 
 	key := slotkey("moved", s.keys[10998], "set")
 	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, key))
@@ -386,7 +385,7 @@ func (s *Suite) TestAsk() {
 	s.r().Nil(err)
 	defer cl.Close()
 
-	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+	sconn := redis.SyncCtx{cl}
 
 	s.cl.InitMoveSlot(10997, 1, 2)
 	defer s.cl.CancelMoveSlot(10997)
@@ -417,7 +416,7 @@ func (s *Suite) TestAskTransaction() {
 	s.r().Nil(err)
 	defer cl.Close()
 
-	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+	sconn := redis.SyncCtx{cl}
 
 	key1 := slotkey("asktran", s.keys[10996], "1")
 	key2 := slotkey("asktran", s.keys[10996], "2")
@@ -479,7 +478,7 @@ func (s *Suite) TestMovedTransaction() {
 	s.r().Nil(err)
 	defer cl.Close()
 
-	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+	sconn := redis.SyncCtx{cl}
 
 	key1 := slotkey("movetran", s.keys[10995], "1")
 	key2 := slotkey("movetran", s.keys[10995], "2")

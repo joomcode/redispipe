@@ -68,7 +68,7 @@ func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
 // SendTransaction sends several requests as a single MULTI+EXEC transaction.
 // It returns array of responses and an error, if transaction fails.
 // Since Redis transaction either fully executed or fully failed,
-// all values are valid if err == nil.
+// all values are valid if err == nil. But some of them could be error on their own.
 // When context is cancelled, SendTransaction returns ErrRequestCancelled error.
 func (s SyncCtx) SendTransaction(ctx context.Context, reqs []Request) ([]interface{}, error) {
 	res := ctxRes{active: newActive(ctx)}

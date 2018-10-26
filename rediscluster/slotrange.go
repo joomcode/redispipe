@@ -149,9 +149,6 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 			cur |= MasterOnlyFlag
 			DebugEvent("automatic masteronly")
 		}
-		if _, ok := c.externalForceMasterOnly[uint16(i)]; ok {
-			cur |= MasterOnlyFlag
-		}
 		if i&1 == 0 {
 			sh = cur
 		} else {

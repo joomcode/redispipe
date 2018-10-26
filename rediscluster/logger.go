@@ -17,8 +17,14 @@ const (
 	LogMAX
 )
 
+// Logger is used for loggin cluster-related events and requests statistic.
 type Logger interface {
+	// Report will be called when some events happens during cluster's lifetime.
+	// Default implementation just prints this information using standard log package.
 	Report(event LogKind, c *Cluster, v ...interface{})
+	// ReqStat is called after request receives it's answer with request/result information
+	// and time spend to fulfill request.
+	// Default implementation is no-op.
 	ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64)
 }
 
@@ -26,8 +32,10 @@ func (c *Cluster) report(event LogKind, v ...interface{}) {
 	c.opts.Logger.Report(event, c, v...)
 }
 
+// DefaultLogger is a default Logger implementation
 type DefaultLogger struct{}
 
+// Report implements Logger.Report.
 func (d DefaultLogger) Report(event LogKind, cluster *Cluster, v ...interface{}) {
 	switch event {
 	case LogHostEvent:
@@ -77,16 +85,19 @@ func (d DefaultLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Reque
 	// noop
 }
 
+// defaultConnLogger implements redisconn.Logger to log individual connection events in context of cluster.
 type defaultConnLogger struct {
 	*Cluster
 }
 
+// Report implements redisconn.Logger.Report
 func (d defaultConnLogger) Report(event redisconn.LogKind, conn *redisconn.Connection, v ...interface{}) {
 	args := []interface{}{event, conn}
 	args = append(args, v...)
 	d.Cluster.opts.Logger.Report(LogHostEvent, d.Cluster, args...)
 }
 
+// Report implements redisconn.Logger.ReqStat
 func (d defaultConnLogger) ReqStat(conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
 	d.Cluster.opts.Logger.ReqStat(d.Cluster, conn, req, res, nanos)
 }

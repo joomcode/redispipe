@@ -8,21 +8,27 @@ import (
 	"github.com/joomcode/redispipe/redisconn"
 )
 
+// storeConfig atomically stores config
 func (c *Cluster) storeConfig(cfg *clusterConfig) {
-	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&c.config)), unsafe.Pointer(cfg))
+	p := (*unsafe.Pointer)(unsafe.Pointer(&c.config))
+	atomic.StorePointer(p, unsafe.Pointer(cfg))
 }
 
+// getConfig loads config atomically
 func (c *Cluster) getConfig() *clusterConfig {
-	ptr := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.config)))
-	return (*clusterConfig)(ptr)
+	p := (*unsafe.Pointer)(unsafe.Pointer(&c.config))
+	return (*clusterConfig)(atomic.LoadPointer(p))
 }
 
+// ClusterHandle is used to wrap cluster's handle and set it as connection's handle.
+// You can use it in connection's logging.
 type ClusterHandle struct {
 	Handle  interface{}
 	Address string
 	N       int
 }
 
+// newNode creates handle for a connection, that will be established in a future.
 func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 	node := &node{
 		opts:   c.opts.HostOpts,
@@ -50,8 +56,12 @@ func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 
 type connThen func(conn *redisconn.Connection, err error)
 
+// Call callback with connection to specified address.
+// If connection is already established, callback will be called immediately.
+// Otherwise, callback will be called after connection established.
 func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 	if conn := c.connForAddress(addr); conn != nil {
+		// there is connection, so call callback now.
 		then(conn, nil)
 		return
 	}
@@ -59,17 +69,18 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 	c.nodeWait.Lock()
 	defer c.nodeWait.Unlock()
 
-	if c.nodeWait.promises == nil {
-		c.nodeWait.promises = make(map[string]*[]connThen, 1)
-	}
-
 	if future, ok := c.nodeWait.promises[addr]; ok {
+		// there are already queued callback.
+		// It means, goroutine with connection establishing is already run.
+		// Add our callback to queue, and exit.
 		*future = append(*future, then)
 		return
 	}
 
+	// initiate queue for this address
 	future := &[]connThen{then}
 	c.nodeWait.promises[addr] = future
+
 	go func() {
 		node := c.addNode(addr)
 		var err error
@@ -80,12 +91,15 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 		c.nodeWait.Lock()
 		delete(c.nodeWait.promises, addr)
 		c.nodeWait.Unlock()
+		// since we deleted from promises under lock, no one could append to *future any more.
+		// lets run callbacks.
 		for _, cb := range *future {
 			cb(conn, err)
 		}
 	}()
 }
 
+// addNode creates host handle and adds it to cluster configuration.
 func (c *Cluster) addNode(addr string) *node {
 	var node *node
 	var ok bool
@@ -98,9 +112,12 @@ func (c *Cluster) addNode(addr string) *node {
 
 	oldConf := c.getConfig()
 	if node, ok = oldConf.nodes[addr]; ok {
+		// someone could already create same node
 		return node
 	}
 
+	// we could not update configuration in-place (threadsafety, bla-bla-bla).
+	// So we have to copy configuration and node map.
 	newConf := *oldConf
 	newConf.nodes = make(nodeMap, len(oldConf.nodes)+1)
 	for a, node := range oldConf.nodes {
@@ -120,30 +137,41 @@ func (c *Cluster) addNode(addr string) *node {
 }
 
 func (cfg *clusterConfig) slot2shardno(slot uint16) uint16 {
-	sh32 := atomic.LoadUint32(&cfg.slots[slot/2])
-	sh16 := uint16((sh32 >> (16 * (slot & 1))) & 0x3fff)
+	pos, off := slot/2, 16*(slot&1)
+	sh32 := atomic.LoadUint32(&cfg.slots[pos])
+	sh16 := uint16((sh32 >> off) & 0x3fff)
 	return sh16
 }
 
+// slotSetShard sets slot2shard mapping
 func (cfg *clusterConfig) slotSetShard(slot, shard uint16) {
-	sh32 := atomic.LoadUint32(&cfg.slots[slot/2])
-	sh32 &^= 0xffff << (16 * (slot & 1))
-	sh32 |= uint32(shard) << (16 * (slot & 1))
-	atomic.StoreUint32(&cfg.slots[slot/2], sh32)
+	pos, off := slot/2, 16*(slot&1)
+	sh32 := atomic.LoadUint32(&cfg.slots[pos])
+	if uint16((sh32>>off)&0x3fff) == shard {
+		return
+	}
+	sh32 &^= 0xffff << off
+	sh32 |= uint32(shard) << off
+	// yep, we doesn't do any synchronization here.
+	// If we lost update now, it will be naturally retried with other MOVED redis response.
+	atomic.StoreUint32(&cfg.slots[pos], sh32)
 }
 
 func (cfg *clusterConfig) slotMarkAsking(slot uint16) {
-	sh32 := atomic.LoadUint32(&cfg.slots[slot/2])
-	flag := uint32(MasterOnlyFlag << (16 * (slot & 1)))
+	pos, off := slot/2, 16*(slot&1)
+	sh32 := atomic.LoadUint32(&cfg.slots[pos])
+	flag := uint32(MasterOnlyFlag << off)
 	if sh32&flag == 0 {
 		sh32 |= flag
-		atomic.StoreUint32(&cfg.slots[slot/2], sh32)
+		// Again: no synchronization, because any updates will be retried with redis responses.
+		atomic.StoreUint32(&cfg.slots[pos], sh32)
 	}
 }
 
 func (cfg *clusterConfig) slotIsAsking(slot uint16) bool {
-	sh32 := atomic.LoadUint32(&cfg.slots[slot/2])
-	flag := uint32(MasterOnlyFlag << (16 * (slot & 1)))
+	pos, off := slot/2, 16*(slot&1)
+	sh32 := atomic.LoadUint32(&cfg.slots[pos])
+	flag := uint32(MasterOnlyFlag << off)
 	return sh32&flag != 0
 }
 
@@ -153,16 +181,8 @@ func (cfg *clusterConfig) slot2shard(slot uint16) *shard {
 	return shard
 }
 
-type defaultRoundRobinSeed uint32
-
-func (d *defaultRoundRobinSeed) Current() uint32 {
-	return atomic.AddUint32((*uint32)(d), 1)
-}
-
+// connForSlot returns established connection for slot, if it exists.
 func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*redisconn.Connection) (*redisconn.Connection, error) {
-	// We are not synchronizing by locks, so we need to spin until we have
-	// consistent configuration, ie for shard number we have a shard in a shardmap
-	// and a node in a nodemap.
 	var conn *redisconn.Connection
 	cfg := c.getConfig()
 	shard := cfg.slot2shard(slot)
@@ -185,9 +205,13 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 	case MasterAndSlaves, PreferSlaves:
 		n, a := uint32(len(shard.addr))*3, uint32(0)
 		if policy == PreferSlaves {
+			// with PreferSlaves policy, slaves are three times more preferred than master.
+			// that is why master's partition is reduced from 3 to 1.
 			n, a = n-2, 2
 		}
 		off := c.opts.RoundRobinSeed.Current()
+		// First, we try already established connections.
+		// If no one found, then connections thar are connecting at the moment are tried.
 		for _, needState := range []int{needConnected, mayBeConnected} {
 			mask := atomic.LoadUint32(&shard.good)
 			for mask != 0 && conn == nil {

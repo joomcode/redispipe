@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// deadlineIO is a wrapper that sets read deadline before each Read.
 type deadlineIO struct {
 	to time.Duration
 	c  net.Conn

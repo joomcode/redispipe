@@ -13,8 +13,14 @@ const (
 	LogMAX
 )
 
+// Logger is a type for custom event and stat reporter.
 type Logger interface {
+	// Report will be called when some events happens during connection's lifetime.
+	// Default implementation just prints this information using standard log package.
 	Report(event LogKind, conn *Connection, v ...interface{})
+	// ReqStat is called after request receives it's answer with request/result information
+	// and time spend to fulfill request.
+	// Default implementation is no-op.
 	ReqStat(conn *Connection, req Request, res interface{}, nanos int64)
 }
 
@@ -24,6 +30,7 @@ func (conn *Connection) report(event LogKind, v ...interface{}) {
 
 type defaultLogger struct{}
 
+// Report implements Logger.Report
 func (d defaultLogger) Report(event LogKind, conn *Connection, v ...interface{}) {
 	switch event {
 	case LogConnecting:
@@ -48,6 +55,7 @@ func (d defaultLogger) Report(event LogKind, conn *Connection, v ...interface{})
 	}
 }
 
+// ReqStat implements Logger.ReqStat
 func (d defaultLogger) ReqStat(conn *Connection, req Request, res interface{}, nanos int64) {
 	// noop
 }

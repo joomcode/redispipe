@@ -27,6 +27,7 @@ const (
 	defaultWritePause = 10 * time.Microsecond
 )
 
+// Opts - options for Connection
 type Opts struct {
 	// DB - database number
 	DB int
@@ -64,10 +65,9 @@ type Opts struct {
 // Connection represents single connection to single redis instance.
 // Underlying net.Conn is re-established as necessary.
 type Connection struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	state    uint32
-	closeErr error
+	ctx    context.Context
+	cancel context.CancelFunc
+	state  uint32
 
 	addr  string
 	c     net.Conn
@@ -158,19 +158,17 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	}
 
 	if conn.opts.Async || err != nil {
-		var ch chan struct{}
-		if conn.opts.Async {
-			ch = make(chan struct{})
-		}
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
 			conn.mutex.Lock()
 			defer conn.mutex.Unlock()
-			conn.createConnection(true, ch)
+			conn.createConnection(true, &wg)
 		}()
 		// in async mode we are still waiting for state to set to connConnecting
 		// so that Send will put requests into queue
 		if conn.opts.Async {
-			<-ch
+			wg.Wait()
 		}
 	}
 
@@ -267,18 +265,18 @@ func (conn *Connection) Send(req Request, cb Future, n uint64) {
 }
 
 // SendAsk is a helper method for redis-cluster client implementation.
-// It will send request with ASKING request sent before.
+// If asking==true, it will send request with ASKING request sent before.
 func (conn *Connection) SendAsk(req Request, cb Future, n uint64, asking bool) {
 	if cb == nil {
-		cb = dumb
+		cb = &dumb
 	}
-	if err := conn.doSend(req, cb, n, asking); err != nil {
+	if err := conn.doSend(req, cb, n, asking); err != nil && cb != nil {
 		cb.Resolve(err.With("connection", conn), n)
 	}
 }
 
 func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *redis.Error {
-	if cb.Cancelled() {
+	if cb != nil && cb.Cancelled() {
 		return conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
 	}
 
@@ -303,7 +301,7 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 	futures := shard.futures
 	if asking {
 		// send ASKING request before actual
-		futures = append(futures, future{dumb, 0, 0, Request{"ASKING", nil}})
+		futures = append(futures, future{&dumb, 0, 0, Request{"ASKING", nil}})
 	}
 	futures = append(futures, future{cb, n, nownano(), req})
 
@@ -361,6 +359,9 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 			break
 		}
 	}
+	if cb == nil {
+		cb = &dumb
+	}
 	if commonerr == nil {
 		commonerr = conn.doSendBatch(requests, cb, start, flags)
 	}
@@ -387,7 +388,7 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 		return nil
 	}
 
-	if cb.Cancelled() {
+	if cb != nil && cb.Cancelled() {
 		return conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
 	}
 
@@ -408,11 +409,11 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	futures := shard.futures
 	if flags&DoAsking != 0 {
 		// send ASKING request before actual
-		futures = append(futures, future{dumb, 0, 0, Request{"ASKING", nil}})
+		futures = append(futures, future{&dumb, 0, 0, Request{"ASKING", nil}})
 	}
 	if flags&DoTransaction != 0 {
 		// send MULTI request for transaction start
-		futures = append(futures, future{dumb, 0, 0, Request{"MULTI", nil}})
+		futures = append(futures, future{&dumb, 0, 0, Request{"MULTI", nil}})
 	}
 
 	now := nownano()
@@ -435,7 +436,7 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	return nil
 }
 
-// wrapped preserves Cancelled method of wrapped future, but redefines Resolve
+// wrapped preserves Cancelled method of wrapped future, but redefines Resolve to react only on result of EXEC.
 type transactionFuture struct {
 	Future
 	l   int
@@ -465,7 +466,7 @@ func (conn *Connection) String() string {
 /********** private api **************/
 
 // lock all shards to prevent creation of new requests.
-// Under this lock, all already sent requiests are revoked.
+// Under this lock, all already sent requests are revoked.
 func (conn *Connection) lockShards() {
 	for i := range conn.shard {
 		conn.shard[i].Lock()
@@ -478,9 +479,12 @@ func (conn *Connection) unlockShards() {
 	}
 }
 
+// setup connection to redis
 func (conn *Connection) dial() error {
 	var connection net.Conn
 	var err error
+
+	// detect network and actual address
 	network := "tcp"
 	address := conn.addr
 	timeout := conn.opts.DialTimeout
@@ -496,6 +500,8 @@ func (conn *Connection) dial() error {
 		network = "tcp"
 		address = address[6:]
 	}
+
+	// dial to redis
 	dialer := net.Dialer{
 		Timeout:       timeout,
 		DualStack:     true,
@@ -506,17 +512,22 @@ func (conn *Connection) dial() error {
 	if err != nil {
 		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrDial, err)
 	}
+
 	dc := newDeadlineIO(connection, conn.opts.IOTimeout)
 	r := bufio.NewReaderSize(dc, 128*1024)
 
+	// Password request
 	var req []byte
 	if conn.opts.Password != "" {
-		req = append(req, authReq...)
+		req, _ = redis.AppendRequest(req, redis.Req("AUTH", conn.opts.Password))
 	}
+	// Ping request
 	req = append(req, pingReq...)
+	// Select request
 	if conn.opts.DB != 0 {
-		req, _ = redis.AppendRequest(req, Request{"SELECT", []interface{}{conn.opts.DB}})
+		req, _ = redis.AppendRequest(req, redis.Req("SELECT", conn.opts.DB))
 	}
+	// Force timeout
 	if conn.opts.IOTimeout > 0 {
 		connection.SetWriteDeadline(time.Now().Add(conn.opts.IOTimeout))
 	}
@@ -524,7 +535,9 @@ func (conn *Connection) dial() error {
 		connection.Close()
 		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err)
 	}
+	// Disarm timeout
 	connection.SetWriteDeadline(time.Time{})
+
 	var res interface{}
 	// Password response
 	if conn.opts.Password != "" {
@@ -564,15 +577,19 @@ func (conn *Connection) dial() error {
 		}
 	}
 
-	conn.lockShards()
 	conn.c = connection
-	conn.unlockShards()
 
 	one := &oneconn{
-		c:       connection,
+		c: connection,
+		// We intentionally limit futures channel capacity:
+		// this way we will force to write some first request eagerly to network,
+		// and pause until first response returns.
+		// During this time, many new request will be buffered, and then we will
+		// be switching to steady state pipelining: new requests will be written
+		// with the same speed responses will arrive.
 		futures: make(chan []future, conn.opts.Concurrency/2+1),
 		control: make(chan struct{}),
-		futpool: make(chan []future, conn.opts.Concurrency/2+1),
+		futpool: make(chan []future, conn.opts.Concurrency),
 	}
 
 	go conn.writer(one)
@@ -581,16 +598,16 @@ func (conn *Connection) dial() error {
 	return nil
 }
 
-func (conn *Connection) createConnection(reconnect bool, ch chan struct{}) error {
+func (conn *Connection) createConnection(reconnect bool, wg *sync.WaitGroup) error {
 	var err error
 	for conn.c == nil && atomic.LoadUint32(&conn.state) == connDisconnected {
 		conn.report(LogConnecting)
 		now := time.Now()
 		// start accepting requests
 		atomic.StoreUint32(&conn.state, connConnecting)
-		if ch != nil {
-			close(ch)
-			ch = nil
+		if wg != nil {
+			wg.Done()
+			wg = nil
 		}
 		err = conn.dial()
 		if err == nil {
@@ -602,20 +619,24 @@ func (conn *Connection) createConnection(reconnect bool, ch chan struct{}) error
 		}
 
 		conn.report(LogConnectFailed, err)
+		// stop accepting request
 		atomic.StoreUint32(&conn.state, connDisconnected)
+		// revoke accumulated requests
 		conn.lockShards()
 		conn.dropShardFutures(err)
 		conn.unlockShards()
 
+		// If you doesn't use reconnection, quit
 		if !reconnect {
 			return err
 		}
 		conn.mutex.Unlock()
+		// do not spend CPU on useless attempts
 		time.Sleep(now.Add(conn.opts.ReconnectPause).Sub(time.Now()))
 		conn.mutex.Lock()
 	}
-	if ch != nil {
-		close(ch)
+	if wg != nil {
+		wg.Done()
 	}
 	if atomic.LoadUint32(&conn.state) == connClosed {
 		err = conn.ctx.Err()
@@ -623,28 +644,29 @@ func (conn *Connection) createConnection(reconnect bool, ch chan struct{}) error
 	return err
 }
 
+// dropShardFutures revokes all accumulated requests
+// Should be called with all shards locked.
 func (conn *Connection) dropShardFutures(err error) {
-Loop:
-	for {
+	// first, empty dirtyShard queue.
+	// since shards are locked at the moment, it has finite work to be done.
+	for ok := true; ok; {
 		select {
-		case _, ok := <-conn.dirtyShard:
-			if !ok {
-				break Loop
-			}
+		case _, ok = <-conn.dirtyShard:
 		default:
-			break Loop
+			ok = false
 		}
 	}
+	// then Resolve all future with error
 	for i := range conn.shard {
 		sh := &conn.shard[i]
 		for _, fut := range sh.futures {
-			conn.call(fut, err)
+			conn.resolve(fut, err)
 		}
 		sh.futures = nil
 	}
 }
 
-func (conn *Connection) closeConnection(neterr error, forever bool) error {
+func (conn *Connection) closeConnection(neterr error, forever bool) {
 	if forever {
 		atomic.StoreUint32(&conn.state, connClosed)
 		conn.report(LogContextClosed)
@@ -653,21 +675,19 @@ func (conn *Connection) closeConnection(neterr error, forever bool) error {
 		conn.report(LogDisconnected, neterr)
 	}
 
-	var err error
+	if conn.c != nil {
+		conn.c.Close()
+		conn.c = nil
+	}
 
 	conn.lockShards()
 	defer conn.unlockShards()
 	if forever {
+		// have to close dirtyShard under shards lock
 		close(conn.dirtyShard)
 	}
 
-	if conn.c != nil {
-		err = conn.c.Close()
-		conn.c = nil
-	}
-
 	conn.dropShardFutures(neterr)
-	return err
 }
 
 func (conn *Connection) control() {
@@ -682,12 +702,12 @@ func (conn *Connection) control() {
 		case <-conn.ctx.Done():
 			conn.mutex.Lock()
 			defer conn.mutex.Unlock()
-			conn.closeErr = conn.err(redis.ErrKindContext, redis.ErrContextClosed).
-				Wrap(conn.ctx.Err())
-			conn.closeConnection(conn.closeErr, true)
+			closeErr := conn.err(redis.ErrKindContext, redis.ErrContextClosed).Wrap(conn.ctx.Err())
+			conn.closeConnection(closeErr, true)
 			return
 		case <-t.C:
 		}
+		// send PING at least 3 times per IO timeout, therefore read deadline will not be exceeded
 		if err := conn.Ping(); err != nil {
 			if cer, ok := err.(*redis.Error); ok && cer.Code == redis.ErrPing {
 				// that states about serious error in our code
@@ -697,14 +717,18 @@ func (conn *Connection) control() {
 	}
 }
 
+// setErr is called by either read or write loop in case of error
 func (one *oneconn) setErr(neterr error, conn *Connection) {
+	// lets sure error is set only once
 	one.erronce.Do(func() {
+		// notify writer to stop writting
 		close(one.control)
 		rerr, ok := neterr.(*redis.Error)
 		if !ok {
 			rerr = redis.NewErrWrap(redis.ErrKindIO, redis.ErrIO, neterr)
 		}
 		one.err = rerr.With("connection", conn)
+		// and try to reconnect asynchronously
 		go conn.reconnect(one.err, one.c)
 	})
 }
@@ -725,6 +749,9 @@ func (conn *Connection) reconnect(neterr error, c net.Conn) {
 	}
 }
 
+// writer is a core writer loop. It is part of oneconn pair.
+// It doesn't write requests immediately to network, but throttles itself to accumulate more requests.
+// It is root of good pipelined performance: trade latency for throughtput.
 func (conn *Connection) writer(one *oneconn) {
 	var shardn uint32
 	var packet []byte
@@ -732,9 +759,12 @@ func (conn *Connection) writer(one *oneconn) {
 	var ok bool
 
 	defer func() {
+		// on method exit send last futures to read loop.
+		// Read loop will revoke these requests with error.
 		if len(futures) != 0 {
 			one.futures <- futures
 		}
+		// And inform read loop that our reader-writer pair is dying.
 		close(one.futures)
 	}()
 
@@ -744,75 +774,88 @@ func (conn *Connection) writer(one *oneconn) {
 			one.setErr(err, conn)
 			return false
 		}
+		// every 1023 writes check our buffer.
+		// If it is too large, then lets GC to free it.
 		if round--; round == 0 {
 			round = 1023
 			if cap(packet) > 128*1024 {
 				packet = nil
 			}
 		}
+		// otherwise, reuse buffer
 		packet = packet[:0]
 		return true
 	}
 
 BigLoop:
+	// wait for dirtyShard or close of our reader-writer pair.
 	select {
 	case shardn, ok = <-conn.dirtyShard:
 		if !ok {
+			// user closed connection
 			return
 		}
 	case <-one.control:
+		// this reader-writer pair is obsolete
 		return
 	}
 
 	if conn.opts.WritePause > 0 {
+		// lets sleep a bit to accumulate more requests
 		time.Sleep(conn.opts.WritePause)
 	}
 
 	for {
 		shard := &conn.shard[shardn]
 		shard.Lock()
+		// fetch requests from shard, and replace it with empty buffer with non-zero capacity
 		futures, shard.futures = shard.futures, futures
 		shard.Unlock()
 
-		i := 0
-		for j, fut := range futures {
+		// serialize requests
+		for _, fut := range futures {
 			var err error
 			if packet, err = redis.AppendRequest(packet, fut.req); err != nil {
-				conn.call(fut, err)
-				continue
+				// since we checked arguments in doSend and doSendBatch, error here is a signal of programmer error.
+				// lets just panic and die.
+				panic(err)
 			}
-			if i != j {
-				futures[i] = fut
-			}
-			i++
 		}
-		futures = futures[:i]
 
 		if len(futures) == 0 {
+			// There are multiple ways to come here, and most of them are through dropShardFutures.
+			// Lets just ignore them.
 			goto control
 		}
 
 		select {
 		case one.futures <- futures:
+			// Write buffer if it is large enough
 			if len(packet) > 64*1024 && !write() {
 				return
 			}
 		default:
+			// Reader doesn't fetches requests because we didn't write for a long time.
+			// After we wrote requests, reader will read answers, and then will fetch requests for answers.
 			if !write() {
 				return
 			}
+			// It blocks here. It is ok, because requests are buffered at this moment.
 			one.futures <- futures
 		}
 
 		select {
+		// reuse request buffer
 		case futures = <-one.futpool:
 		default:
+			// or allocate new one
 			futures = make([]future, 0, len(futures)*2)
 		}
 
 	control:
 		select {
 		case <-one.control:
+			// this reader-writer pair is obsolete
 			return
 		default:
 		}
@@ -820,9 +863,11 @@ BigLoop:
 		select {
 		case shardn, ok = <-conn.dirtyShard:
 			if !ok {
+				// user closed connection
 				return
 			}
 		default:
+			// no new requests were buffered. Flush the buffer and go to blocking select.
 			if len(packet) != 0 && !write() {
 				return
 			}
@@ -833,47 +878,62 @@ BigLoop:
 
 func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 	var futures []future
-	var packetfutures []future
+	var i int
 	var res interface{}
 	var ok bool
 
 	for {
+		// try to read response from buffered socket.
+		// Here is IOTimeout handled as well (through deadlineIO wrapper around socket).
 		res = redis.ReadResponse(r)
 		if rerr := redis.AsRedisError(res); rerr != nil {
 			if redis.HardError(rerr) {
+				// it is not redis-sended error, then close connection
+				// (most probably, it is already closed. But also it could be timeout).
 				one.setErr(rerr, conn)
 				break
 			} else {
+				// otherwise, resolve future with this error.
 				res = rerr.With("connection", conn)
 			}
 		}
-		if len(futures) == 0 {
+		if i == len(futures) {
+			// this batch of requests exhausted,
+			// lets recycle it
+			i = 0
 			select {
-			case one.futpool <- packetfutures[:0]:
+			case one.futpool <- futures[:0]:
 			default:
 			}
-			packetfutures, ok = <-one.futures
+			// and fetch next one.
+			futures, ok = <-one.futures
 			if !ok {
 				break
 			}
-			futures = packetfutures
 		}
-		fut := futures[0]
-		futures[0].Future = nil
-		futures = futures[1:]
-		conn.call(fut, res)
+		// fetch request corresponding to answer
+		fut := futures[i]
+		futures[i] = future{}
+		i++
+		// and resolve it
+		conn.resolve(fut, res)
 	}
 
-	for _, fut := range futures {
-		conn.call(fut, one.err)
+	// oops, connection is broken.
+	// Should resolve already fetched requests with error.
+	for _, fut := range futures[i:] {
+		conn.resolve(fut, one.err)
 	}
+	// And should resolve all remaining requests as well
+	// (looping until writer closes channel).
 	for futures := range one.futures {
 		for _, fut := range futures {
-			conn.call(fut, one.err)
+			conn.resolve(fut, one.err)
 		}
 	}
 }
 
+// create error with connection as an attribute.
 func (conn *Connection) err(kind redis.ErrorKind, code redis.ErrorCode) *redis.Error {
 	return redis.NewErr(kind, code).With("connection", conn)
 }

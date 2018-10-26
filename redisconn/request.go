@@ -23,11 +23,9 @@ func nownano() int64 {
 	return int64(time.Now().Sub(epoch))
 }
 
-func (c *Connection) call(f future, res interface{}) {
-	if f.Future != nil {
-		if f.start != 0 && f.req.Cmd != "" {
-			c.opts.Logger.ReqStat(c, f.req, res, nownano()-f.start)
-		}
-		f.Future.Resolve(res, f.N)
+func (c *Connection) resolve(f future, res interface{}) {
+	if f.start != 0 && f.req.Cmd != "" {
+		c.opts.Logger.ReqStat(c, f.req, res, nownano()-f.start)
 	}
+	f.Future.Resolve(res, f.N)
 }

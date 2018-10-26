@@ -31,7 +31,7 @@ func (s *Suite) SetupSuite() {
 
 func (s *Suite) SetupTest() {
 	s.s.Start()
-	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 5*time.Second)
+	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 55*time.Second)
 }
 
 func (s *Suite) TearDownTest() {
@@ -198,6 +198,7 @@ func (s *Suite) TestTransaction() {
 
 	sconn := redis.SyncCtx{conn}
 
+	// transaction just works
 	res, err := sconn.SendTransaction(s.ctx, []redis.Request{
 		redis.Req("PING"),
 		redis.Req("PING", "asdf"),
@@ -210,6 +211,7 @@ func (s *Suite) TestTransaction() {
 
 	s.s.DoSure("SET", "tran:x", 1)
 
+	// transaction daesn't execute in case of wrong command
 	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
 		redis.Req("INCR", "tran:x"),
 		redis.Req("PANG"),
@@ -222,6 +224,9 @@ func (s *Suite) TestTransaction() {
 
 	s.Equal([]byte("1"), s.s.DoSure("GET", "tran:x"))
 
+	// transaction is executed partially (that is redis's behavior):
+	// - first command executed well
+	// - second command returns with error.
 	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
 		redis.Req("INCR", "tran:x"),
 		redis.Req("HSET", "tran:x", "y", "1"),
@@ -264,6 +269,7 @@ func (s *Suite) TestScan() {
 	s.Len(allkeys, 1000)
 }
 
+// stress test for "good case" when redis works without issues.
 func (s *Suite) TestAllReturns_Good() {
 	conn, err := Connect(context.Background(), s.s.Addr(), defopts)
 	s.r().Nil(err)
@@ -310,6 +316,7 @@ Loop:
 	s.Equal(N, cnt, "Not all goroutines finished")
 }
 
+// stress test for "bad case" when redis occasionally stops and stalls.
 func (s *Suite) TestAllReturns_Bad() {
 	conn, err := Connect(context.Background(), s.s.Addr(), defopts)
 	s.r().Nil(err)
@@ -395,6 +402,7 @@ func (s *Suite) TestAllReturns_Bad() {
 			break
 		}
 
+		// kill redis: OS will report about disconnect
 		s.s.Stop()
 		time.Sleep(defopts.IOTimeout * 3)
 		if !sendgoods(false) || !allgood() {
@@ -407,6 +415,7 @@ func (s *Suite) TestAllReturns_Bad() {
 			break
 		}
 
+		// stop redis: connection is stalled as when network looses packets.
 		s.s.Pause()
 		time.Sleep(defopts.IOTimeout * 2)
 		if !sendgoods(false) || !allgood() {

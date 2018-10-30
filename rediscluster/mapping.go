@@ -213,7 +213,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 		// First, we try already established connections.
 		// If no one found, then connections thar are connecting at the moment are tried.
 		for _, needState := range []int{needConnected, mayBeConnected} {
-			mask := atomic.LoadUint32(&shard.good)
+			mask := atomic.LoadUint32(&shard.good) // load health information
 			for mask != 0 && conn == nil {
 				k := (nextRng(&off, n) + a) / 3
 				if mask&(1<<k) == 0 {
@@ -224,6 +224,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 				addr = shard.addr[k]
 				node := nodes[addr]
 				if node == nil {
+					// it is strange a bit, but lets ignore
 					continue
 				}
 				conn = node.getConn(c.opts.ConnHostPolicy, needState, seen)
@@ -271,41 +272,42 @@ func isSeen(conn *redisconn.Connection, seen []*redisconn.Connection) bool {
 	return false
 }
 
-func (n *node) getConn(policy ConnHostPolicyEnum, needState int, seen []*redisconn.Connection) *redisconn.Connection {
+// getConn returns connection with desired "health", but without already seen(used) connections.
+func (n *node) getConn(policy ConnHostPolicyEnum, liveness int, seen []*redisconn.Connection) *redisconn.Connection {
 	if len(n.conns) == 1 {
 		if isSeen(n.conns[0], seen) {
 			return nil
 		}
-		if connHealthy(n.conns[0], needState) {
+		if connHealthy(n.conns[0], liveness) {
 			return n.conns[0]
 		}
 		return nil
 	}
-	if needState == preferConnected {
+	if liveness == preferConnected {
 		conn := n.getConnConcreteNeed(policy, needConnected, seen)
 		if conn == nil {
 			conn = n.getConnConcreteNeed(policy, mayBeConnected, seen)
 		}
 		return conn
 	}
-	return n.getConnConcreteNeed(policy, needState, seen)
+	return n.getConnConcreteNeed(policy, liveness, seen)
 }
 
-func (n *node) getConnConcreteNeed(policy ConnHostPolicyEnum, needState int, seen []*redisconn.Connection) *redisconn.Connection {
+func (n *node) getConnConcreteNeed(policy ConnHostPolicyEnum, liveness int, seen []*redisconn.Connection) *redisconn.Connection {
 	switch policy {
 	case ConnHostPreferFirst:
 		for _, conn := range n.conns {
 			if isSeen(conn, seen) {
 				continue
 			}
-			if connHealthy(conn, needState) {
+			if connHealthy(conn, liveness) {
 				return conn
 			}
 		}
 	case ConnHostRoundRobin:
 		off := atomic.AddUint32(&n.rr, 1)
 		l := uint32(len(n.conns))
-		mask := uint32(1)<<uint(l) - 1
+		mask := uint32(1)<<l - 1
 		for mask != 0 {
 			k := nextRng(&off, l)
 			if mask&(1<<k) == 0 {
@@ -316,7 +318,7 @@ func (n *node) getConnConcreteNeed(policy ConnHostPolicyEnum, needState int, see
 			if isSeen(conn, seen) {
 				continue
 			}
-			if connHealthy(conn, needState) {
+			if connHealthy(conn, liveness) {
 				return conn
 			}
 		}

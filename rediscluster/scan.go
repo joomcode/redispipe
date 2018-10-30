@@ -4,6 +4,8 @@ import (
 	"github.com/joomcode/redispipe/redis"
 )
 
+// Scanner is an implementation of redis.Scanner.
+// It will iterate through all shards (if it is called for SCAN command)
 type Scanner struct {
 	redis.ScannerBase
 
@@ -11,6 +13,7 @@ type Scanner struct {
 	addrs []string
 }
 
+// Scanner implements redis.Sender.Scanner.
 func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
 	var addrs []string
 
@@ -41,6 +44,8 @@ func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
 	}
 }
 
+// Next implements redis.Scanner.Next
+// Under the hood, it will scan each shard one after another.
 func (s *Scanner) Next(cb redis.Future) {
 	if s.Err != nil {
 		cb.Resolve(s.Err, 0)

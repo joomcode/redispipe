@@ -16,7 +16,9 @@ type ConnHostPolicyEnum int8
 type ReplicaPolicyEnum int8
 
 const (
+	// ConnHostPreferFirst means "always prefer first connection among established to redis instance"
 	ConnHostPreferFirst ConnHostPolicyEnum = iota
+	// ConnHostRoundRobin means "spread requests among connections established to redis instance"
 	ConnHostRoundRobin
 )
 

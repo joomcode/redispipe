@@ -17,12 +17,14 @@ const (
 	SlotImporting SlotMoving = 2
 )
 
+// SlotRange represents slice of slots
 type SlotsRange struct {
 	From  int
 	To    int
-	Addrs []string
+	Addrs []string // addresses of hosts hosting this range of slots. First address is a master, and other are slaves.
 }
 
+// ParseSlotsInfo parses result of CLUSTER SLOTS command
 func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 	const NumSlots = 1 << 14
 	if err := AsError(res); err != nil {
@@ -87,37 +89,47 @@ func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 	return ranges, nil
 }
 
+// InstanceInfo represents line of CLUSTER NODES result.
 type InstanceInfo struct {
-	Uuid      string
-	Addr      string
-	IP        string
-	Port      int
-	Port2     int
-	Fail      bool
-	MySelf    bool
+	Uuid   string
+	Addr   string
+	IP     string
+	Port   int
+	Port2  int
+	Fail   bool
+	MySelf bool
+	// NoAddr means that node were missed due to misconfiguration.
+	// More probably, redis instance with other UUID were started on the same port.
 	NoAddr    bool
 	SlaveOf   string
 	Slots     [][2]uint16
 	Migrating []SlotMigration
 }
 
+// InstanceInfos represents CLUSTER NODES result
 type InstanceInfos []InstanceInfo
 
+// SlotMigration represents one migrating slot.
 type SlotMigration struct {
 	Number uint16
 	Moving SlotMoving
 	Peer   string
 }
 
+// HasAddr returns true if it is addressless instance (replaced with instance with other UUID),
+// it will have no port
 func (ii *InstanceInfo) HasAddr() bool {
-	// if it is address less instance (replaced with instance with other UUID), it will have no port
 	return !ii.NoAddr && ii.Port != 0
 }
 
+// IsMaster returns if this instance is master
 func (ii *InstanceInfo) IsMaster() bool {
 	return ii.SlaveOf == ""
 }
 
+// HashSum calculates signature of cluster configuration.
+// It assumes, configuration were sorted in some way.
+// If configuration fetched from all hosts has same signature, then cluster is in stable state.
 func (iis InstanceInfos) HashSum() uint64 {
 	hsh := fnv.New64a()
 	for _, ii := range iis {
@@ -130,6 +142,7 @@ func (iis InstanceInfos) HashSum() uint64 {
 	return hsh.Sum64()
 }
 
+// CollectAddressesAndMigrations collects all node's addresses and all slot migrations.
 func (iis InstanceInfos) CollectAddressesAndMigrations(addrs map[string]struct{}, migrating map[uint16]struct{}) {
 	for _, ii := range iis {
 		if ii.IP > "" && ii.Port != 0 {

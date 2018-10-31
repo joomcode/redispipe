@@ -59,3 +59,13 @@ func (d defaultLogger) Report(event LogKind, conn *Connection, v ...interface{})
 func (d defaultLogger) ReqStat(conn *Connection, req Request, res interface{}, nanos int64) {
 	// noop
 }
+
+// Noop implementation of Logger
+// Useful in tests
+type NoopLogger struct{}
+
+// Report implements Logger.Report
+func (d NoopLogger) Report(event LogKind, conn *Connection, v ...interface{}) {}
+
+// ReqStat implements Logger.ReqStat
+func (d NoopLogger) ReqStat(conn *Connection, req Request, res interface{}, nanos int64) {}

@@ -28,6 +28,9 @@ func InitDir(base string) {
 }
 
 func RmDir() {
+	if Dir == "" {
+		return
+	}
 	if err := os.RemoveAll(Dir); err != nil {
 		panic(err)
 	}

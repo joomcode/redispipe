@@ -2,6 +2,7 @@ package redisclusterutil
 
 import "net"
 
+// Resolve just resolves hostname:port to ipaddr:port
 func Resolve(addr string) (string, error) {
 	ip, port, err := net.SplitHostPort(addr)
 	if err != nil {

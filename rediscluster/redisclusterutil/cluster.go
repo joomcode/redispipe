@@ -156,6 +156,7 @@ func (iis InstanceInfos) CollectAddressesAndMigrations(addrs map[string]struct{}
 	}
 }
 
+// SlotsRanges returns sorted SlotsRange-s made from slots information of cluster configuration.
 func (iis InstanceInfos) SlotsRanges() []SlotsRange {
 	uuid2addrs := make(map[string][]string)
 	for _, ii := range iis {
@@ -184,6 +185,7 @@ func (iis InstanceInfos) SlotsRanges() []SlotsRange {
 	return ranges
 }
 
+// MySelf returns info line for the host information were collected from.
 func (iis InstanceInfos) MySelf() *InstanceInfo {
 	for _, ii := range iis {
 		if ii.MySelf {
@@ -193,6 +195,8 @@ func (iis InstanceInfos) MySelf() *InstanceInfo {
 	return nil
 }
 
+// MergeWith merges sorted cluster information, giving preference to myself lines.
+// It could be used to obtain "union of all cluster configuration visions" in custom tools managing cluster.
 func (iis InstanceInfos) MergeWith(other InstanceInfos) InstanceInfos {
 	// assume they are sorted by uuid
 	// common case : they are same
@@ -238,6 +242,7 @@ RealMerge:
 	return res
 }
 
+// Hosts returns set of instance addresses.
 func (iis InstanceInfos) Hosts() []string {
 	res := make([]string, len(iis))
 	for i := range iis {
@@ -246,6 +251,7 @@ func (iis InstanceInfos) Hosts() []string {
 	return res
 }
 
+// ParseClusterNodes parses result of CLUSTER NODES command.
 func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 	var err error
 	if err = AsError(res); err != nil {

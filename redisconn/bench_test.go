@@ -120,6 +120,7 @@ func BenchmarkParallelGetSet(b *B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+		defer rdx2.Empty()
 		b.ResetTimer()
 		do(b, func() {
 			conn, err := rdx2.Get()

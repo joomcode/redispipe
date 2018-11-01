@@ -101,3 +101,13 @@ func (d defaultConnLogger) Report(event redisconn.LogKind, conn *redisconn.Conne
 func (d defaultConnLogger) ReqStat(conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
 	d.Cluster.opts.Logger.ReqStat(d.Cluster, conn, req, res, nanos)
 }
+
+// NoopLogger implements Logger with no logging at all.
+type NoopLogger struct{}
+
+// Report implements Logger.Report
+func (d NoopLogger) Report(event LogKind, cluster *Cluster, v ...interface{}) {}
+
+// ReqStat implements Logger.ReqStat
+func (d NoopLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
+}

@@ -28,10 +28,11 @@ func (conn *Connection) report(event LogKind, v ...interface{}) {
 	conn.opts.Logger.Report(event, conn, v...)
 }
 
-type defaultLogger struct{}
+// DefaultLogger is default implementation of Logger
+type DefaultLogger struct{}
 
 // Report implements Logger.Report
-func (d defaultLogger) Report(event LogKind, conn *Connection, v ...interface{}) {
+func (d DefaultLogger) Report(event LogKind, conn *Connection, v ...interface{}) {
 	switch event {
 	case LogConnecting:
 		log.Printf("redis: connecting to %s", conn.Addr())
@@ -56,7 +57,7 @@ func (d defaultLogger) Report(event LogKind, conn *Connection, v ...interface{})
 }
 
 // ReqStat implements Logger.ReqStat
-func (d defaultLogger) ReqStat(conn *Connection, req Request, res interface{}, nanos int64) {
+func (d DefaultLogger) ReqStat(conn *Connection, req Request, res interface{}, nanos int64) {
 	// noop
 }
 

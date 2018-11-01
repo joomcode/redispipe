@@ -143,7 +143,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	}
 
 	if conn.opts.Logger == nil {
-		conn.opts.Logger = defaultLogger{}
+		conn.opts.Logger = DefaultLogger{}
 	}
 
 	if !conn.opts.Async {

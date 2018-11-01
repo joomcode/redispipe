@@ -443,7 +443,8 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 		return
 	}
 
-	request := &request{
+	r := requestPool.Get().(*request)
+	*r = request{
 		c:      c,
 		req:    req,
 		cb:     cb,
@@ -458,7 +459,7 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 
 		lastconn: conn,
 	}
-	conn.Send(req, request, 0)
+	conn.Send(req, r, 0)
 }
 
 // SendMany implements redis.Sender.SendMany
@@ -488,6 +489,14 @@ type request struct {
 	redir    uint8
 }
 
+var requestPool = sync.Pool{New: func() interface{} { return &request{} }}
+
+func (r *request) resolve(res interface{}) {
+	r.cb.Resolve(res, r.off)
+	*r = request{}
+	requestPool.Put(r)
+}
+
 // Cancelled implements redis.Future.Cancelled.
 // It proxies call to original request.
 func (r *request) Cancelled() bool {
@@ -501,20 +510,20 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 	err := redis.AsRedisError(res)
 	if err == nil {
 		// if there is no error, resolve
-		r.cb.Resolve(res, r.off)
+		r.resolve(res)
 		return
 	}
 
 	// do not retry if cluster is closed
 	select {
 	case <-r.c.ctx.Done():
-		r.cb.Resolve(res, r.off)
+		r.resolve(r.off)
 		return
 	default:
 	}
 	// or if request is not active already
 	if r.cb.Cancelled() {
-		r.cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestCancelled), r.off)
+		r.resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestCancelled))
 		return
 	}
 
@@ -524,7 +533,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 	case redis.ErrKindIO:
 		if !r.mayRetry {
 			// It is not safe to retry read-write operation
-			r.cb.Resolve(err, r.off)
+			r.resolve(err)
 			return
 		}
 		fallthrough
@@ -543,7 +552,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 		if int(r.hardErrs) >= retries {
 			// It looks like cluster is in unstable state.
 			// Resolve with error.
-			r.cb.Resolve(err, r.off)
+			r.resolve(err)
 			return
 		}
 		DebugEvent("retry")
@@ -551,7 +560,8 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 		r.seen = append(r.seen, r.lastconn)
 		conn, err := r.c.connForSlot(r.slot, r.policy, r.seen)
 		if err != nil {
-			r.cb.Resolve(err, r.off)
+			r.resolve(err)
+			return
 		} else {
 			r.lastconn = conn
 			conn.Send(r.req, r, 0)
@@ -580,7 +590,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 			// callback will be called after connection established.
 			r.c.ensureConnForAddress(addr, func(conn *redisconn.Connection, cerr error) {
 				if cerr != nil {
-					r.cb.Resolve(cerr, r.off)
+					r.resolve(cerr)
 				} else {
 					r.lastconn = conn
 					conn.SendAsk(r.req, r, 0, err.Code == redis.ErrAsk)
@@ -591,7 +601,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 		fallthrough
 	default:
 		// All other errors: just resolve.
-		r.cb.Resolve(err, r.off)
+		r.resolve(err)
 	}
 }
 
@@ -622,7 +632,8 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 		return
 	}
 
-	t := &transaction{
+	t := transactionPool.Get().(*transaction)
+	*t = transaction{
 		c:    c,
 		reqs: reqs,
 		cb:   cb,
@@ -652,6 +663,14 @@ type transaction struct {
 	asked    bool
 }
 
+var transactionPool = sync.Pool{New: func() interface{} { return &transaction{} }}
+
+func (t *transaction) resolve(res interface{}) {
+	t.cb.Resolve(res, t.off)
+	*t = transaction{}
+	transactionPool.Put(t)
+}
+
 // send transaction to connection
 func (t *transaction) send(conn *redisconn.Connection, ask bool) {
 	t.res = make([]interface{}, len(t.reqs)+1)
@@ -679,20 +698,20 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 
 	err := redis.AsRedisError(res)
 	if err == nil {
-		t.cb.Resolve(res, t.off)
+		t.resolve(res)
 		return
 	}
 
 	// do not retry if cluster is closed
 	select {
 	case <-t.c.ctx.Done():
-		t.cb.Resolve(res, t.off)
+		t.resolve(res)
 		return
 	default:
 	}
 	// or if request is not active already
 	if t.cb.Cancelled() {
-		t.cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestCancelled), t.off)
+		t.resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestCancelled))
 		return
 	}
 
@@ -702,7 +721,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 	case redis.ErrKindIO:
 		// redis treats all transactions as read-write, and it is not safe
 		// to retry
-		t.cb.Resolve(err, t.off)
+		t.resolve(err)
 		return
 	case redis.ErrKindConnection, redis.ErrKindContext:
 		// Transaction were not sent at all.
@@ -710,7 +729,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		t.c.ForceReloading()
 		if int(t.hardErrs) >= t.c.opts.ConnsPerHost {
 			// Look like cluster is in unstable state.
-			t.cb.Resolve(err, t.off)
+			t.resolve(err)
 			return
 		}
 		t.hardErrs++
@@ -718,7 +737,8 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		t.seen = append(t.seen, t.lastconn)
 		conn, err := t.c.connForSlot(t.slot, MasterOnly, t.seen)
 		if err != nil {
-			t.cb.Resolve(err.(*redis.Error).With("requests", t.reqs), t.off)
+			t.resolve(err.(*redis.Error).With("requests", t.reqs))
+			return
 		} else {
 			t.lastconn = conn
 			t.send(conn, false)
@@ -780,7 +800,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 				} else {
 					// shit... wtf?
 					// this should not happen, and I don't know how to handle it in better way.
-					t.cb.Resolve(err, t.off)
+					t.resolve(err)
 				}
 				return
 			}
@@ -791,7 +811,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		fallthrough
 	default:
 		// all other kinds of error
-		t.cb.Resolve(err, t.off)
+		t.resolve(err)
 		return
 	}
 }
@@ -800,7 +820,7 @@ func (t *transaction) sendMoved(addr string, asking bool) {
 	// Send query to other address.
 	t.c.ensureConnForAddress(addr, func(conn *redisconn.Connection, cerr error) {
 		if cerr != nil {
-			t.cb.Resolve(cerr, t.off)
+			t.resolve(cerr)
 		} else {
 			t.lastconn = conn
 			t.send(conn, asking)

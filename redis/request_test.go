@@ -299,8 +299,7 @@ func TestAppendRequestArgument(t *testing.T) {
 	assert.Len(t, k, 0)
 	assert.NotNil(t, err)
 	rerr := AsRedisError(err)
-	assert.Equal(t, ErrKindRequest, rerr.Kind)
-	assert.Equal(t, ErrArgumentType, rerr.Code)
+	assert.Equal(t, ErrArgumentType, rerr.Kind())
 }
 
 func TestAppendRequestCmdAndArgcount(t *testing.T) {

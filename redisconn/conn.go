@@ -98,10 +98,10 @@ type connShard struct {
 
 func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err error) {
 	if ctx == nil {
-		return nil, redis.NewErr(redis.ErrKindOpts, redis.ErrContextIsNil)
+		return nil, redis.ErrContextIsNil.New()
 	}
 	if addr == "" {
-		return nil, redis.NewErr(redis.ErrKindOpts, redis.ErrNoAddressProvided)
+		return nil, redis.ErrNoAddressProvided.New()
 	}
 	conn = &Connection{
 		addr: addr,
@@ -151,7 +151,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 			if opts.ReconnectPause < 0 {
 				return nil, err
 			}
-			if cer, ok := err.(*redis.Error); ok && cer.Code == redis.ErrAuth {
+			if cer, ok := err.(*redis.Error); ok && cer.KindOf(redis.ErrAuth) {
 				return nil, err
 			}
 		}
@@ -238,7 +238,7 @@ func (conn *Connection) Ping() error {
 		return err
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
-		return conn.err(redis.ErrKindResponse, redis.ErrPing).With("response", res)
+		return conn.err(redis.ErrPing).With("response", res)
 	}
 	return nil
 }
@@ -277,7 +277,7 @@ func (conn *Connection) SendAsk(req Request, cb Future, n uint64, asking bool) {
 
 func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *redis.Error {
 	if cb != nil && cb.Cancelled() {
-		return conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
+		return conn.err(redis.ErrRequestCancelled)
 	}
 
 	// Since we do not pack request here, we need to be sure it could be packed
@@ -294,9 +294,9 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 	// Note: we do not check for connConnecting, ie we will try to send request after connection established.
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		return redis.NewErrWrap(redis.ErrKindContext, redis.ErrContextClosed, conn.ctx.Err())
+		return conn.err(redis.ErrContextClosed).Wrap(conn.ctx.Err())
 	case connDisconnected:
-		return redis.NewErr(redis.ErrKindConnection, redis.ErrNotConnected)
+		return conn.err(redis.ErrNotConnected)
 	}
 	futures := shard.futures
 	if asking {
@@ -351,7 +351,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 	for i, req := range requests {
 		if err = redis.CheckArgs(req); err != nil {
 			err = err.With("connection", conn).With("request", requests[i])
-			commonerr = conn.err(redis.ErrKindRequest, redis.ErrBatchFormat).
+			commonerr = conn.err(redis.ErrBatchFormat).
 				Wrap(err).
 				With("requests", requests).
 				With("request", requests[i])
@@ -389,7 +389,7 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	}
 
 	if cb != nil && cb.Cancelled() {
-		return conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled)
+		return conn.err(redis.ErrRequestCancelled)
 	}
 
 	shardn, shard := conn.getShard()
@@ -401,9 +401,9 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	// Note: we do not check for connConnecting, ie we will try to send request after connection established.
 	switch atomic.LoadUint32(&conn.state) {
 	case connClosed:
-		return conn.err(redis.ErrKindContext, redis.ErrContextClosed).Wrap(conn.ctx.Err())
+		return conn.err(redis.ErrContextClosed).Wrap(conn.ctx.Err())
 	case connDisconnected:
-		return conn.err(redis.ErrKindConnection, redis.ErrNotConnected)
+		return conn.err(redis.ErrNotConnected)
 	}
 
 	futures := shard.futures
@@ -452,7 +452,7 @@ func (cw transactionFuture) Resolve(res interface{}, n uint64) {
 // SendTransaction implements redis.Sender.SendTransaction
 func (conn *Connection) SendTransaction(reqs []Request, cb Future, off uint64) {
 	if cb.Cancelled() {
-		cb.Resolve(conn.err(redis.ErrKindRequest, redis.ErrRequestCancelled), off)
+		cb.Resolve(conn.err(redis.ErrRequestCancelled), off)
 		return
 	}
 	conn.SendBatchFlags(reqs, transactionFuture{cb, len(reqs), off}, 0, DoTransaction)
@@ -510,7 +510,7 @@ func (conn *Connection) dial() error {
 	}
 	connection, err = dialer.DialContext(conn.ctx, network, address)
 	if err != nil {
-		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrDial, err)
+		return conn.err(redis.ErrDial).Wrap(err)
 	}
 
 	dc := newDeadlineIO(connection, conn.opts.IOTimeout)
@@ -533,7 +533,7 @@ func (conn *Connection) dial() error {
 	}
 	if _, err = dc.Write(req); err != nil {
 		connection.Close()
-		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err)
+		return conn.err(redis.ErrConnSetup).Wrap(err)
 	}
 	// Disarm timeout
 	connection.SetWriteDeadline(time.Time{})
@@ -545,20 +545,20 @@ func (conn *Connection) dial() error {
 		if err := redis.AsRedisError(res); err != nil {
 			connection.Close()
 			if strings.Contains(err.Error(), "password") {
-				return conn.err(redis.ErrKindConnection, redis.ErrAuth).Wrap(err)
+				return conn.err(redis.ErrAuth).Wrap(err)
 			}
-			return conn.err(redis.ErrKindConnection, redis.ErrConnSetup).Wrap(err)
+			return conn.err(redis.ErrConnSetup).Wrap(err)
 		}
 	}
 	// PING Response
 	res = redis.ReadResponse(r)
 	if err = redis.AsError(res); err != nil {
 		connection.Close()
-		return redis.NewErrWrap(redis.ErrKindConnection, redis.ErrConnSetup, err)
+		return conn.err(redis.ErrConnSetup).Wrap(err)
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
 		connection.Close()
-		return conn.err(redis.ErrKindConnection, redis.ErrConnSetup).
+		return conn.err(redis.ErrConnSetup).
 			WithMsg("ping response mismatch").
 			With("response", res)
 	}
@@ -567,11 +567,11 @@ func (conn *Connection) dial() error {
 		res = redis.ReadResponse(r)
 		if err = redis.AsError(res); err != nil {
 			connection.Close()
-			return conn.err(redis.ErrKindConnection, redis.ErrConnSetup).Wrap(err)
+			return conn.err(redis.ErrConnSetup).Wrap(err)
 		}
 		if str, ok := res.(string); !ok || str != "OK" {
 			connection.Close()
-			return conn.err(redis.ErrKindConnection, redis.ErrConnSetup).
+			return conn.err(redis.ErrConnSetup).
 				WithMsg("SELECT db response mismatch").
 				With("db", conn.opts.DB).With("response", res)
 		}
@@ -702,17 +702,14 @@ func (conn *Connection) control() {
 		case <-conn.ctx.Done():
 			conn.mutex.Lock()
 			defer conn.mutex.Unlock()
-			closeErr := conn.err(redis.ErrKindContext, redis.ErrContextClosed).Wrap(conn.ctx.Err())
+			closeErr := conn.err(redis.ErrContextClosed).Wrap(conn.ctx.Err())
 			conn.closeConnection(closeErr, true)
 			return
 		case <-t.C:
 		}
 		// send PING at least 3 times per IO timeout, therefore read deadline will not be exceeded
 		if err := conn.Ping(); err != nil {
-			if cer, ok := err.(*redis.Error); ok && cer.Code == redis.ErrPing {
-				// that states about serious error in our code
-				panic(err)
-			}
+			// I really don't know what to do here :-(
 		}
 	}
 }
@@ -725,7 +722,7 @@ func (one *oneconn) setErr(neterr error, conn *Connection) {
 		close(one.control)
 		rerr, ok := neterr.(*redis.Error)
 		if !ok {
-			rerr = redis.NewErrWrap(redis.ErrKindIO, redis.ErrIO, neterr)
+			rerr = conn.err(redis.ErrIO).Wrap(neterr)
 		}
 		one.err = rerr.With("connection", conn)
 		// and try to reconnect asynchronously
@@ -934,6 +931,6 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 }
 
 // create error with connection as an attribute.
-func (conn *Connection) err(kind redis.ErrorKind, code redis.ErrorCode) *redis.Error {
-	return redis.NewErr(kind, code).With("connection", conn)
+func (conn *Connection) err(kind redis.ErrorKind) *redis.Error {
+	return kind.New().With("connection", conn)
 }

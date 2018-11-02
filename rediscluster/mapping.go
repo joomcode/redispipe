@@ -86,7 +86,7 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 		var err error
 		conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected, nil)
 		if conn == nil {
-			err = c.err(redis.ErrKindConnection, redis.ErrDial).With("address", addr)
+			err = c.err(redis.ErrDial).With("address", addr)
 		}
 		c.nodeWait.Lock()
 		delete(c.nodeWait.promises, addr)
@@ -189,8 +189,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 	nodes := cfg.nodes
 
 	if shard == nil {
-		return nil, c.err(redis.ErrKindCluster, redis.ErrClusterConfigEmpty).
-			With("slot", slot)
+		return nil, c.err(redis.ErrClusterConfigEmpty).With("slot", slot)
 	}
 
 	var addr string
@@ -238,8 +237,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 	}
 	if conn == nil {
 		c.ForceReloading()
-		return nil, c.err(redis.ErrKindConnection, redis.ErrDial).
-			With("slot", slot).With("policy", policy)
+		return nil, c.err(redis.ErrDial).With("slot", slot).With("policy", policy)
 	}
 	return conn, nil
 }

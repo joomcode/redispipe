@@ -4,243 +4,201 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+)
+
+var (
+	// ErrOpts - options are wrong
+	ErrOpts = NewErrorKind("ErrOpts", "wrong options")
+	// ErrContextIsNil - context is not passed to constructor
+	ErrContextIsNil = ErrOpts.SubKind("ErrContextIsNil", "context is not set")
+	// ErrNoAddressProvided - no address is given to constructor
+	ErrNoAddressProvided = ErrOpts.SubKind("ErrNoAddressProvided", "no address provided")
+
+	// ErrContextClosed - context were explicitly closed (or connection / cluster were shut down)
+	ErrContextClosed = NewErrorKind("ErrContextClosed", "context or connection were closed")
+
+	// ErrKindConnection - connection was not established at the moment request were done,
+	// request is definitely not sent anywhere.
+	ErrConnection = NewErrorKind("ErrConnection", "connection is not established at the moment")
+	// ErrNotConnected - connection were not established at the moment
+	ErrNotConnected = ErrConnection.SubKind("ErrNotConnected", "connection is not established")
+	// ErrDial - could not connect.
+	ErrDial = ErrConnection.SubKind("ErrDial", "could not connect")
+	// ErrAuth - password didn't match
+	ErrAuth = ErrConnection.SubKind("ErrAuth", "auth is not successful")
+	// ErrConnSetup - other connection initialization error (including io errors)
+	ErrConnSetup = ErrConnection.SubKind("ErrConnSetup", "connection setup unsuccessful")
+
+	// ErrIO - io error: read/write error, or timeout, or connection closed while reading/writting
+	// It is not known if request were processed or not
+	ErrIO = NewErrorKind("ErrIO", "io error")
+
+	// ErrRequest - request malformed. Can not serialize request, no reason to retry.
+	ErrRequest = NewErrorKind("ErrRequest", "request malformed")
+	// ErrArgumentType - argument is not serializable
+	ErrArgumentType = ErrRequest.SubKind("ErrArgumentType", "command argument type not supported")
+	// ErrBatchFormant - some other command in batch is malformed
+	ErrBatchFormat = ErrRequest.SubKind("ErrBatchFormat", "one of batch command is malformed")
+	// ErrNoSlotKey - no key to determine cluster slot
+	ErrNoSlotKey = ErrRequest.SubKind("ErrNoSlotKey", "no key to determine slot")
+	// ErrRequestCancelled - request already cancelled
+	ErrRequestCancelled = ErrRequest.SubKind("ErrRequestCancelled", "request was already cancelled")
+
+	// ErrResponse - response malformed. Redis returns unexpected response.
+	ErrResponse = NewErrorKind("ErrResponse", "response malformed")
+	// ErrResponseFormat - response is not valid Redis response
+	ErrResponseFormat = ErrResponse.SubKind("ErrResponseFormat", "redis response is malformed")
+	// ErrResponseUnexpected - response is valid redis response, but its structure/type unexpected
+	ErrResponseUnexpected = ErrResponse.SubKind("ErrResponseUnexpected", "redis response is unexpected")
+	// ErrHeaderlineTooLarge - header line too large
+	ErrHeaderlineTooLarge = ErrResponse.SubKind("ErrHeaderlineTooLarge", "headerline too large")
+	// ErrHeaderlineEmpty - header line is empty
+	ErrHeaderlineEmpty = ErrResponse.SubKind("ErrHeaderlineEmpty", "headerline is empty")
+	// ErrIntegerParsing - integer malformed
+	ErrIntegerParsing = ErrResponse.SubKind("ErrIntegerParsing", "integer is not integer")
+	// ErrNoFinalRN - no final "\r\n"
+	ErrNoFinalRN = ErrResponse.SubKind("ErrNoFinalRN", "no final \r\n in response")
+	// ErrUnknownHeaderType - unknown header type
+	ErrUnknownHeaderType = ErrResponse.SubKind("ErrUnknownHeaderType", "header type is not known")
+	// ErrPing - ping receives wrong response
+	ErrPing = ErrResponse.SubKind("ErrPing", "ping response doesn't match")
+
+	// ErrResult - just regular redis response.
+	ErrResult = NewErrorKind("ErrKind", "regular redis error")
+	// ErrMoved - MOVED response
+	ErrMoved = ErrResult.SubKind("ErrMoved", "slot were moved")
+	// ErrAsk - ASK response
+	ErrAsk = ErrResult.SubKind("ErrAsk", "ask another host")
+	// ErrLoading - redis didn't finish start
+	ErrLoading = ErrResult.SubKind("ErrLoading", "host is loading")
+	// ErrExecEmpty - EXEC returns nil (WATCH failed) (it is strange, cause we don't support WATCH)
+	ErrExecEmpty = ErrResult.SubKind("ErrExecEmpty", "exec failed because of WATCH???")
+
+	// ErrCluster - some cluster related errors.
+	ErrCluster = NewErrorKind("ErrCluster", "cluster related error")
+	// ErrClusterSlots - fetching slots configuration failed
+	ErrClusterSlots = ErrCluster.SubKind("ErrClusterSlots", "could not retrieve slots from redis")
+	// ErrAddressNotResolved - address could not be resolved
+	// Cluster resolves named hosts specified as start points. If this resolution fails, this error returned.
+	ErrAddressNotResolved = ErrCluster.SubKind("ErrAddressNotResolved", "address is not resolved.")
+	// ErrClusterConfigEmpty - no addresses found in config.
+	ErrClusterConfigEmpty = ErrCluster.SubKind("ErrClusterConfigEmpty", "cluster configuration is emptry.")
 )
 
 // ErrorKind is a kind of error
-type ErrorKind uint32
+type ErrorKind struct{ *errorKind }
 
-// ErrorCode is a code of error
-type ErrorCode uint32
+type errorKind struct {
+	parent   ErrorKind
+	name     string
+	message  string
+	subtypes map[string]ErrorKind
+	mtx      sync.Mutex
+}
+
+var rootKind = ErrorKind{&errorKind{subtypes: map[string]ErrorKind{}}}
+
+// NewErrorKind registers new error kind (or returns already existed kind with the same name)
+func NewErrorKind(name string, defaultMessage string) ErrorKind {
+	return rootKind.SubKind(name, defaultMessage)
+}
+
+// SubKind creates new kind descendant to current.
+func (e ErrorKind) SubKind(name string, defaultMessage string) ErrorKind {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	kind, ok := e.subtypes[name]
+	if !ok {
+		kind = ErrorKind{&errorKind{
+			parent:   e,
+			name:     name,
+			message:  defaultMessage,
+			subtypes: map[string]ErrorKind{},
+		}}
+		e.subtypes[name] = kind
+	} else if kind.message != defaultMessage {
+		panic("attempt to redefine error kind with different message")
+	}
+	return kind
+}
+
+// String implements fmt.Stringer
+func (e ErrorKind) String() string {
+	if e.parent != rootKind {
+		return e.parent.String() + "/" + e.name
+	}
+	return e.name
+}
+
+// GoString implements fmt.GoStringer
+func (e ErrorKind) GoString() string {
+	return e.String()
+}
+
+// Message returns default message.
+func (e ErrorKind) Message() string {
+	if e.message != "" {
+		return e.message
+	}
+	return e.parent.message
+}
+
+// Name returns only type's name
+func (e ErrorKind) Name() string {
+	return e.name
+}
+
+// FullName returns full hierarchy name
+// It is alias for String.
+func (e ErrorKind) FullName() string {
+	return e.String()
+}
+
+// New returns error with this kind
+func (e ErrorKind) New() *Error {
+	return &Error{kind: e}
+}
+
+// NewMsg returns error with this kind and message
+func (e ErrorKind) NewMsg(msg string) *Error {
+	return (&Error{kind: e}).WithMsg(msg)
+}
+
+// NewErr returns error with this kind that wraps another common error
+func (e ErrorKind) NewWrap(err error) *Error {
+	return (&Error{kind: e}).Wrap(err)
+}
+
+// KindOf retruns if this error is equal to or is descendant of other kind.
+func (e ErrorKind) KindOf(o ErrorKind) bool {
+loop:
+	if e == o {
+		return true
+	}
+	if e.parent == rootKind {
+		return false
+	}
+	e = e.parent
+	goto loop
+}
 
 // Error is an error returned by connector
 type Error struct {
-	// Kind is a kind of error
-	Kind ErrorKind
-	// Code is a error code
-	Code ErrorCode
+	kind ErrorKind
 	*kv
 }
 
-const (
-	// options are wrong
-	ErrKindOpts ErrorKind = iota + 1
-	// context explicitely closed
-	ErrKindContext
-	// Connection was not established at the moment request were done,
-	// Request is definitely not sent anywhere.
-	ErrKindConnection
-	// io error: read/write error, or timeout, or connection closed while reading/writting
-	// It is not known if request were processed or not
-	ErrKindIO
-	// request malformed
-	// Can not serialize request, no reason to retry.
-	ErrKindRequest
-	// response malformed
-	// Redis returns unexpected response
-	ErrKindResponse
-	// cluster configuration inconsistent
-	ErrKindCluster
-	// Just regular redis error response
-	ErrKindResult
-)
-
-var kindName = map[ErrorKind]string{
-	ErrKindOpts:       "ErrKindOpts",
-	ErrKindContext:    "ErrKindContext",
-	ErrKindConnection: "ErrKindConnection",
-	ErrKindIO:         "ErrKindIO",
-	ErrKindRequest:    "ErrKindRequest",
-	ErrKindResponse:   "ErrKindResponse",
-	ErrKindCluster:    "ErrKindCluster",
-	ErrKindResult:     "ErrKindResult",
+// Kind returns kind of error.
+func (e *Error) Kind() ErrorKind {
+	return e.kind
 }
 
-// String implements fmt.Stringer
-func (k ErrorKind) String() string {
-	if s, ok := kindName[k]; ok {
-		return s
-	}
-	return fmt.Sprintf("ErrKindUnknown%d", k)
-}
-
-// GoString implements fmt.GoStringer
-func (k ErrorKind) GoString() string {
-	return k.String()
-}
-
-const (
-	// context is not passed to contructor
-	// (ErrKindOpts)		0x1
-	ErrContextIsNil ErrorCode = iota + 1
-	// (ErrKindOpts)		0x2
-	ErrNoAddressProvided
-	// context were explicitely closed (connection or cluster shut down)
-	// (ErrKindContext)		0x3
-	ErrContextClosed
-	// connection were not established at the moment
-	// (ErrKindConnection)	0x4
-	ErrNotConnected
-	// connection establishing not successful
-	// (ErrKindConnection)	0x5
-	ErrDial
-	// password didn't match
-	// (ErrKindConnection)	0x6
-	ErrAuth
-	// other connection initializing error
-	// (ErrKindConnection)	0x7
-	ErrConnSetup
-	// connection were closed, or other read-write error
-	// (ErrKindIO or ErrKindConnection) 0x8
-	ErrIO
-	// Argument is not serializable
-	// (ErrKindRequest)		0x9
-	ErrArgumentType
-	// Some other command in batch is malformed
-	// (ErrKindRequest)		0xa
-	ErrBatchFormat
-	// Response is not valid Redis response
-	// (ErrKindResponse)	0xb
-	ErrResponseFormat
-	// Response is valid redis response, but its structure/type unexpected
-	// (ErrKindResponse)	0xc
-	ErrResponseUnexpected
-	// Header line too large
-	// (ErrKindResponse)	0xd
-	ErrHeaderlineTooLarge
-	// Header line is empty
-	// (ErrKindResponse)	0xe
-	ErrHeaderlineEmpty
-	// Integer malformed
-	// (ErrKindResponse)	0xf
-	ErrIntegerParsing
-	// No final "\r\n"
-	// (ErrKindResponse)	0x10
-	ErrNoFinalRN
-	// Unknown header type
-	// (ErrKindResponse)	0x11
-	ErrUnknownHeaderType
-	// Ping receives wrong response
-	// (ErrKindResponse)	0x12
-	ErrPing
-	// Just regular redis response
-	// (ErrKindResult)		0x13
-	ErrResult
-	// Special case for MOVED
-	// (ErrKindResult)		0x14
-	ErrMoved
-	// Special case for ASK
-	// (ErrKindResult)		0x15
-	ErrAsk
-	// Special case for LOADING
-	// (ErrKindResult)		0x16
-	ErrLoading
-	// No key to determine cluster slot
-	// (ErrKindRequest)		0x17
-	ErrNoSlotKey
-	// Fetching slots failed
-	// (ErrKindCluster)		0x18
-	ErrClusterSlots
-	// EXEC returns nil (WATCH failed) (it is strange, cause we don't support WATCH)
-	// (ErrKindResult)		0x19
-	ErrExecEmpty
-	// No addresses found in config
-	// (ErrKindCluster)		0x1a
-	ErrClusterConfigEmpty
-	// Request already cancelled
-	// (ErrKindRequest)		0x1b
-	ErrRequestCancelled
-	// Address could not be resolved
-	// (ErrAddressNotResolved) 0x1c
-	ErrAddressNotResolved
-)
-
-var codeName = map[ErrorCode]string{
-	ErrContextIsNil:   "ErrContextIsNil",
-	ErrContextClosed:  "ErrContextClosed",
-	ErrNotConnected:   "ErrNotConnected",
-	ErrDial:           "ErrDial",
-	ErrAuth:           "ErrAuth",
-	ErrConnSetup:      "ErrConnSetup",
-	ErrIO:             "ErrIO",
-	ErrArgumentType:   "ErrArgumentType",
-	ErrBatchFormat:    "ErrBatchFormat",
-	ErrResponseFormat: "ErrResponseFormat",
-	ErrPing:           "ErrPing",
-	ErrResult:         "ErrResult",
-	ErrMoved:          "ErrMoved",
-	ErrAsk:            "ErrAsk",
-	ErrLoading:        "ErrLoading",
-	ErrNoSlotKey:      "ErrNoSlotKey",
-	ErrClusterSlots:   "ErrClusterSlots",
-	ErrExecEmpty:      "ErrExecEmpty",
-
-	ErrRequestCancelled:   "ErrRequestCancelled",
-	ErrClusterConfigEmpty: "ErrClusterConfigEmpty",
-	ErrResponseUnexpected: "ErrResponseUnexpected",
-	ErrHeaderlineTooLarge: "ErrHeaderlineTooLarge",
-	ErrHeaderlineEmpty:    "ErrHeaderlineEmpty",
-	ErrIntegerParsing:     "ErrIntegerParsing",
-	ErrNoFinalRN:          "ErrNoFinalRN",
-	ErrUnknownHeaderType:  "ErrUnknownHeaderType",
-}
-
-// String implements fmt.Stringer
-func (c ErrorCode) String() string {
-	if s, ok := codeName[c]; ok {
-		return s
-	}
-	return fmt.Sprintf("ErrUnknown%d", c)
-}
-
-// GoString implements fmt.GoStringer
-func (c ErrorCode) GoString() string {
-	return c.String()
-}
-
-var defMessage = map[ErrorCode]string{
-	ErrContextIsNil:   "context is not set",
-	ErrContextClosed:  "context is closed",
-	ErrNotConnected:   "connection is not established",
-	ErrDial:           "could not connect",
-	ErrAuth:           "auth is not successful",
-	ErrIO:             "io error",
-	ErrConnSetup:      "connection setup unsuccessful",
-	ErrArgumentType:   "command argument type not supported",
-	ErrBatchFormat:    "one of batch command is malformed",
-	ErrResponseFormat: "redis response is malformed",
-	ErrPing:           "ping response doesn't match",
-	ErrMoved:          "slot moved",
-	ErrAsk:            "ask another",
-	ErrLoading:        "host is loading",
-	ErrNoSlotKey:      "no key to determine slot",
-	ErrClusterSlots:   "could not retrieve slots from redis",
-	ErrExecEmpty:      "exec failed because of WATCH???",
-
-	ErrRequestCancelled:   "request was already cancelled",
-	ErrClusterConfigEmpty: "cluster configuration is empty",
-	ErrResponseUnexpected: "redis response is unexpected",
-	ErrHeaderlineTooLarge: "headerline too large",
-	ErrHeaderlineEmpty:    "headerline is empty",
-	ErrIntegerParsing:     "integer is not integer",
-	ErrNoFinalRN:          "no final \r\n in response",
-	ErrUnknownHeaderType:  "header type is not known",
-
-	//ErrResult:         "",
-}
-
-// NewErr creates new error with kind and code
-func NewErr(kind ErrorKind, code ErrorCode) *Error {
-	return &Error{Kind: kind, Code: code}
-}
-
-// NewErrMsg creates new error with kind and code and message
-func NewErrMsg(kind ErrorKind, code ErrorCode, msg string) *Error {
-	return Error{Kind: kind, Code: code}.With("message", msg)
-}
-
-// NewErrMsg creates new error with kind and code and wrapped error
-func NewErrWrap(kind ErrorKind, code ErrorCode, err error) *Error {
-	return Error{Kind: kind, Code: code}.With("cause", err)
+// KindOf returns if this error is kind of kind.
+// It is equal to e.Kind().KindOf(k)
+func (e *Error) KindOf(k ErrorKind) bool {
+	return e.kind.KindOf(k)
 }
 
 // WithMsg returns copy of error with new message.
@@ -261,15 +219,12 @@ func (copy Error) With(name string, value interface{}) *Error {
 
 // HardError returns true if error is not nil and it is not kind of ErrKindResult (ie not error returned by redis).
 func HardError(e *Error) bool {
-	return e != nil && e.Kind != ErrKindResult
+	return e != nil && !e.KindOf(ErrResult)
 }
 
 // Error implements error.Error.
 func (e Error) Error() string {
-	typ := e.Code.String()
-	if typ == "" {
-		typ = fmt.Sprintf("ErrUnknown%d", e.Code)
-	}
+	typ := e.Kind().String()
 	msg := e.Msg()
 	rest := e.restAsString()
 	if rest != "" {
@@ -313,7 +268,7 @@ func (e Error) Msg() string {
 		}
 	}
 	if !ok {
-		msg = defMessage[e.Code]
+		msg = e.Kind().Message()
 		if msg == "" {
 			msg = "generic"
 		}
@@ -350,8 +305,7 @@ func (e Error) restAsString() string {
 // ToMap returns information assiciated with error as a map.
 func (e Error) ToMap() map[string]interface{} {
 	res := map[string]interface{}{
-		"kind": e.Kind,
-		"code": e.Code,
+		"kind": e.Kind(),
 	}
 	kv := e.kv
 	for kv != nil {

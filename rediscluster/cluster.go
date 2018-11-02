@@ -147,10 +147,10 @@ type clusterCommand struct {
 
 func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, error) {
 	if ctx == nil {
-		return nil, redis.NewErr(redis.ErrKindOpts, redis.ErrContextIsNil)
+		return nil, redis.ErrContextIsNil.New()
 	}
 	if len(init_addrs) == 0 {
-		return nil, redis.NewErr(redis.ErrKindOpts, redis.ErrNoAddressProvided)
+		return nil, redis.ErrNoAddressProvided.New()
 	}
 	cluster := &Cluster{
 		opts: opts,
@@ -211,7 +211,7 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 		// Lets resolve them to ip addresses.
 		addr, err = redisclusterutil.Resolve(addr)
 		if err != nil {
-			return nil, redis.NewErrWrap(redis.ErrKindCluster, redis.ErrAddressNotResolved, err)
+			return nil, redis.ErrAddressNotResolved.NewWrap(err)
 		}
 		if _, ok := config.masters[addr]; !ok {
 			config.nodes[addr], err = cluster.newNode(addr, true)
@@ -430,7 +430,7 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 	slot, ok := redisclusterutil.ReqSlot(req)
 	if !ok {
 		// Probably, redis-cluster is not configured properly yet, or it is broken at the moment.
-		err := c.err(redis.ErrKindRequest, redis.ErrNoSlotKey).With("request", req)
+		err := c.err(redis.ErrNoSlotKey).With("request", req)
 		cb.Resolve(err, off)
 		return
 	}
@@ -492,6 +492,9 @@ type request struct {
 var requestPool = sync.Pool{New: func() interface{} { return &request{} }}
 
 func (r *request) resolve(res interface{}) {
+	if err := redis.AsRedisError(res); err != nil {
+		res = err.With("request", r.req).With("cluster", r.c)
+	}
 	r.cb.Resolve(res, r.off)
 	*r = request{}
 	requestPool.Put(r)
@@ -523,21 +526,20 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 	}
 	// or if request is not active already
 	if r.cb.Cancelled() {
-		r.resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestCancelled))
+		r.resolve(r.c.err(redis.ErrRequestCancelled))
 		return
 	}
 
-	err = err.With("cluster", r.c).With("request", r.req)
-
-	switch err.Kind {
-	case redis.ErrKindIO:
+	kind := err.Kind()
+	switch {
+	case kind.KindOf(redis.ErrIO):
 		if !r.mayRetry {
 			// It is not safe to retry read-write operation
 			r.resolve(err)
 			return
 		}
 		fallthrough
-	case redis.ErrKindConnection, redis.ErrKindContext:
+	case kind.KindOf(redis.ErrConnection), kind.KindOf(redis.ErrContextClosed):
 		// It is safe to retry readonly requests, and if request were not sent at all.
 
 		r.c.ForceReloading() // Something is happen with cluster. Lets know actual information asap.
@@ -566,18 +568,18 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 			r.lastconn = conn
 			conn.Send(r.req, r, 0)
 		}
-	case redis.ErrKindResult:
-		if err.Code == redis.ErrLoading {
+	case kind.KindOf(redis.ErrResult):
+		if kind == redis.ErrLoading {
 			// Some host is not started properly yet. Lets learn actual cluster state asap.
 			r.c.ForceReloading()
 		}
-		if (err.Code == redis.ErrMoved || err.Code == redis.ErrAsk) && int(r.redir) < r.c.opts.MovedRetries {
+		if (kind == redis.ErrMoved || kind == redis.ErrAsk) && int(r.redir) < r.c.opts.MovedRetries {
 			// Slot is moving or were moved.
 			r.redir++
 			r.hardErrs = 0 // reset hardErrors because we are going to another physical shard.
 			r.seen = nil
 			addr := err.Get("movedto").(string)
-			if err.Code == redis.ErrMoved {
+			if kind == redis.ErrMoved {
 				DebugEvent("moved")
 				r.c.sendCommand("moved", r.slot, addr)
 			} else {
@@ -593,7 +595,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 					r.resolve(cerr)
 				} else {
 					r.lastconn = conn
-					conn.SendAsk(r.req, r, 0, err.Code == redis.ErrAsk)
+					conn.SendAsk(r.req, r, 0, kind == redis.ErrAsk)
 				}
 			})
 			return
@@ -618,8 +620,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 	}
 	slot, ok := redisclusterutil.BatchSlot(reqs)
 	if !ok {
-		err := c.err(redis.ErrKindRequest, redis.ErrNoSlotKey).
-			With("requests", reqs)
+		err := c.err(redis.ErrNoSlotKey).With("requests", reqs)
 		cb.Resolve(err, off)
 		return
 	}
@@ -666,6 +667,9 @@ type transaction struct {
 var transactionPool = sync.Pool{New: func() interface{} { return &transaction{} }}
 
 func (t *transaction) resolve(res interface{}) {
+	if err := redis.AsRedisError(res); err != nil {
+		res = err.With("requests", t.reqs).With("cluster", t.c)
+	}
 	t.cb.Resolve(res, t.off)
 	*t = transaction{}
 	transactionPool.Put(t)
@@ -711,19 +715,18 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 	}
 	// or if request is not active already
 	if t.cb.Cancelled() {
-		t.resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrRequestCancelled))
+		t.resolve(t.c.err(redis.ErrRequestCancelled))
 		return
 	}
 
-	err = err.With("cluster", t.c).With("requests", t.reqs)
-
-	switch err.Kind {
-	case redis.ErrKindIO:
+	kind := err.Kind()
+	switch {
+	case kind.KindOf(redis.ErrIO):
 		// redis treats all transactions as read-write, and it is not safe
 		// to retry
 		t.resolve(err)
 		return
-	case redis.ErrKindConnection, redis.ErrKindContext:
+	case kind.KindOf(redis.ErrConnection), kind.KindOf(redis.ErrContextClosed):
 		// Transaction were not sent at all.
 		// It is safe to retry transaction.
 		t.c.ForceReloading()
@@ -743,12 +746,12 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 			t.lastconn = conn
 			t.send(conn, false)
 		}
-	case redis.ErrKindResult:
+	case kind.KindOf(redis.ErrResult):
 		var moved string
 		allmoved := true // all keys were moved
 		moving := false  // has moving keys
 		asking := false  // has asking keys
-		if err.Code == redis.ErrMoved {
+		if kind == redis.ErrMoved {
 			// we occasionally sent transaction to slave
 			moved = err.Get("movedto").(string)
 			moving = true
@@ -757,14 +760,20 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 			responses := t.res[:len(t.res)-1]
 			for _, r := range responses {
 				err := redis.AsRedisError(r)
-				if err == nil || (err.Code != redis.ErrMoved && err.Code != redis.ErrAsk) {
+				if err == nil {
+					allmoved = false
+					break
+				}
+				emoved := err.KindOf(redis.ErrMoved)
+				eask := err.KindOf(redis.ErrAsk)
+				if !emoved && !eask {
 					allmoved = false
 					break
 				}
 				moved = err.Get("movedto").(string)
-				if err.Code == redis.ErrMoved {
+				if emoved {
 					moving = true
-				} else if err.Code == redis.ErrAsk {
+				} else if eask {
 					asking = true
 				}
 			}
@@ -828,6 +837,6 @@ func (t *transaction) sendMoved(addr string, asking bool) {
 	})
 }
 
-func (c *Cluster) err(kind redis.ErrorKind, code redis.ErrorCode) *redis.Error {
-	return redis.NewErr(kind, code).With("cluster", c)
+func (c *Cluster) err(kind redis.ErrorKind) *redis.Error {
+	return kind.New().With("cluster", c)
 }

@@ -19,12 +19,10 @@ func readLines(lines ...string) interface{} {
 	return ReadResponse(lines2bufio(lines...))
 }
 
-func checkErr(t *testing.T, res interface{}, kind ErrorKind, code ErrorCode) bool {
+func checkErr(t *testing.T, res interface{}, kind ErrorKind) bool {
 	if assert.IsType(t, (*Error)(nil), res) {
 		err := res.(*Error)
-		ok := assert.Equal(t, kind, err.Kind)
-		ok = ok && assert.Equal(t, code, err.Code)
-		return ok
+		return assert.Equal(t, kind, err.Kind())
 	}
 	return false
 }
@@ -33,70 +31,70 @@ func TestReadResponse_IOAndFormatErrors(t *testing.T) {
 	var res interface{}
 
 	res = readLines("")
-	checkErr(t, res, ErrKindIO, ErrIO)
+	checkErr(t, res, ErrIO)
 
 	res = readLines("\n")
-	checkErr(t, res, ErrKindResponse, ErrHeaderlineEmpty)
+	checkErr(t, res, ErrHeaderlineEmpty)
 
 	res = readLines("\r\n")
-	checkErr(t, res, ErrKindResponse, ErrHeaderlineEmpty)
+	checkErr(t, res, ErrHeaderlineEmpty)
 
 	res = readLines("$\r\n")
-	checkErr(t, res, ErrKindResponse, ErrIntegerParsing)
+	checkErr(t, res, ErrIntegerParsing)
 
 	res = readLines("/\r\n")
-	checkErr(t, res, ErrKindResponse, ErrUnknownHeaderType)
+	checkErr(t, res, ErrUnknownHeaderType)
 
 	res = readLines("+" + strings.Repeat("A", 1024*1024) + "\r\n")
-	checkErr(t, res, ErrKindResponse, ErrHeaderlineTooLarge)
+	checkErr(t, res, ErrHeaderlineTooLarge)
 
 	res = readLines(":\r\n")
-	checkErr(t, res, ErrKindResponse, ErrIntegerParsing)
+	checkErr(t, res, ErrIntegerParsing)
 
 	res = readLines(":1.1\r\n")
-	checkErr(t, res, ErrKindResponse, ErrIntegerParsing)
+	checkErr(t, res, ErrIntegerParsing)
 
 	res = readLines(":a\r\n")
-	checkErr(t, res, ErrKindResponse, ErrIntegerParsing)
+	checkErr(t, res, ErrIntegerParsing)
 
 	res = readLines("$a\r\n")
-	checkErr(t, res, ErrKindResponse, ErrIntegerParsing)
+	checkErr(t, res, ErrIntegerParsing)
 
 	res = readLines("*a\r\n")
-	checkErr(t, res, ErrKindResponse, ErrIntegerParsing)
+	checkErr(t, res, ErrIntegerParsing)
 
 	res = readLines("$0\r\n")
-	checkErr(t, res, ErrKindIO, ErrIO)
+	checkErr(t, res, ErrIO)
 
 	res = readLines("$1\r\n")
-	checkErr(t, res, ErrKindIO, ErrIO)
+	checkErr(t, res, ErrIO)
 
 	res = readLines("$1\r\na")
-	checkErr(t, res, ErrKindIO, ErrIO)
+	checkErr(t, res, ErrIO)
 
 	res = readLines("$1\r\nabc")
-	checkErr(t, res, ErrKindResponse, ErrNoFinalRN)
+	checkErr(t, res, ErrNoFinalRN)
 
 	res = readLines("*1\r\n")
-	checkErr(t, res, ErrKindIO, ErrIO)
+	checkErr(t, res, ErrIO)
 
 	res = readLines("*1\r\n$1\r\n")
-	checkErr(t, res, ErrKindIO, ErrIO)
+	checkErr(t, res, ErrIO)
 
 	res = readLines("*1\r\n$1\r\nabc")
-	checkErr(t, res, ErrKindResponse, ErrNoFinalRN)
+	checkErr(t, res, ErrNoFinalRN)
 
 	res = readLines("-MOVED 1234\r\n")
-	checkErr(t, res, ErrKindResponse, ErrResponseFormat)
+	checkErr(t, res, ErrResponseFormat)
 
 	res = readLines("-MOVED asdf 1.1.1.1:3456\r\n")
-	checkErr(t, res, ErrKindResponse, ErrResponseFormat)
+	checkErr(t, res, ErrIntegerParsing)
 
 	res = readLines("-ASK 1234\r\n")
-	checkErr(t, res, ErrKindResponse, ErrResponseFormat)
+	checkErr(t, res, ErrResponseFormat)
 
 	res = readLines("-ASK asdf 1.1.1.1:3456\r\n")
-	checkErr(t, res, ErrKindResponse, ErrResponseFormat)
+	checkErr(t, res, ErrIntegerParsing)
 }
 
 func TestReadResponse_Correct(t *testing.T) {
@@ -109,17 +107,17 @@ func TestReadResponse_Correct(t *testing.T) {
 	assert.Equal(t, "asdf", res)
 
 	res = readLines("-\r\n")
-	if checkErr(t, res, ErrKindResult, ErrResult) {
+	if checkErr(t, res, ErrResult) {
 		assert.Equal(t, "", res.(*Error).Msg())
 	}
 
 	res = readLines("-asdf\r\n")
-	if checkErr(t, res, ErrKindResult, ErrResult) {
+	if checkErr(t, res, ErrResult) {
 		assert.Equal(t, "asdf", res.(*Error).Msg())
 	}
 
 	res = readLines("-MOVED 1234 1.1.1.1:3456\r\n")
-	if checkErr(t, res, ErrKindResult, ErrMoved) {
+	if checkErr(t, res, ErrMoved) {
 		err := res.(*Error)
 		assert.Equal(t, "MOVED 1234 1.1.1.1:3456", err.Msg())
 		assert.Equal(t, "1.1.1.1:3456", err.Get("movedto"))
@@ -127,7 +125,7 @@ func TestReadResponse_Correct(t *testing.T) {
 	}
 
 	res = readLines("-ASK 1234 1.1.1.1:3456\r\n")
-	if checkErr(t, res, ErrKindResult, ErrAsk) {
+	if checkErr(t, res, ErrAsk) {
 		err := res.(*Error)
 		assert.Equal(t, "ASK 1234 1.1.1.1:3456", err.Msg())
 		assert.Equal(t, "1.1.1.1:3456", err.Get("movedto"))
@@ -135,7 +133,7 @@ func TestReadResponse_Correct(t *testing.T) {
 	}
 
 	res = readLines("-LOADING\r\n")
-	if checkErr(t, res, ErrKindResult, ErrLoading) {
+	if checkErr(t, res, ErrLoading) {
 		err := res.(*Error)
 		assert.Equal(t, "LOADING", err.Msg())
 	}

@@ -42,7 +42,7 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 		if c.C == nil {
 			c.C, err = net.DialTimeout("tcp", c.Addr, timeout)
 			if err != nil {
-				return redis.NewErr(redis.ErrKindIO, redis.ErrDial).Wrap(err)
+				return redis.ErrDial.NewWrap(err)
 			}
 			c.R = bufio.NewReader(c.C)
 		}
@@ -58,8 +58,8 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 					return res
 				} else {
 					err = rerr
-					if c.Type == TypeCluster && (rerr.Code == redis.ErrAsk || rerr.Code == redis.ErrMoved) {
-						asking = rerr.Code == redis.ErrAsk
+					if c.Type == TypeCluster && (rerr.Kind() == redis.ErrAsk || rerr.Kind() == redis.ErrMoved) {
+						asking = rerr.Kind() == redis.ErrAsk
 						c.Addr = rerr.Get("movedto").(string)
 						if try < 5 {
 							try++
@@ -67,7 +67,7 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 					}
 				}
 			} else {
-				err = redis.NewErr(redis.ErrKindIO, redis.ErrIO).Wrap(err)
+				err = redis.ErrIO.NewWrap(err)
 			}
 		}
 		c.C.Close()
@@ -93,7 +93,7 @@ func (c *Conn) SendTransaction(reqs []redis.Request, cb redis.Future, n uint64) 
 		// first, redirect ourself to right master
 		key, ok := redisclusterutil.BatchKey(reqs)
 		if !ok {
-			cb.Resolve(redis.NewErr(redis.ErrKindRequest, redis.ErrNoSlotKey), n)
+			cb.Resolve(redis.ErrNoSlotKey.New(), n)
 			return
 		}
 		c.Do("TYPE", key)
@@ -170,7 +170,7 @@ func (c *Conn) Close() {
 func Do(addr string, cmd string, args ...interface{}) interface{} {
 	conn, err := net.DialTimeout("tcp", addr, DefaultTimeout)
 	if err != nil {
-		return redis.NewErr(redis.ErrKindIO, redis.ErrDial).Wrap(err)
+		return redis.ErrDial.NewWrap(err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(DefaultTimeout))
@@ -179,7 +179,7 @@ func Do(addr string, cmd string, args ...interface{}) interface{} {
 		return rerr
 	}
 	if _, err = conn.Write(req); err != nil {
-		return redis.NewErr(redis.ErrKindIO, redis.ErrIO).Wrap(err)
+		return redis.ErrIO.NewWrap(err)
 	}
 	res := redis.ReadResponse(bufio.NewReader(conn))
 	return res

@@ -72,11 +72,10 @@ func (s *Suite) goodPing(conn *Connection, timeout time.Duration) {
 	s.Equal("PONG", s.ping(conn, timeout))
 }
 
-func (s *Suite) badPing(conn *Connection, kind redis.ErrorKind, code redis.ErrorCode, timeout time.Duration) {
+func (s *Suite) badPing(conn *Connection, kind redis.ErrorKind, timeout time.Duration) {
 	res := s.ping(conn, timeout)
 	rerr := s.AsError(res)
-	s.Equal(kind, rerr.Kind)
-	s.Equal(code, rerr.Code)
+	s.Equal(kind, rerr.Kind())
 }
 
 func (s *Suite) waitReconnect(conn *Connection) {
@@ -87,8 +86,7 @@ func (s *Suite) waitReconnect(conn *Connection) {
 		done := time.Now()
 		s.r().WithinDuration(at, done, defopts.IOTimeout*3/2)
 		if rerr := redis.AsRedisError(res); rerr != nil {
-			s.Equal(redis.ErrKindConnection, rerr.Kind)
-			s.Equal(redis.ErrNotConnected, rerr.Code)
+			s.Equal(redis.ErrNotConnected, rerr.Kind())
 			s.r().WithinDuration(start, at, defopts.IOTimeout*2)
 		} else {
 			s.Equal("PONG", res)
@@ -117,8 +115,7 @@ func (s *Suite) TestStopped_DoesntConnectWithNegativeReconnectPause() {
 	_, err := Connect(s.ctx, s.s.Addr(), opts)
 	s.r().NotNil(err)
 	rerr := s.AsError(err)
-	s.Equal(redis.ErrKindConnection, rerr.Kind)
-	s.Equal(redis.ErrDial, rerr.Code)
+	s.Equal(redis.ErrDial, rerr.Kind())
 }
 
 func (s *Suite) TestStopped_Reconnects() {
@@ -128,14 +125,14 @@ func (s *Suite) TestStopped_Reconnects() {
 	s.r().Nil(err)
 	defer conn.Close()
 
-	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
+	s.badPing(conn, redis.ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
 
 	s.s.Stop()
 	time.Sleep(1 * time.Millisecond)
-	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
+	s.badPing(conn, redis.ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
@@ -150,14 +147,14 @@ func (s *Suite) TestStopped_Reconnects2() {
 
 	s.s.Stop()
 	time.Sleep(1 * time.Millisecond)
-	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
+	s.badPing(conn, redis.ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
 
 	s.s.Stop()
 	time.Sleep(1 * time.Millisecond)
-	s.badPing(conn, redis.ErrKindConnection, redis.ErrNotConnected, 0)
+	s.badPing(conn, redis.ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
@@ -176,12 +173,12 @@ func (s *Suite) TestTimeout() {
 	for events != 7 {
 		res := s.ping(conn, 0)
 		rerr := s.AsError(res)
-		switch true {
-		case rerr.Kind == redis.ErrKindIO && rerr.Code == redis.ErrIO:
+		switch rerr.Kind() {
+		case redis.ErrIO:
 			events |= 1
-		case rerr.Kind == redis.ErrKindConnection && rerr.Code == redis.ErrConnSetup:
+		case redis.ErrConnSetup:
 			events |= 2
-		case rerr.Kind == redis.ErrKindConnection && rerr.Code == redis.ErrNotConnected:
+		case redis.ErrNotConnected:
 			events |= 4
 		}
 		s.r().WithinDuration(start, time.Now(), defopts.IOTimeout*10)
@@ -218,8 +215,7 @@ func (s *Suite) TestTransaction() {
 	})
 	s.NotNil(err)
 	rerr := s.AsError(err)
-	s.Equal(redis.ErrKindResult, rerr.Kind)
-	s.Equal(redis.ErrResult, rerr.Code)
+	s.Equal(redis.ErrResult, rerr.Kind())
 	s.True(strings.HasPrefix(rerr.Msg(), "EXECABORT"))
 
 	s.Equal([]byte("1"), s.s.DoSure("GET", "tran:x"))
@@ -235,8 +231,7 @@ func (s *Suite) TestTransaction() {
 	if s.IsType([]interface{}{}, res) && s.Len(res, 2) {
 		s.r().Equal(int64(2), res[0])
 		rerr := s.AsError(res[1])
-		s.Equal(redis.ErrKindResult, rerr.Kind)
-		s.Equal(redis.ErrResult, rerr.Code)
+		s.Equal(redis.ErrResult, rerr.Kind())
 		s.True(strings.HasPrefix(rerr.Msg(), "WRONGTYPE"))
 	}
 

@@ -11,15 +11,15 @@ import (
 func ReadResponse(b *bufio.Reader) interface{} {
 	line, isPrefix, err := b.ReadLine()
 	if err != nil {
-		return NewErrWrap(ErrKindIO, ErrIO, err)
+		return ErrIO.NewWrap(err)
 	}
 
 	if isPrefix {
-		return NewErr(ErrKindResponse, ErrHeaderlineTooLarge).With("line", line)
+		return ErrHeaderlineTooLarge.New().With("line", line)
 	}
 
 	if len(line) == 0 {
-		return NewErr(ErrKindResponse, ErrHeaderlineEmpty)
+		return ErrHeaderlineEmpty.New()
 	}
 
 	var v int64
@@ -34,48 +34,48 @@ func ReadResponse(b *bufio.Reader) interface{} {
 		if moved || ask {
 			parts := bytes.Split(line, []byte(" "))
 			if len(parts) < 3 {
-				return NewErr(ErrKindResponse, ErrResponseFormat).With("line", line)
+				return ErrResponseFormat.New().With("line", line)
 			}
 			slot, err := parseInt(parts[1])
 			if err != nil {
-				return NewErr(ErrKindResponse, ErrResponseFormat).With("line", line)
+				return err.With("line", line)
 			}
 			if moved {
-				return NewErrMsg(ErrKindResult, ErrMoved, txt).
-					With("movedto", string(parts[2])).With("slot", slot)
+				return ErrMoved.NewMsg(txt).With("movedto", string(parts[2])).With("slot", slot)
 			} else {
-				return NewErrMsg(ErrKindResult, ErrAsk, txt).
-					With("movedto", string(parts[2])).With("slot", slot)
+				return ErrAsk.NewMsg(txt).With("movedto", string(parts[2])).With("slot", slot)
 			}
 		}
 		if strings.HasPrefix(txt, "LOADING") {
-			return NewErrMsg(ErrKindResult, ErrLoading, txt)
+			return ErrLoading.NewMsg(txt)
 		}
-		return NewErrMsg(ErrKindResult, ErrResult, txt)
+		return ErrResult.NewMsg(txt)
 	case ':':
-		if v, err = parseInt(line[1:]); err != nil {
-			return err
+		if v, err := parseInt(line[1:]); err != nil {
+			return err.With("line", line)
 		} else {
 			return v
 		}
 	case '$':
-		if v, err = parseInt(line[1:]); err != nil {
-			return err
+		var rerr *Error
+		if v, rerr = parseInt(line[1:]); rerr != nil {
+			return rerr.With("line", line)
 		}
 		if v < 0 {
 			return nil
 		}
 		buf := make([]byte, v+2, v+2)
 		if _, err = io.ReadFull(b, buf); err != nil {
-			return NewErrWrap(ErrKindIO, ErrIO, err)
+			return ErrIO.NewWrap(err)
 		}
 		if buf[v] != '\r' || buf[v+1] != '\n' {
-			return NewErr(ErrKindResponse, ErrNoFinalRN)
+			return ErrNoFinalRN.New()
 		}
 		return buf[:v:v]
 	case '*':
-		if v, err = parseInt(line[1:]); err != nil {
-			return err
+		var rerr *Error
+		if v, rerr = parseInt(line[1:]); rerr != nil {
+			return rerr.With("line", line)
 		}
 		if v < 0 {
 			return nil
@@ -83,19 +83,19 @@ func ReadResponse(b *bufio.Reader) interface{} {
 		result := make([]interface{}, v)
 		for i := int64(0); i < v; i++ {
 			result[i] = ReadResponse(b)
-			if e, ok := result[i].(*Error); ok && e.Kind != ErrKindResult {
+			if e, ok := result[i].(*Error); ok && !e.KindOf(ErrResult) {
 				return e
 			}
 		}
 		return result
 	default:
-		return NewErr(ErrKindResponse, ErrUnknownHeaderType)
+		return ErrUnknownHeaderType.New()
 	}
 }
 
-func parseInt(buf []byte) (int64, error) {
+func parseInt(buf []byte) (int64, *Error) {
 	if len(buf) == 0 {
-		return 0, NewErr(ErrKindResponse, ErrIntegerParsing)
+		return 0, ErrIntegerParsing.New()
 	}
 
 	neg := buf[0] == '-'
@@ -105,7 +105,7 @@ func parseInt(buf []byte) (int64, error) {
 	v := int64(0)
 	for _, b := range buf {
 		if b < '0' || b > '9' {
-			return 0, NewErr(ErrKindResponse, ErrIntegerParsing)
+			return 0, ErrIntegerParsing.New()
 		}
 		v *= 10
 		v += int64(b - '0')

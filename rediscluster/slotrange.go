@@ -11,11 +11,6 @@ import (
 
 const MasterOnlyFlag = 0x4000
 
-type nodesAndMigrating struct {
-	migrating  map[uint16]struct{}
-	slotRanges []redisclusterutil.SlotsRange
-}
-
 func (c *Cluster) slotRangesAndInternalMasterOnly() ([]redisclusterutil.SlotsRange, error) {
 	nodes := c.getConfig().nodes
 

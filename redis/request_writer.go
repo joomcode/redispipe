@@ -30,7 +30,7 @@ func AppendRequest(buf []byte, req Request) ([]byte, error) {
 		buf = append(buf, req.Cmd[space+1:]...)
 		buf = append(buf, '\r', '\n')
 	}
-	for _, val := range req.Args {
+	for i, val := range req.Args {
 		switch v := val.(type) {
 		case string:
 			buf = appendHead(buf, '$', len(v))
@@ -75,7 +75,8 @@ func AppendRequest(buf []byte, req Request) ([]byte, error) {
 		case nil:
 			buf = append(buf, "$0\r\n"...)
 		default:
-			return buf[:oldSize], ErrArgumentType.New().With("val", val).With("request", req)
+			return buf[:oldSize], ErrArgumentType.New().
+				With(EKVal, val).With(EKArgPos, i).With(EKRequest, req)
 		}
 		buf = append(buf, '\r', '\n')
 	}
@@ -216,7 +217,8 @@ func CheckArgs(req Request) *Error {
 		case string, []byte, int, uint, int64, uint64, int32, uint32, int8, uint8, int16, uint16, bool, float32, float64, nil:
 			// ok
 		default:
-			return ErrArgumentType.New().With("val", val).With("argpos", i)
+			return ErrArgumentType.New().
+				With(EKVal, val).With(EKArgPos, i).With(EKRequest, req)
 		}
 	}
 	return nil

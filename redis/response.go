@@ -52,7 +52,7 @@ func ScanResponse(res interface{}) ([]byte, []string, error) {
 	return it, strs, nil
 
 wrong:
-	return nil, nil, ErrResponseUnexpected.New().With("response", res)
+	return nil, nil, ErrResponseUnexpected.New().With(EKResponse, res)
 }
 
 // TransactionResponse parses response of EXEC command, returns array of answers.
@@ -64,7 +64,7 @@ func TransactionResponse(res interface{}) ([]interface{}, error) {
 		res = ErrExecEmpty.New()
 	}
 	if _, ok := res.(error); !ok {
-		res = ErrResponseUnexpected.New().With("response", res)
+		res = ErrResponseUnexpected.New().With(EKResponse, res)
 	}
 	return nil, res.(error)
 }

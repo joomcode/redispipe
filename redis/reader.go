@@ -15,7 +15,7 @@ func ReadResponse(b *bufio.Reader) interface{} {
 	}
 
 	if isPrefix {
-		return ErrHeaderlineTooLarge.New().With("line", line)
+		return ErrHeaderlineTooLarge.New().With(EKLine, line)
 	}
 
 	if len(line) == 0 {
@@ -34,16 +34,16 @@ func ReadResponse(b *bufio.Reader) interface{} {
 		if moved || ask {
 			parts := bytes.Split(line, []byte(" "))
 			if len(parts) < 3 {
-				return ErrResponseFormat.New().With("line", line)
+				return ErrResponseFormat.New().With(EKLine, line)
 			}
 			slot, err := parseInt(parts[1])
 			if err != nil {
-				return err.With("line", line)
+				return err.With(EKLine, line)
 			}
 			if moved {
-				return ErrMoved.NewMsg(txt).With("movedto", string(parts[2])).With("slot", slot)
+				return ErrMoved.NewMsg(txt).With(EKMovedTo, string(parts[2])).With(EKSlot, slot)
 			} else {
-				return ErrAsk.NewMsg(txt).With("movedto", string(parts[2])).With("slot", slot)
+				return ErrAsk.NewMsg(txt).With(EKMovedTo, string(parts[2])).With(EKSlot, slot)
 			}
 		}
 		if strings.HasPrefix(txt, "LOADING") {
@@ -52,14 +52,14 @@ func ReadResponse(b *bufio.Reader) interface{} {
 		return ErrResult.NewMsg(txt)
 	case ':':
 		if v, err := parseInt(line[1:]); err != nil {
-			return err.With("line", line)
+			return err.With(EKLine, line)
 		} else {
 			return v
 		}
 	case '$':
 		var rerr *Error
 		if v, rerr = parseInt(line[1:]); rerr != nil {
-			return rerr.With("line", line)
+			return rerr.With(EKLine, line)
 		}
 		if v < 0 {
 			return nil
@@ -75,7 +75,7 @@ func ReadResponse(b *bufio.Reader) interface{} {
 	case '*':
 		var rerr *Error
 		if v, rerr = parseInt(line[1:]); rerr != nil {
-			return rerr.With("line", line)
+			return rerr.With(EKLine, line)
 		}
 		if v < 0 {
 			return nil

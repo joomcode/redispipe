@@ -13,3 +13,12 @@ var (
 	// ErrClusterConfigEmpty - no addresses found in config.
 	ErrClusterConfigEmpty = ErrCluster.SubKind("ErrClusterConfigEmpty", "cluster configuration is emptry.")
 )
+
+var (
+	// EKCluster - cluster for error
+	EKCluster = redis.NewErrorKey("cluster")
+	// EKAddress - set when no alive connection found for address
+	EKAddress = redis.NewErrorKey("address")
+	// EKPolicy - policy used to choose between master and replicas.
+	EKPolicy = redis.NewErrorKey("policy")
+)

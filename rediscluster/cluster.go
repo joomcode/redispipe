@@ -430,7 +430,7 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 	slot, ok := redisclusterutil.ReqSlot(req)
 	if !ok {
 		// Probably, redis-cluster is not configured properly yet, or it is broken at the moment.
-		err := c.err(redis.ErrNoSlotKey).With("request", req)
+		err := c.err(redis.ErrNoSlotKey).With(redis.EKRequest, req)
 		cb.Resolve(err, off)
 		return
 	}
@@ -439,7 +439,7 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 
 	conn, err := c.connForSlot(slot, policy, nil)
 	if err != nil {
-		cb.Resolve(err.(*redis.Error).With("request", req), off)
+		cb.Resolve(err.(*redis.Error).With(redis.EKRequest, req), off)
 		return
 	}
 
@@ -493,7 +493,7 @@ var requestPool = sync.Pool{New: func() interface{} { return &request{} }}
 
 func (r *request) resolve(res interface{}) {
 	if err := redis.AsRedisError(res); err != nil {
-		res = err.With("request", r.req).With("cluster", r.c)
+		res = err.WithNewKey(redis.EKRequest, r.req).WithNewKey(EKCluster, r.c)
 	}
 	r.cb.Resolve(res, r.off)
 	*r = request{}
@@ -578,7 +578,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 			r.redir++
 			r.hardErrs = 0 // reset hardErrors because we are going to another physical shard.
 			r.seen = nil
-			addr := err.Get("movedto").(string)
+			addr := err.Get(redis.EKMovedTo).(string)
 			if kind == redis.ErrMoved {
 				DebugEvent("moved")
 				r.c.sendCommand("moved", r.slot, addr)
@@ -620,7 +620,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 	}
 	slot, ok := redisclusterutil.BatchSlot(reqs)
 	if !ok {
-		err := c.err(redis.ErrNoSlotKey).With("requests", reqs)
+		err := c.err(redis.ErrNoSlotKey).With(redis.EKRequests, reqs)
 		cb.Resolve(err, off)
 		return
 	}
@@ -629,7 +629,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 
 	if err != nil {
 		// ? no known alive connection for slot
-		cb.Resolve(err.(*redis.Error).With("requests", reqs), off)
+		cb.Resolve(err.(*redis.Error).With(redis.EKRequests, reqs), off)
 		return
 	}
 
@@ -668,7 +668,7 @@ var transactionPool = sync.Pool{New: func() interface{} { return &transaction{} 
 
 func (t *transaction) resolve(res interface{}) {
 	if err := redis.AsRedisError(res); err != nil {
-		res = err.With("requests", t.reqs).With("cluster", t.c)
+		err = err.With(redis.EKRequests, t.reqs).WithNewKey(EKCluster, t.c)
 	}
 	t.cb.Resolve(res, t.off)
 	*t = transaction{}
@@ -740,7 +740,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		t.seen = append(t.seen, t.lastconn)
 		conn, err := t.c.connForSlot(t.slot, MasterOnly, t.seen)
 		if err != nil {
-			t.resolve(err.(*redis.Error).With("requests", t.reqs))
+			t.resolve(err.(*redis.Error).With(redis.EKRequests, t.reqs))
 			return
 		} else {
 			t.lastconn = conn
@@ -753,7 +753,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		asking := false  // has asking keys
 		if kind == redis.ErrMoved {
 			// we occasionally sent transaction to slave
-			moved = err.Get("movedto").(string)
+			moved = err.Get(redis.EKMovedTo).(string)
 			moving = true
 		} else if strings.HasPrefix(err.Msg(), "EXECABORT") {
 			// check if all partial responses were ASK or MOVED
@@ -770,7 +770,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 					allmoved = false
 					break
 				}
-				moved = err.Get("movedto").(string)
+				moved = err.Get(redis.EKMovedTo).(string)
 				if emoved {
 					moving = true
 				} else if eask {
@@ -838,5 +838,5 @@ func (t *transaction) sendMoved(addr string, asking bool) {
 }
 
 func (c *Cluster) err(kind redis.ErrorKind) *redis.Error {
-	return kind.New().With("cluster", c)
+	return kind.New().With(EKCluster, c)
 }

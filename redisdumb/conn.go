@@ -60,7 +60,7 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 					err = rerr
 					if c.Type == TypeCluster && (rerr.Kind() == redis.ErrAsk || rerr.Kind() == redis.ErrMoved) {
 						asking = rerr.Kind() == redis.ErrAsk
-						c.Addr = rerr.Get("movedto").(string)
+						c.Addr = rerr.Get(redis.EKMovedTo).(string)
 						if try < 5 {
 							try++
 						}

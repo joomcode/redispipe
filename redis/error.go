@@ -76,6 +76,31 @@ var (
 	ErrExecEmpty = ErrResult.SubKind("ErrExecEmpty", "exec failed because of WATCH???")
 )
 
+var (
+	// EKMessage - key to store message associated with error.
+	// Note: you'd better use `Msg()` method.
+	EKMessage = NewErrorKey("message")
+	// EKCause - key to store wrapped error.
+	// There is Cause() convenient method to get it.
+	EKCause = NewErrorKey("cause")
+	// EKLine - set by response parser for unrecognized header lines.
+	EKLine = NewErrorKey("line")
+	// EKMovedTo - set by response parser for MOVED and ASK responses.
+	EKMovedTo = NewErrorKey("movedto")
+	// EKSlot - set by response parser for MOVED and ASK responses.
+	EKSlot = NewErrorKey("slot")
+	// EKVal - set by request writer and checker to argument value which could not be serialized.
+	EKVal = NewErrorKey("val")
+	// EKArgPos - set by request writer and checker to argument position which could not be serialized.
+	EKArgPos = NewErrorKey("argpos")
+	// EKRequest - request that triggered error.
+	EKRequest = NewErrorKey("request")
+	// EKRequests - batch requests that triggered error.
+	EKRequests = NewErrorKey("requests")
+	// EKResponse - unexpected response
+	EKResponse = NewErrorKey("response")
+)
+
 // ErrorKind is a kind of error
 type ErrorKind struct{ *errorKind }
 
@@ -174,6 +199,34 @@ loop:
 	goto loop
 }
 
+type ErrorKey struct {
+	name *string
+}
+
+var errkeys = struct {
+	sync.Mutex
+	keys map[string]ErrorKey
+}{keys: make(map[string]ErrorKey)}
+
+func NewErrorKey(name string) ErrorKey {
+	errkeys.Lock()
+	defer errkeys.Unlock()
+	key, ok := errkeys.keys[name]
+	if !ok {
+		key = ErrorKey{&name}
+		errkeys.keys[name] = key
+	}
+	return key
+}
+
+func (ek ErrorKey) String() string {
+	return *ek.name
+}
+
+func (ek ErrorKey) GoString() string {
+	return *ek.name
+}
+
 // Error is an error returned by connector
 type Error struct {
 	kind ErrorKind
@@ -193,17 +246,28 @@ func (e *Error) KindOf(k ErrorKind) bool {
 
 // WithMsg returns copy of error with new message.
 func (copy Error) WithMsg(msg string) *Error {
-	return copy.With("message", msg)
+	return copy.With(EKMessage, msg)
 }
 
 // Wrap returns copy of error with wrapped cause.
 func (copy Error) Wrap(err error) *Error {
-	return copy.With("cause", err)
+	return copy.With(EKCause, err)
 }
 
 // With returns copy of error with name-value pair attached
-func (copy Error) With(name string, value interface{}) *Error {
-	copy.kv = &kv{name: name, value: value, next: copy.kv}
+func (copy Error) With(key ErrorKey, value interface{}) *Error {
+	copy.kv = &kv{key: key, value: value, next: copy.kv}
+	return &copy
+}
+
+// WithNewKey returns copy of error with name-value pair attached.
+// If such key were already set, then do nothing.
+func (e *Error) WithNewKey(key ErrorKey, value interface{}) *Error {
+	if e.Get(key) != nil {
+		return e
+	}
+	copy := *e
+	copy.kv = &kv{key: key, value: value, next: copy.kv}
 	return &copy
 }
 
@@ -236,7 +300,7 @@ func (e Error) Format(f fmt.State, c rune) {
 func (e Error) Msg() string {
 	var msg string
 	var ok bool
-	if msgo := e.Get("message"); msgo != nil {
+	if msgo := e.Get(EKMessage); msgo != nil {
 		switch m := msgo.(type) {
 		case string:
 			msg = m
@@ -268,7 +332,7 @@ func (e Error) Msg() string {
 
 // Cause returns wrapped error (in fact, value associated with "cause" key).
 func (e Error) Cause() error {
-	if ierr := e.Get("cause"); ierr != nil {
+	if ierr := e.Get(EKCause); ierr != nil {
 		if err, ok := ierr.(error); ok {
 			return err
 		}
@@ -280,8 +344,8 @@ func (e Error) restAsString() string {
 	parts := []string{}
 	kv := e.kv
 	for kv != nil {
-		if kv.name != "message" && kv.name != "cause" {
-			parts = append(parts, fmt.Sprintf("%s: %v", kv.name, kv.value))
+		if kv.key != EKMessage && kv.key != EKCause {
+			parts = append(parts, fmt.Sprintf("%s: %v", *kv.key.name, kv.value))
 		}
 		kv = kv.next
 	}
@@ -299,22 +363,33 @@ func (e Error) ToMap() map[string]interface{} {
 	}
 	kv := e.kv
 	for kv != nil {
-		res[kv.name] = kv.value
+		res[*kv.key.name] = kv.value
 		kv = kv.next
 	}
 	return res
 }
 
 type kv struct {
-	name  string
+	key   ErrorKey
 	value interface{}
 	next  *kv
 }
 
 // Get searches corresponding key.
-func (kv *kv) Get(name string) interface{} {
+func (kv *kv) Get(key ErrorKey) interface{} {
 	for kv != nil {
-		if kv.name == name {
+		if kv.key == key {
+			return kv.value
+		}
+		kv = kv.next
+	}
+	return nil
+}
+
+// GetByName searches corresponding key by its name.
+func (kv *kv) GetByName(name string) interface{} {
+	for kv != nil {
+		if *kv.key.name == name {
 			return kv.value
 		}
 		kv = kv.next

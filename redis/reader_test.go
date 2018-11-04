@@ -120,16 +120,16 @@ func TestReadResponse_Correct(t *testing.T) {
 	if checkErr(t, res, ErrMoved) {
 		err := res.(*Error)
 		assert.Equal(t, "MOVED 1234 1.1.1.1:3456", err.Msg())
-		assert.Equal(t, "1.1.1.1:3456", err.Get("movedto"))
-		assert.Equal(t, int64(1234), err.Get("slot"))
+		assert.Equal(t, "1.1.1.1:3456", err.Get(EKMovedTo))
+		assert.Equal(t, int64(1234), err.Get(EKSlot))
 	}
 
 	res = readLines("-ASK 1234 1.1.1.1:3456\r\n")
 	if checkErr(t, res, ErrAsk) {
 		err := res.(*Error)
 		assert.Equal(t, "ASK 1234 1.1.1.1:3456", err.Msg())
-		assert.Equal(t, "1.1.1.1:3456", err.Get("movedto"))
-		assert.Equal(t, int64(1234), err.Get("slot"))
+		assert.Equal(t, "1.1.1.1:3456", err.Get(EKMovedTo))
+		assert.Equal(t, int64(1234), err.Get(EKSlot))
 	}
 
 	res = readLines("-LOADING\r\n")

@@ -211,7 +211,7 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 		// Lets resolve them to ip addresses.
 		addr, err = redisclusterutil.Resolve(addr)
 		if err != nil {
-			return nil, redis.ErrAddressNotResolved.NewWrap(err)
+			return nil, ErrAddressNotResolved.NewWrap(err)
 		}
 		if _, ok := config.masters[addr]; !ok {
 			config.nodes[addr], err = cluster.newNode(addr, true)

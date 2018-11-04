@@ -74,16 +74,6 @@ var (
 	ErrLoading = ErrResult.SubKind("ErrLoading", "host is loading")
 	// ErrExecEmpty - EXEC returns nil (WATCH failed) (it is strange, cause we don't support WATCH)
 	ErrExecEmpty = ErrResult.SubKind("ErrExecEmpty", "exec failed because of WATCH???")
-
-	// ErrCluster - some cluster related errors.
-	ErrCluster = NewErrorKind("ErrCluster", "cluster related error")
-	// ErrClusterSlots - fetching slots configuration failed
-	ErrClusterSlots = ErrCluster.SubKind("ErrClusterSlots", "could not retrieve slots from redis")
-	// ErrAddressNotResolved - address could not be resolved
-	// Cluster resolves named hosts specified as start points. If this resolution fails, this error returned.
-	ErrAddressNotResolved = ErrCluster.SubKind("ErrAddressNotResolved", "address is not resolved.")
-	// ErrClusterConfigEmpty - no addresses found in config.
-	ErrClusterConfigEmpty = ErrCluster.SubKind("ErrClusterConfigEmpty", "cluster configuration is emptry.")
 )
 
 // ErrorKind is a kind of error

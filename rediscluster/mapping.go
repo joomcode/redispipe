@@ -189,7 +189,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 	nodes := cfg.nodes
 
 	if shard == nil {
-		return nil, c.err(redis.ErrClusterConfigEmpty).With("slot", slot)
+		return nil, c.err(ErrClusterConfigEmpty).With("slot", slot)
 	}
 
 	var addr string

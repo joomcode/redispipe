@@ -25,7 +25,7 @@ func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
 		}
 		if len(addrs) == 0 {
 			s := &Scanner{}
-			s.Err = c.err(redis.ErrClusterConfigEmpty)
+			s.Err = c.err(ErrClusterConfigEmpty)
 			return s
 		}
 	} else {

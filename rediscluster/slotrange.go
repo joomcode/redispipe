@@ -35,7 +35,7 @@ Outter:
 	}
 	if err != nil {
 		c.report(LogClusterSlotsError)
-		return nil, c.err(redis.ErrClusterSlots)
+		return nil, c.err(ErrClusterSlots)
 	}
 
 	// look for reminder about future migrations

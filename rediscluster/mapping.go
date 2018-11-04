@@ -60,9 +60,16 @@ type connThen func(conn *redisconn.Connection, err error)
 // If connection is already established, callback will be called immediately.
 // Otherwise, callback will be called after connection established.
 func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
-	if conn := c.connForAddress(addr); conn != nil {
-		// there is connection, so call callback now.
-		then(conn, nil)
+	node := c.getConfig().nodes[addr]
+	if node != nil {
+		// there is node for address, so call callback now.
+		conn := node.getConn(c.opts.ConnHostPolicy, preferConnected, nil)
+		if conn != nil {
+			then(conn, nil)
+		} else {
+			err := c.err(redis.ErrDial).With(EKAddress, addr)
+			then(nil, err)
+		}
 		return
 	}
 

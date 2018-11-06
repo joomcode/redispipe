@@ -1,7 +1,6 @@
 package rediscluster
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/joomcode/redispipe/redisconn"
@@ -9,75 +8,83 @@ import (
 
 type LogKind int
 
-const (
-	LogHostEvent LogKind = iota
-	LogClusterSlotsError
-	LogForceReload
-	LogContextClosed
-	LogMAX
-)
-
 // Logger is used for loggin cluster-related events and requests statistic.
 type Logger interface {
 	// Report will be called when some events happens during cluster's lifetime.
 	// Default implementation just prints this information using standard log package.
-	Report(event LogKind, c *Cluster, v ...interface{})
+	Report(c *Cluster, event LogEvent)
 	// ReqStat is called after request receives it's answer with request/result information
 	// and time spend to fulfill request.
 	// Default implementation is no-op.
 	ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64)
 }
 
-func (c *Cluster) report(event LogKind, v ...interface{}) {
-	c.opts.Logger.Report(event, c, v...)
+func (c *Cluster) report(event LogEvent) {
+	c.opts.Logger.Report(c, event)
 }
+
+// LogEvent is a sumtype for events to be logged.
+type LogEvent interface {
+	logEvent()
+}
+
+// LogHostEvent is a wrapper for per-connection event
+type LogHostEvent struct {
+	Conn  *redisconn.Connection // Connection which triggers event.
+	Event redisconn.LogEvent
+}
+
+// LogClusterSlotsError is logged when CLUSTER SLOTS failed.
+type LogClusterSlotsError struct {
+	Conn  *redisconn.Connection // Connection which were used for CLUSTER SLOTS
+	Error error                 // observed error
+}
+
+// LogSlotRangeError is logged when no host were able to respond to CLUSTER SLOTS.
+type LogSlotRangeError struct{}
+
+// LogContextClosed is logged when cluster's context is closed.
+type LogContextClosed struct{ Error error }
+
+func (LogHostEvent) logEvent()         {}
+func (LogClusterSlotsError) logEvent() {}
+func (LogSlotRangeError) logEvent()    {}
+func (LogContextClosed) logEvent()     {}
 
 // DefaultLogger is a default Logger implementation
 type DefaultLogger struct{}
 
 // Report implements Logger.Report.
-func (d DefaultLogger) Report(event LogKind, cluster *Cluster, v ...interface{}) {
-	switch event {
+func (d DefaultLogger) Report(cluster *Cluster, event LogEvent) {
+	switch ev := event.(type) {
 	case LogHostEvent:
-		event := v[0].(redisconn.LogKind)
-		conn := v[1].(*redisconn.Connection)
-		switch event {
+		switch cev := ev.Event.(type) {
 		case redisconn.LogConnecting:
-			log.Printf("rediscluster %s: connecting to %s", cluster.Name(), conn.Addr())
+			log.Printf("rediscluster %s: connecting to %s", cluster.Name(), ev.Conn.Addr())
 		case redisconn.LogConnected:
-			localAddr := v[2].(string)
-			remoteAddr := v[3].(string)
-			log.Printf("rediscluster %s: connected to %s (localAddr: %s, remote addr: %s)",
-				cluster.Name(), conn.Addr(), localAddr, remoteAddr)
+			log.Printf("rediscluster %s: connected to %s (localAddr: %s, remAddr: %s)",
+				cluster.Name(), ev.Conn.Addr(), cev.LocalAddr, cev.RemoteAddr)
 		case redisconn.LogConnectFailed:
-			err := v[2].(error)
 			log.Printf("rediscluster %s: connection to %s failed: %s",
-				cluster.Name(), conn.Addr(), err.Error())
+				cluster.Name(), ev.Conn.Addr(), cev.Error.Error())
 		case redisconn.LogDisconnected:
-			err := v[2].(error)
-			log.Printf("rediscluster %s: connection to %s broken: %s",
-				cluster.Name(), conn.Addr(), err.Error())
+			log.Printf("rediscluster %s: connection to %s broken (localAddr: %s, remAddr: %s): %s",
+				cluster.Name(), ev.Conn.Addr(), cev.LocalAddr, cev.RemoteAddr, cev.Error.Error())
 		case redisconn.LogContextClosed:
-			log.Printf("rediscluster %s: connect to %s explicitly closed", cluster.Name(), conn.Addr())
+			log.Printf("rediscluster %s: connect to %s explicitly closed: %s",
+				cluster.Name(), ev.Conn.Addr(), cev.Error.Error())
 		default:
-			args := []interface{}{fmt.Sprintf("rediscluster %s: unexpected connection event:", cluster.Name()), event, conn}
-			args = append(args, v[2:])
-			log.Print(args...)
+			log.Printf("rediscluster %s: unexpected connection event for %s: %s",
+				cluster.Name(), ev.Conn.Addr(), event)
 		}
 	case LogClusterSlotsError:
-		if len(v) > 0 {
-			conn := v[0].(*redisconn.Connection)
-			err := v[1].(error)
-			log.Printf("rediscluster %s: 'CLUSTER SLOTS' request to %s failed: %s",
-				cluster.Name(), conn.Addr(), err.Error())
-		} else {
-			log.Printf("rediscluster %s: no alive nodes to request 'CLUSTER SLOTS'",
-				cluster.Name())
-		}
-	case LogForceReload:
-		log.Printf("rediscluster %s: force reloading slots", cluster.Name())
+		log.Printf("rediscluster %s: 'CLUSTER SLOTS' request to %s failed: %s",
+			cluster.Name(), ev.Conn.Addr(), ev.Error.Error())
+	case LogSlotRangeError:
+		log.Printf("rediscluster %s: no alive nodes to request 'CLUSTER SLOTS'",
+			cluster.Name())
 	case LogContextClosed:
-		log.Printf("rediscluster %s: shutting down", cluster.Name())
+		log.Printf("rediscluster %s: shutting down (%s)", cluster.Name(), ev.Error)
 	}
 }
 
@@ -91,10 +98,8 @@ type defaultConnLogger struct {
 }
 
 // Report implements redisconn.Logger.Report
-func (d defaultConnLogger) Report(event redisconn.LogKind, conn *redisconn.Connection, v ...interface{}) {
-	args := []interface{}{event, conn}
-	args = append(args, v...)
-	d.Cluster.opts.Logger.Report(LogHostEvent, d.Cluster, args...)
+func (d defaultConnLogger) Report(conn *redisconn.Connection, event redisconn.LogEvent) {
+	d.Cluster.opts.Logger.Report(d.Cluster, LogHostEvent{Conn: conn, Event: event})
 }
 
 // Report implements redisconn.Logger.ReqStat
@@ -106,7 +111,7 @@ func (d defaultConnLogger) ReqStat(conn *redisconn.Connection, req Request, res 
 type NoopLogger struct{}
 
 // Report implements Logger.Report
-func (d NoopLogger) Report(event LogKind, cluster *Cluster, v ...interface{}) {}
+func (d NoopLogger) Report(conn *Cluster, event LogEvent) {}
 
 // ReqStat implements Logger.ReqStat
 func (d NoopLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64) {

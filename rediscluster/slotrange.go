@@ -24,12 +24,12 @@ Outter:
 			if err == nil {
 				break Outter
 			}
-			c.report(LogClusterSlotsError, conn, err)
+			c.report(LogClusterSlotsError{Conn: conn, Error: err})
 			continue
 		}
 	}
 	if err != nil {
-		c.report(LogClusterSlotsError)
+		c.report(LogSlotRangeError{})
 		return nil, c.err(ErrClusterSlots)
 	}
 

@@ -601,7 +601,7 @@ func (conn *Connection) dial() error {
 func (conn *Connection) createConnection(reconnect bool, wg *sync.WaitGroup) error {
 	var err error
 	for conn.c == nil && atomic.LoadUint32(&conn.state) == connDisconnected {
-		conn.report(LogConnecting)
+		conn.report(LogConnecting{})
 		now := time.Now()
 		// start accepting requests
 		atomic.StoreUint32(&conn.state, connConnecting)
@@ -612,13 +612,14 @@ func (conn *Connection) createConnection(reconnect bool, wg *sync.WaitGroup) err
 		err = conn.dial()
 		if err == nil {
 			atomic.StoreUint32(&conn.state, connConnected)
-			conn.report(LogConnected,
-				conn.c.LocalAddr().String(),
-				conn.c.RemoteAddr().String())
+			conn.report(LogConnected{
+				LocalAddr:  conn.c.LocalAddr().String(),
+				RemoteAddr: conn.c.RemoteAddr().String(),
+			})
 			return nil
 		}
 
-		conn.report(LogConnectFailed, err)
+		conn.report(LogConnectFailed{Error: err})
 		// stop accepting request
 		atomic.StoreUint32(&conn.state, connDisconnected)
 		// revoke accumulated requests
@@ -666,13 +667,17 @@ func (conn *Connection) dropShardFutures(err error) {
 	}
 }
 
-func (conn *Connection) closeConnection(neterr error, forever bool) {
+func (conn *Connection) closeConnection(neterr *redis.Error, forever bool) {
 	if forever {
 		atomic.StoreUint32(&conn.state, connClosed)
-		conn.report(LogContextClosed)
+		conn.report(LogContextClosed{Error: neterr.Cause()})
 	} else {
 		atomic.StoreUint32(&conn.state, connDisconnected)
-		conn.report(LogDisconnected, neterr)
+		conn.report(LogDisconnected{
+			Error:      neterr,
+			LocalAddr:  conn.c.LocalAddr().String(),
+			RemoteAddr: conn.c.RemoteAddr().String(),
+		})
 	}
 
 	if conn.c != nil {
@@ -724,13 +729,14 @@ func (one *oneconn) setErr(neterr error, conn *Connection) {
 		if !ok {
 			rerr = conn.err(redis.ErrIO).Wrap(neterr)
 		}
-		one.err = rerr.WithNewKey(EKConnection, conn)
+		rerr = rerr.WithNewKey(EKConnection, conn)
+		one.err = rerr
 		// and try to reconnect asynchronously
-		go conn.reconnect(one.err, one.c)
+		go conn.reconnect(rerr, one.c)
 	})
 }
 
-func (conn *Connection) reconnect(neterr error, c net.Conn) {
+func (conn *Connection) reconnect(neterr *redis.Error, c net.Conn) {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 	if atomic.LoadUint32(&conn.state) == connClosed {

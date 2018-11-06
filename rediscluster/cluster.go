@@ -272,7 +272,7 @@ func (c *Cluster) control() {
 		select {
 		case <-c.ctx.Done():
 			// cluster closed, exit control loop
-			c.report(LogContextClosed)
+			c.report(LogContextClosed{Error: c.ctx.Err()})
 			return
 		case cmd := <-c.commands:
 			// execute some asynchronous "cluster-wide" actions

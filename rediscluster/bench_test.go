@@ -2,7 +2,10 @@ package rediscluster_test
 
 import (
 	"context"
+	"math/rand"
 	"runtime"
+	"strconv"
+	"sync/atomic"
 	. "testing"
 	"time"
 
@@ -29,6 +32,7 @@ func benchCluster(port int) func() {
 
 func BenchmarkSerialGetSet(b *B) {
 	defer benchCluster(45000)()
+	rng := rand.New(rand.NewSource(1))
 	b.Run("radixv2", func(b *B) {
 		rdxv2, err := radixv2cluster.New("127.0.0.1:45000")
 		if err != nil {
@@ -38,10 +42,11 @@ func BenchmarkSerialGetSet(b *B) {
 		defer rdxv2.Close()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if err := rdxv2.Cmd("SET", "foo", "bar").Err; err != nil {
+			key := "foo" + strconv.Itoa(rng.Intn(65536))
+			if err := rdxv2.Cmd("SET", key, "bar").Err; err != nil {
 				b.Fatal(err)
 			}
-			if err := rdxv2.Cmd("GET", "foo").Err; err != nil {
+			if err := rdxv2.Cmd("GET", key).Err; err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -52,10 +57,11 @@ func BenchmarkSerialGetSet(b *B) {
 		defer red.Close()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if _, err := red.Do("SET", "foo", "bar"); err != nil {
+			key := "foo" + strconv.Itoa(rng.Intn(65536))
+			if _, err := red.Do("SET", key, "bar"); err != nil {
 				b.Fatal(err)
 			}
-			if _, err := redigo.String(red.Do("GET", "foo")); err != nil {
+			if _, err := redigo.String(red.Do("GET", key)); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -75,10 +81,11 @@ func BenchmarkSerialGetSet(b *B) {
 		sync := redis.Sync{pipe}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if res := sync.Do("SET", "foo", "bar"); redis.AsError(res) != nil {
+			key := "foo" + strconv.Itoa(rng.Intn(65536))
+			if res := sync.Do("SET", key, "bar"); redis.AsError(res) != nil {
 				b.Fatal(res)
 			}
-			if res := sync.Do("GET", "foo"); redis.AsError(res) != nil {
+			if res := sync.Do("GET", key); redis.AsError(res) != nil {
 				b.Fatal(res)
 			}
 		}
@@ -99,10 +106,11 @@ func BenchmarkSerialGetSet(b *B) {
 		sync := redis.Sync{pipe}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if res := sync.Do("SET", "foo", "bar"); redis.AsError(res) != nil {
+			key := "foo" + strconv.Itoa(rng.Intn(65536))
+			if res := sync.Do("SET", key, "bar"); redis.AsError(res) != nil {
 				b.Fatal(res)
 			}
-			if res := sync.Do("GET", "foo"); redis.AsError(res) != nil {
+			if res := sync.Do("GET", key); redis.AsError(res) != nil {
 				b.Fatal(res)
 			}
 		}
@@ -112,12 +120,14 @@ func BenchmarkSerialGetSet(b *B) {
 func BenchmarkParallelGetSet(b *B) {
 	defer benchCluster(45000)()
 	parallel := runtime.GOMAXPROCS(0)
+	i := uint32(1)
 
-	do := func(b *B, fn func()) {
+	do := func(b *B, fn func(*rand.Rand)) {
 		b.SetParallelism(parallel)
 		b.RunParallel(func(pb *PB) {
+			rng := rand.New(rand.NewSource(int64(atomic.AddUint32(&i, 1))))
 			for pb.Next() {
-				fn()
+				fn(rng)
 			}
 		})
 	}
@@ -129,11 +139,12 @@ func BenchmarkParallelGetSet(b *B) {
 			b.Fatal(err)
 		}
 		b.ResetTimer()
-		do(b, func() {
-			if rdx2.Cmd("SET", "foo", "bar").Err != nil {
+		do(b, func(rng *rand.Rand) {
+			key := "foo" + strconv.Itoa(rng.Intn(65536))
+			if rdx2.Cmd("SET", key, "bar").Err != nil {
 				b.Fatal(err)
 			}
-			if rdx2.Cmd("GET", "foo").Err != nil {
+			if rdx2.Cmd("GET", key).Err != nil {
 				b.Fatal(err)
 			}
 		})
@@ -143,11 +154,12 @@ func BenchmarkParallelGetSet(b *B) {
 		red := newRedigo()
 		defer red.Close()
 		b.ResetTimer()
-		do(b, func() {
-			if _, err := red.Do("SET", "foo", "bar"); err != nil {
+		do(b, func(rng *rand.Rand) {
+			key := "foo" + strconv.Itoa(rng.Intn(65536))
+			if _, err := red.Do("SET", key, "bar"); err != nil {
 				b.Fatal(err)
 			}
-			if _, err := redigo.String(red.Do("GET", "foo")); err != nil {
+			if _, err := redigo.String(red.Do("GET", key)); err != nil {
 				b.Fatal(err)
 			}
 		})
@@ -166,11 +178,12 @@ func BenchmarkParallelGetSet(b *B) {
 		}
 		sync := redis.Sync{pipe}
 		b.ResetTimer()
-		do(b, func() {
-			if res := sync.Do("SET", "foo", "bar"); redis.AsError(res) != nil {
+		do(b, func(rng *rand.Rand) {
+			key := "foo" + strconv.Itoa(rng.Intn(65536))
+			if res := sync.Do("SET", key, "bar"); redis.AsError(res) != nil {
 				b.Fatal(res)
 			}
-			if res := sync.Do("GET", "foo"); redis.AsError(res) != nil {
+			if res := sync.Do("GET", key); redis.AsError(res) != nil {
 				b.Fatal(err)
 			}
 		})

@@ -85,11 +85,7 @@ type Opts struct {
 	Logger Logger
 
 	// RoundRobinSeed - used to choose between master and replica.
-	// Best implementation should return same number during 50-100 milliseconds, ie
-	// uint32(time.Now().UnixNano()/int64(100*time.Millisecond))
-	RoundRobinSeed interface {
-		Current() uint32
-	}
+	RoundRobinSeed RoundRobinSeed
 }
 
 type Cluster struct {

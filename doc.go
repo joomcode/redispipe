@@ -84,7 +84,7 @@ are de-serialized into plain go types and are returned as interface{}:
   -------------|-------
   plain string | string
   bulk string  | []byte
-  integer      | int
+  integer      | int64
   array        | []interface{}
   error        | error (*redis.Error)
 

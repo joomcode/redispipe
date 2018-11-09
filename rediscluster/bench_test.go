@@ -133,7 +133,10 @@ func BenchmarkParallelGetSet(b *B) {
 	}
 
 	b.Run("radixv2", func(b *B) {
-		rdx2, err := radixv2cluster.New("127.0.0.1:45000")
+		rdx2, err := radixv2cluster.NewWithOpts(radixv2cluster.Opts{
+			Addr:     "127.0.0.1:45000",
+			PoolSize: 128,
+		})
 		defer rdx2.Close()
 		if err != nil {
 			b.Fatal(err)
@@ -194,6 +197,8 @@ func newRedigo() *redigo.Cluster {
 	c, err := redigo.NewCluster(&redigo.Options{
 		StartNodes:  []string{"127.0.0.1:45000"},
 		ConnTimeout: time.Minute,
+		KeepAlive:   128,
+		AliveTime:   time.Second,
 	})
 	if err != nil {
 		panic(err)

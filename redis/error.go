@@ -65,7 +65,7 @@ var (
 	ErrPing = ErrResponse.SubKind("ErrPing", "ping response doesn't match")
 
 	// ErrResult - just regular redis response.
-	ErrResult = NewErrorKind("ErrKind", "regular redis error")
+	ErrResult = NewErrorKind("ErrResult", "regular redis error")
 	// ErrMoved - MOVED response
 	ErrMoved = ErrResult.SubKind("ErrMoved", "slot were moved")
 	// ErrAsk - ASK response

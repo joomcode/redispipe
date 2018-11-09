@@ -6,8 +6,7 @@ of "caching" usage scenarios.
 https://redis.io/topics/pipelining
 
 Pipelining improves maximum throughput that redis can serve, and reduces CPU usage both on
-redis server and on client. That is why pipelining were considered as a critical feature
-for our infrastructure.
+redis server and on client. Mostly it comes from saving system CPU consumption.
 
 But it is not always possible to use pipelining explicitly: not always you have bunch of
 commands you ready to send. Usually there are dozen of concurrent goroutines, each sends just
@@ -36,6 +35,9 @@ But there were no such connector for Golang.
 This connector were created as implicitly pipelined from ground to achieve maximum performance
 in a highly concurrent environment. It writes all requests to single connection to redis, and
 continuously reads answers in other goroutine.
+
+Note that it trades a bit of latency for throughput, and therefore could be not optimal for
+non-concurrent usage.
 
 ## Performance
 
@@ -119,7 +121,8 @@ lesser CPU usage on Redis (ie 50%CPU->35%CPU), and 5-10% improvement on client s
 - fast
 - thread-safe: no need to lock around connection, no need to "return to pool", etc
 - Pipelining is implicit,
-- transactions supported (but without `WATCH`)
+- transactions supported (but without `WATCH`),
+- hook for custom logging,
 - hook for request timing reporting.
 
 ## Limitations
@@ -133,17 +136,22 @@ lesser CPU usage on Redis (ie 50%CPU->35%CPU), and 5-10% improvement on client s
   therefore it could not be combined with regular commands, and should spawn new connection
   instead.
   
-## Installation
+## Installation/Documentation
 
-- Single connection: `go get github.com/joomcode/redispipe/redisconn`
-- Cluster connection: `go get github.com/joomcode/redispipe/rediscluster`
 - Common package, installed as dependency - 'github.com/joomcode/redispipe/redis'
+  https://godoc.org/joomcode/redispipe/redis
+- Single connection: `go get github.com/joomcode/redispipe/redisconn`
+  https://godoc.org/joomcode/redispipe/redisconn
+- Cluster connection: `go get github.com/joomcode/redispipe/rediscluster`
+  https://godoc.org/joomcode/redispipe/rediscluster
 
 ## Usage
 
 Both `redisconn.Connect` and `rediscluster.NewCluster` creates implementations of `redis.Sender`.
 `redis.Sender` provides asynchronous api for sending request/requests/transactions. That api
-accepts `redis.Future` as an argument and fullfills it asynchronously.
+accepts `redis.Future` interface implementations as an argument and fullfills it asynchronously.
+Usually you don't need to provide your own `redis.Future` implementation, but rather use
+synchronous wrappers.
 
 To use convenient synchronous api, one should wrap "sender" with one of wrappers:
 - `redis.Sync{sender}` - provides simple synchronouse api
@@ -153,7 +161,7 @@ To use convenient synchronous api, one should wrap "sender" with one of wrappers
 
 Types accepted as command arguments: `nil`, `[]byte`, `string`, `int` (and all other integer types),
 `float64`, `float32`, `bool`. All arguments are converted to redis bulk strings as usual (ie
-string and bytes - as id; numbers - in decimal notation). `bool` converted as "0/1",
+string and bytes - as is; numbers - in decimal notation). `bool` converted as "0/1",
 `nil` converted to empty string.
 
 In difference to other redis packages, no custom types are used for request results. Results

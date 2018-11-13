@@ -12,7 +12,10 @@ import (
 	"github.com/joomcode/redispipe/redisconn"
 )
 
+// ConnHostPolicyEnum is config enumeration of policies of connections-per-host usage.
 type ConnHostPolicyEnum int8
+
+// ReplicaPolicyEnum is config enumeration of policies of replica-set hosts usage.
 type ReplicaPolicyEnum int8
 
 const (
@@ -25,7 +28,7 @@ const (
 const (
 	// MasterOnly means request should be executed on master
 	MasterOnly ReplicaPolicyEnum = iota
-	// MasterAndSlave means request could be executed on slave,
+	// MasterAndSlaves means request could be executed on slave,
 	// and every host in replica set has same probability for query execution.
 	// Write requests still goes to master.
 	MasterAndSlaves
@@ -38,6 +41,7 @@ const (
 	// Also, list of "readonly" commands is hardcoded, and could miss one you need.
 	// In this case you may use one of ForceMasterAndSlaves, ForcePreferSlaves or ForceMasterWithFallback.
 	ForceMasterAndSlaves
+	// ForcePreferSlaves - overrides "writeness" of command. See ForceMasterAndSlaves for more description.
 	ForcePreferSlaves
 )
 
@@ -88,6 +92,16 @@ type Opts struct {
 	RoundRobinSeed RoundRobinSeed
 }
 
+// Cluster is implementation of redis.Sender which represents connection to redis-cluster.
+//
+// Under the hood, it uses set of redisconn.Connection to individual redis servers.
+// There could be several connections to single redis server, it is controlled by Opts.ConnsPerHost,
+// and Opts.ConnHostPolicy specifies how to use them.
+//
+// By default requests are always sent to known master of replica-set. But you could override it with
+// Cluster.WithPolicy. Write commands still will be sent to master, unless you specify ForceMasterAndSlaves
+// or ForcePreferSlaves policy. Note: read-only commands are hard-coded in UPCASE format, therefore command
+// will not be recognized as read-only if it is Camel-case or low-case.
 type Cluster struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -115,7 +129,7 @@ type clusterConfig struct {
 	masters masterMap
 	nodes   nodeMap
 
-	slots [NumSlots / 2]uint32
+	slots [redisclusterutil.NumSlots / 2]uint32
 }
 
 type shard struct {
@@ -141,11 +155,15 @@ type clusterCommand struct {
 	addr string
 }
 
-func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, error) {
+// NewCluster creates Cluster.
+//
+// It connects to specified hosts, learns cluster configuration, and triggers asynchronous connection establishing
+// to all cluster's hosts.
+func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, error) {
 	if ctx == nil {
 		return nil, redis.ErrContextIsNil.New()
 	}
-	if len(init_addrs) == 0 {
+	if len(initAddrs) == 0 {
 		return nil, redis.ErrNoAddressProvided.New()
 	}
 	cluster := &Cluster{
@@ -202,7 +220,7 @@ func NewCluster(ctx context.Context, init_addrs []string, opts Opts) (*Cluster, 
 	cluster.nodeWait.promises = make(map[string]*[]connThen, 1)
 
 	var err error
-	for _, addr := range init_addrs {
+	for _, addr := range initAddrs {
 		// If redis hosts are mentioned by names, couple of connections will be established and closed shortly.
 		// Lets resolve them to ip addresses.
 		addr, err = redisclusterutil.Resolve(addr)
@@ -560,10 +578,10 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 		if err != nil {
 			r.resolve(err)
 			return
-		} else {
-			r.lastconn = conn
-			conn.Send(r.req, r, 0)
 		}
+		r.lastconn = conn
+		conn.Send(r.req, r, 0)
+		return
 	case kind.KindOf(redis.ErrResult):
 		if kind == redis.ErrLoading {
 			// Some host is not started properly yet. Lets learn actual cluster state asap.
@@ -738,10 +756,10 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		if err != nil {
 			t.resolve(err.(*redis.Error).With(redis.EKRequests, t.reqs))
 			return
-		} else {
-			t.lastconn = conn
-			t.send(conn, false)
 		}
+		t.lastconn = conn
+		t.send(conn, false)
+		return
 	case kind.KindOf(redis.ErrResult):
 		var moved string
 		allmoved := true // all keys were moved

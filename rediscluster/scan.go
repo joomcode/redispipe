@@ -2,10 +2,12 @@ package rediscluster
 
 import (
 	"github.com/joomcode/redispipe/redis"
+	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 )
 
 // Scanner is an implementation of redis.Scanner.
-// It will iterate through all shards (if it is called for SCAN command)
+//
+// If it were called for SCAN command, it will iterate through all shards.
 type Scanner struct {
 	redis.ScannerBase
 
@@ -31,7 +33,7 @@ func (c *Cluster) Scanner(opts redis.ScanOpts) redis.Scanner {
 	} else {
 		// other commands operates on single key
 		key := opts.Key
-		slot := Slot(key)
+		slot := redisclusterutil.Slot(key)
 		shard := c.getConfig().slot2shard(slot)
 		addrs = shard.addr[:1]
 	}

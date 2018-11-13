@@ -121,6 +121,18 @@ func Example_usage() {
 		fmt.Printf("tresult[%d]: %T %q\n", i, res, res)
 	}
 
+	scanner := sync.Scanner(ctx, redis.ScanOpts{Match: "*key*"})
+	for {
+		keys, err := scanner.Next()
+		if err != nil {
+			if err != redis.ScanEOF {
+				log.Fatal(err)
+			}
+			break
+		}
+		fmt.Printf("keys: %q", keys)
+	}
+
 	// Output:
 	// result: "OK"
 	// result: "ho"
@@ -133,4 +145,5 @@ func Example_usage() {
 	// tresult[0]: string "OK"
 	// tresult[1]: string "OK"
 	// tresult[2]: int64 '\x03'
+	// keys: ["key" "hashkey"]
 }

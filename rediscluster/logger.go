@@ -6,8 +6,6 @@ import (
 	"github.com/joomcode/redispipe/redisconn"
 )
 
-type LogKind int
-
 // Logger is used for loggin cluster-related events and requests statistic.
 type Logger interface {
 	// Report will be called when some events happens during cluster's lifetime.
@@ -88,6 +86,7 @@ func (d DefaultLogger) Report(cluster *Cluster, event LogEvent) {
 	}
 }
 
+// ReqStat implements Logger.ReqStat as no-op.
 func (d DefaultLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
 	// noop
 }

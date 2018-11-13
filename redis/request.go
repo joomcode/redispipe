@@ -7,6 +7,8 @@ func Req(cmd string, args ...interface{}) Request {
 
 // Request represents request to be passed to redis.
 type Request struct {
+	// Cmd is a redis command to be sent.
+	// It could contain single space, then it will be split, and last part will be serialized as an argument.
 	Cmd  string
 	Args []interface{}
 }

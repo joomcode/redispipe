@@ -167,7 +167,7 @@ func (cfg *clusterConfig) slotSetShard(slot, shard uint16) {
 func (cfg *clusterConfig) slotMarkAsking(slot uint16) {
 	pos, off := slot/2, 16*(slot&1)
 	sh32 := atomic.LoadUint32(&cfg.slots[pos])
-	flag := uint32(MasterOnlyFlag << off)
+	flag := uint32(masterOnlyFlag << off)
 	if sh32&flag == 0 {
 		sh32 |= flag
 		// Again: no synchronization, because any updates will be retried with redis responses.
@@ -178,7 +178,7 @@ func (cfg *clusterConfig) slotMarkAsking(slot uint16) {
 func (cfg *clusterConfig) slotIsAsking(slot uint16) bool {
 	pos, off := slot/2, 16*(slot&1)
 	sh32 := atomic.LoadUint32(&cfg.slots[pos])
-	flag := uint32(MasterOnlyFlag << off)
+	flag := uint32(masterOnlyFlag << off)
 	return sh32&flag != 0
 }
 

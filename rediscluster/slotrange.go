@@ -9,7 +9,7 @@ import (
 	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 )
 
-const MasterOnlyFlag = 0x4000
+const masterOnlyFlag = 0x4000
 
 func (c *Cluster) slotRangesAndInternalMasterOnly() ([]redisclusterutil.SlotsRange, error) {
 	nodes := c.getConfig().nodes
@@ -130,7 +130,7 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 	go newConfig.setConnRoles()
 
 	var sh uint32
-	for i := 0; i < NumSlots; i++ {
+	for i := 0; i < redisclusterutil.NumSlots; i++ {
 		var cur uint32
 		if len(slotRanges) != 0 && i > slotRanges[0].To {
 			slotRanges = slotRanges[1:]
@@ -141,7 +141,7 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 			cur = uint32(newConfig.masters[slotRanges[0].Addrs[0]])
 		}
 		if _, ok := c.internallyForceMasterOnly[uint16(i)]; ok {
-			cur |= MasterOnlyFlag
+			cur |= masterOnlyFlag
 			DebugEvent("automatic masteronly")
 		}
 		if i&1 == 0 {

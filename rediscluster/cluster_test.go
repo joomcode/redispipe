@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+const NumSlots = redisclusterutil.NumSlots
+
 type Suite struct {
 	suite.Suite
 	cl   *testbed.Cluster
@@ -34,7 +36,7 @@ func (s *Suite) SetupSuite() {
 	cnt := 0
 	for i := 0; cnt < NumSlots; i++ {
 		key := "x" + strconv.Itoa(i)
-		slot := Slot(key)
+		slot := redisclusterutil.Slot(key)
 		if s.keys[slot] == "" {
 			s.keys[slot] = key
 			cnt++

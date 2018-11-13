@@ -40,22 +40,22 @@ func ReadResponse(b *bufio.Reader) interface{} {
 			if err != nil {
 				return err.With(EKLine, line)
 			}
+			kind := ErrAsk
 			if moved {
-				return ErrMoved.NewMsg(txt).With(EKMovedTo, string(parts[2])).With(EKSlot, slot)
-			} else {
-				return ErrAsk.NewMsg(txt).With(EKMovedTo, string(parts[2])).With(EKSlot, slot)
+				kind = ErrMoved
 			}
+			return kind.NewMsg(txt).With(EKMovedTo, string(parts[2])).With(EKSlot, slot)
 		}
 		if strings.HasPrefix(txt, "LOADING") {
 			return ErrLoading.NewMsg(txt)
 		}
 		return ErrResult.NewMsg(txt)
 	case ':':
-		if v, err := parseInt(line[1:]); err != nil {
+		v, err := parseInt(line[1:])
+		if err != nil {
 			return err.With(EKLine, line)
-		} else {
-			return v
 		}
+		return v
 	case '$':
 		var rerr *Error
 		if v, rerr = parseInt(line[1:]); rerr != nil {

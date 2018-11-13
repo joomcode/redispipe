@@ -5,8 +5,11 @@ import (
 )
 
 // AppendRequest appends request to byte slice as RESP request (ie as array of strings).
+//
 // It could fail if some request value is not nil, integer, float, string or byte slice.
 // In case of error it still returns modified buffer, but truncated to original size, it could be used save reallocation.
+//
+// Note: command could contain single space. In that case, it will be split and last part will be prepended to arguments.
 func AppendRequest(buf []byte, req Request) ([]byte, error) {
 	oldSize := len(buf)
 	space := -1
@@ -161,7 +164,7 @@ func appendBulkUint(b []byte, i uint64) []byte {
 	return b
 }
 
-// returns string representataion of an argument.
+// ArgToString returns string representataion of an argument.
 // Used in cluster to determine cluster slot.
 // Have to be in sync with AppendRequest
 func ArgToString(arg interface{}) (string, bool) {
@@ -195,9 +198,8 @@ func ArgToString(arg interface{}) (string, bool) {
 	case bool:
 		if v {
 			return "1", true
-		} else {
-			return "0", true
 		}
+		return "0", true
 	case float32:
 		return strconv.FormatFloat(float64(v), 'f', -1, 32), true
 	case float64:

@@ -24,7 +24,7 @@ func (d *FairRoundRobinSeed) Current() uint32 {
 	return atomic.AddUint32(&d.v, 1)
 }
 
-// TimedRoundRobindSeed is implementation of RoundRobinSeed.
+// TimedRoundRobinSeed is implementation of RoundRobinSeed.
 // It runs goroutine which periodically stores new random value,
 // and returns this value between this updates.
 // It improves pipeline efficiency, and it is used as default implementation.

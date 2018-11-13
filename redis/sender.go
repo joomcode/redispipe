@@ -41,12 +41,12 @@ type Scanner interface {
 	Next(cb Future)
 }
 
-// Sync wrappers will return ScanEOF as error when iteration completes.
+// ScanEOF is error returned by Sync wrappers when iteration exhausted.
 var ScanEOF = errors.New("Iteration finished")
 
 // tools for scanning
 
-// Options for scanning
+// ScanOpts is options for scanning
 type ScanOpts struct {
 	// Cmd - command to be sent. Could be 'SCAN', 'SSCAN', 'HSCAN', 'ZSCAN'
 	// default is 'SCAN'

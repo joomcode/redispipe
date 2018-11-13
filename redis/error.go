@@ -18,7 +18,7 @@ var (
 	// ErrContextClosed - context were explicitly closed (or connection / cluster were shut down)
 	ErrContextClosed = NewErrorKind("ErrContextClosed", "context or connection were closed")
 
-	// ErrKindConnection - connection was not established at the moment request were done,
+	// ErrConnection - connection was not established at the moment request were done,
 	// request is definitely not sent anywhere.
 	ErrConnection = NewErrorKind("ErrConnection", "connection is not established at the moment")
 	// ErrNotConnected - connection were not established at the moment
@@ -38,7 +38,7 @@ var (
 	ErrRequest = NewErrorKind("ErrRequest", "request malformed")
 	// ErrArgumentType - argument is not serializable
 	ErrArgumentType = ErrRequest.SubKind("ErrArgumentType", "command argument type not supported")
-	// ErrBatchFormant - some other command in batch is malformed
+	// ErrBatchFormat - some other command in batch is malformed
 	ErrBatchFormat = ErrRequest.SubKind("ErrBatchFormat", "one of batch command is malformed")
 	// ErrNoSlotKey - no key to determine cluster slot
 	ErrNoSlotKey = ErrRequest.SubKind("ErrNoSlotKey", "no key to determine slot")
@@ -181,7 +181,7 @@ func (e ErrorKind) NewMsg(msg string) *Error {
 	return (&Error{kind: e}).WithMsg(msg)
 }
 
-// NewErr returns error with this kind that wraps another common error
+// NewWrap returns error with this kind that wraps another common error
 func (e ErrorKind) NewWrap(err error) *Error {
 	return (&Error{kind: e}).Wrap(err)
 }
@@ -199,6 +199,8 @@ loop:
 	goto loop
 }
 
+// ErrorKey is a type that could be used as a custom key for key-value pair associated with error.
+// It is thin wrapper around string made for type-safety and performance.
 type ErrorKey struct {
 	name *string
 }
@@ -208,6 +210,7 @@ var errkeys = struct {
 	keys map[string]ErrorKey
 }{keys: make(map[string]ErrorKey)}
 
+// NewErrorKey creates new key for specified name or returns existing one.
 func NewErrorKey(name string) ErrorKey {
 	errkeys.Lock()
 	defer errkeys.Unlock()
@@ -219,10 +222,12 @@ func NewErrorKey(name string) ErrorKey {
 	return key
 }
 
+// String implements fmt.Stringer
 func (ek ErrorKey) String() string {
 	return *ek.name
 }
 
+// GoString implements fmt.GoStringer
 func (ek ErrorKey) GoString() string {
 	return *ek.name
 }
@@ -245,19 +250,19 @@ func (e *Error) KindOf(k ErrorKind) bool {
 }
 
 // WithMsg returns copy of error with new message.
-func (copy Error) WithMsg(msg string) *Error {
-	return copy.With(EKMessage, msg)
+func (e Error) WithMsg(msg string) *Error {
+	return e.With(EKMessage, msg)
 }
 
 // Wrap returns copy of error with wrapped cause.
-func (copy Error) Wrap(err error) *Error {
-	return copy.With(EKCause, err)
+func (e Error) Wrap(err error) *Error {
+	return e.With(EKCause, err)
 }
 
 // With returns copy of error with name-value pair attached
-func (copy Error) With(key ErrorKey, value interface{}) *Error {
-	copy.kv = &kv{key: key, value: value, next: copy.kv}
-	return &copy
+func (e Error) With(key ErrorKey, value interface{}) *Error {
+	e.kv = &kv{key: key, value: value, next: e.kv}
+	return &e
 }
 
 // WithNewKey returns copy of error with name-value pair attached.
@@ -281,11 +286,10 @@ func (e Error) Error() string {
 	typ := e.Kind().String()
 	msg := e.Msg()
 	rest := e.restAsString()
-	if rest != "" {
-		return fmt.Sprintf("%s (%s %s)", msg, typ, rest)
-	} else {
+	if rest == "" {
 		return fmt.Sprintf("%s (%s)", msg, typ)
 	}
+	return fmt.Sprintf("%s (%s %s)", msg, typ, rest)
 }
 
 // Format implements fmt.Formatter.Format.
@@ -344,16 +348,15 @@ func (e Error) restAsString() string {
 	parts := []string{}
 	kv := e.kv
 	for kv != nil {
-		if kv.key != EKMessage && kv.key != EKCause {
+		if kv.key != EKMessage {
 			parts = append(parts, fmt.Sprintf("%s: %v", *kv.key.name, kv.value))
 		}
 		kv = kv.next
 	}
-	if len(parts) > 0 {
-		return "{" + strings.Join(parts, ", ") + "}"
-	} else {
+	if len(parts) == 0 {
 		return ""
 	}
+	return "{" + strings.Join(parts, ", ") + "}"
 }
 
 // ToMap returns information assiciated with error as a map.

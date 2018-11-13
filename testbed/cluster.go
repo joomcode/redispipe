@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/joomcode/redispipe/rediscluster"
+	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 )
 
 type Node struct {
@@ -41,7 +41,7 @@ func NewCluster(startport uint16) *Cluster {
 	time.Sleep(1 * time.Second)
 	cl.Node[0].AddSlots(0, 5499)
 	cl.Node[1].AddSlots(5500, 10999)
-	cl.Node[2].AddSlots(11000, rediscluster.NumSlots-1)
+	cl.Node[2].AddSlots(11000, redisclusterutil.NumSlots-1)
 	cl.Node[3].DoSure("CLUSTER REPLICATE", cl.Node[0].NodeId)
 	cl.Node[4].DoSure("CLUSTER REPLICATE", cl.Node[1].NodeId)
 	cl.Node[5].DoSure("CLUSTER REPLICATE", cl.Node[2].NodeId)

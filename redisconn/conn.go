@@ -15,7 +15,9 @@ import (
 )
 
 const (
-	DoAsking      = 1
+	// DoAsking is a flag for Connection.SendBatchFlag signalling to send ASKING request before transactions.
+	DoAsking = 1
+	// DoTransaction is a flag for Connection.SendBatchFlag signalling to wrap bunch of requests into MULTI/EXEC.
 	DoTransaction = 2
 
 	connDisconnected = 0
@@ -62,8 +64,11 @@ type Opts struct {
 	Async bool
 }
 
-// Connection represents single connection to single redis instance.
+// Connection is implementation of redis.Sender which represents single connection to single redis instance.
+//
 // Underlying net.Conn is re-established as necessary.
+// Queries are not retried in case of connection errors.
+// Connection is safe for multi-threaded usage, ie it doesn't need in synchronisation.
 type Connection struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -96,6 +101,9 @@ type connShard struct {
 	_pad    [16]uint64
 }
 
+// Connect establishes new connection to redis server.
+// Connect will be automatically closed if context will be cancelled or timeouted. But it could be closed explicitely
+// as well.
 func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err error) {
 	if ctx == nil {
 		return nil, redis.ErrContextIsNil.New()

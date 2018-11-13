@@ -32,12 +32,15 @@ type LogConnectFailed struct {
 	Error error // - failure reason
 }
 
+// LogDisconnected is logged when connection were broken.
 type LogDisconnected struct {
 	Error      error  // - disconnection reason
 	LocalAddr  string // - local ip:port
 	RemoteAddr string // - remote ip:port
 }
 
+// LogContextClosed is logged when Connection's context were closed, or Connection.Close() called.
+// Ie when connection is explicitly closed by user.
 type LogContextClosed struct {
 	Error error // - ctx.Err()
 }
@@ -80,7 +83,7 @@ func (d DefaultLogger) ReqStat(conn *Connection, req Request, res interface{}, n
 	// noop
 }
 
-// Noop implementation of Logger
+// NoopLogger is noop implementation of Logger
 // Useful in tests
 type NoopLogger struct{}
 

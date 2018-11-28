@@ -764,25 +764,24 @@ func (conn *Connection) writer(one *oneconn) {
 		return true
 	}
 
-BigLoop:
-	// wait for dirtyShard or close of our reader-writer pair.
-	select {
-	case _, ok = <-conn.futsignal:
-		if !ok {
-			// user closed connection
+	for {
+		// wait for dirtyShard or close of our reader-writer pair.
+		select {
+		case _, ok = <-conn.futsignal:
+			if !ok {
+				// user closed connection
+				return
+			}
+		case <-one.control:
+			// this reader-writer pair is obsolete
 			return
 		}
-	case <-one.control:
-		// this reader-writer pair is obsolete
-		return
-	}
 
-	if conn.opts.WritePause > 0 {
-		// lets sleep a bit to accumulate more requests
-		time.Sleep(conn.opts.WritePause)
-	}
+		if conn.opts.WritePause > 0 {
+			// lets sleep a bit to accumulate more requests
+			time.Sleep(conn.opts.WritePause)
+		}
 
-	for {
 		conn.futmtx.Lock()
 		// fetch requests from shard, and replace it with empty buffer with non-zero capacity
 		futures, conn.futures = conn.futures, futures
@@ -801,24 +800,14 @@ BigLoop:
 		if len(futures) == 0 {
 			// There are multiple ways to come here, and most of them are through dropFutures.
 			// Lets just ignore them.
-			goto control
+			continue
 		}
 
-		select {
-		case one.futures <- futures:
-			// Write buffer if it is large enough
-			if len(packet) > 64*1024 && !write() {
-				return
-			}
-		default:
-			// Reader doesn't fetches requests because we didn't write for a long time.
-			// After we wrote requests, reader will read answers, and then will fetch requests for answers.
-			if !write() {
-				return
-			}
-			// It blocks here. It is ok, because requests are buffered at this moment.
-			one.futures <- futures
+		if !write() {
+			return
 		}
+		// It blocks here. It is ok, because requests are buffered at this moment.
+		one.futures <- futures
 
 		select {
 		// reuse request buffer
@@ -826,28 +815,6 @@ BigLoop:
 		default:
 			// or allocate new one
 			futures = make([]future, 0, len(futures)*2)
-		}
-
-	control:
-		select {
-		case <-one.control:
-			// this reader-writer pair is obsolete
-			return
-		default:
-		}
-
-		select {
-		case _, ok = <-conn.futsignal:
-			if !ok {
-				// user closed connection
-				return
-			}
-		default:
-			// no new requests were buffered. Flush the buffer and go to blocking select.
-			if len(packet) != 0 && !write() {
-				return
-			}
-			goto BigLoop
 		}
 	}
 }

@@ -1,3 +1,4 @@
+// Package redisdumb contains dumbest implementation of redis.Sender
 package redisdumb
 
 import (
@@ -9,15 +10,18 @@ import (
 	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 )
 
+// ConnType - type of connection (simple server, or cluster aware).
 type ConnType int
 
 const (
-	TypeSimple  ConnType = 0
-	TypeCluster ConnType = 1
+	TypeSimple  ConnType = 0 // TypeSimple (default) is for connection to single server.
+	TypeCluster ConnType = 1 // TypeCluster is for connection which awares for cluster redirects.
 )
 
+// DefaultTimeout is default timeout.
 var DefaultTimeout time.Duration = 5 * time.Second
 
+// Conn is a simplest blocking implementation of redis.Sender.
 type Conn struct {
 	Addr    string
 	C       net.Conn
@@ -26,6 +30,8 @@ type Conn struct {
 	Type    ConnType
 }
 
+// Do issues command to servers.
+// It handles reconnection and redirection (if Conn.Type==TypeCluster).
 func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 	timeout := c.Timeout
 	if timeout == 0 {
@@ -76,11 +82,14 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 	return err
 }
 
+// Send implements redis.Sender.Send
 func (c *Conn) Send(r redis.Request, cb redis.Future, n uint64) {
 	res := c.Do(r.Cmd, r.Args...)
 	cb.Resolve(res, n)
 }
 
+// Send implements redis.Sender.SendMany.
+// Note, it does it in a dumb way: commands are executed sequentially.
 func (c *Conn) SendMany(reqs []redis.Request, cb redis.Future, n uint64) {
 	for i, r := range reqs {
 		res := c.Do(r.Cmd, r.Args...)
@@ -88,6 +97,7 @@ func (c *Conn) SendMany(reqs []redis.Request, cb redis.Future, n uint64) {
 	}
 }
 
+// SendTransaction implements redis.Sender.SendTransaction.
 func (c *Conn) SendTransaction(reqs []redis.Request, cb redis.Future, n uint64) {
 	if c.Type == TypeCluster {
 		// first, redirect ourself to right master
@@ -115,6 +125,7 @@ func (c *Conn) SendTransaction(reqs []redis.Request, cb redis.Future, n uint64) 
 	cb.Resolve(res, n)
 }
 
+// EachShard implements redis.Sender.EachShard.
 func (c *Conn) EachShard(f func(redis.Sender, error) bool) {
 	// TODO: correctly iterate through cluster
 	switch c.Type {
@@ -136,11 +147,13 @@ func (c *Conn) EachShard(f func(redis.Sender, error) bool) {
 	}
 }
 
+// Scanner implements redis.Scanner
 type Scanner struct {
 	redis.ScannerBase
 	c *Conn
 }
 
+// Next implements redis.Scanner.Next
 func (s *Scanner) Next(cb redis.Future) {
 	if s.Err != nil {
 		cb.Resolve(s.Err, 0)
@@ -153,6 +166,7 @@ func (s *Scanner) Next(cb redis.Future) {
 	s.DoNext(cb, s.c)
 }
 
+// Scanner implements redis.Sender.Scanner
 func (c *Conn) Scanner(opts redis.ScanOpts) redis.Scanner {
 	return &Scanner{
 		ScannerBase: redis.ScannerBase{ScanOpts: opts},
@@ -160,6 +174,7 @@ func (c *Conn) Scanner(opts redis.ScanOpts) redis.Scanner {
 	}
 }
 
+// Close closes connection (implements redis.Sender.Close)
 func (c *Conn) Close() {
 	if c.C != nil {
 		c.C.Close()
@@ -167,6 +182,7 @@ func (c *Conn) Close() {
 	}
 }
 
+// Do is shortcut for issuing single command to redis by address.
 func Do(addr string, cmd string, args ...interface{}) interface{} {
 	conn, err := net.DialTimeout("tcp", addr, DefaultTimeout)
 	if err != nil {

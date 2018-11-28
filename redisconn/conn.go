@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -521,7 +520,7 @@ func (conn *Connection) dial() error {
 		res = redis.ReadResponse(r)
 		if err := redis.AsRedisError(res); err != nil {
 			connection.Close()
-			if strings.Contains(err.Error(), "password") {
+			if !err.KindOf(redis.ErrIO) {
 				return conn.err(redis.ErrAuth).Wrap(err)
 			}
 			return conn.err(redis.ErrConnSetup).Wrap(err)
@@ -529,26 +528,32 @@ func (conn *Connection) dial() error {
 	}
 	// PING Response
 	res = redis.ReadResponse(r)
-	if err = redis.AsError(res); err != nil {
+	if err := redis.AsRedisError(res); err != nil {
 		connection.Close()
+		if !err.KindOf(redis.ErrIO) {
+			return conn.err(redis.ErrAuth).Wrap(err)
+		}
 		return conn.err(redis.ErrConnSetup).Wrap(err)
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
 		connection.Close()
-		return conn.err(redis.ErrConnSetup).
+		return conn.err(redis.ErrAuth).
 			WithMsg("ping response mismatch").
 			With(redis.EKResponse, res)
 	}
 	// SELECT DB Response
 	if conn.opts.DB != 0 {
 		res = redis.ReadResponse(r)
-		if err = redis.AsError(res); err != nil {
+		if err := redis.AsRedisError(res); err != nil {
 			connection.Close()
+			if !err.KindOf(redis.ErrIO) {
+				return conn.err(redis.ErrAuth).Wrap(err)
+			}
 			return conn.err(redis.ErrConnSetup).Wrap(err)
 		}
 		if str, ok := res.(string); !ok || str != "OK" {
 			connection.Close()
-			return conn.err(redis.ErrConnSetup).
+			return conn.err(redis.ErrAuth).
 				WithMsg("SELECT db response mismatch").
 				With(EKDb, conn.opts.DB).With(redis.EKResponse, res)
 		}

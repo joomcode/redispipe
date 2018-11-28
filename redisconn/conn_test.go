@@ -108,6 +108,83 @@ func (s *Suite) TestConnects() {
 	s.goodPing(conn, 0)
 }
 
+func (s *Suite) TestConnectsDb() {
+	conn1, err := Connect(s.ctx, s.s.Addr(), defopts)
+	s.r().Nil(err)
+	defer conn1.Close()
+
+	sync1 := redis.Sync{conn1}
+	res := sync1.Do("SET", "db", 0)
+	s.r().NoError(redis.AsError(res))
+	res = sync1.Do("GET", "db")
+	s.r().Equal(res, []byte("0"))
+
+	opts2 := defopts
+	opts2.DB = 1
+	conn2, err := Connect(s.ctx, s.s.Addr(), opts2)
+	s.r().Nil(err)
+
+	sync2 := redis.Sync{conn2}
+	res = sync2.Do("GET", "db")
+	s.r().Nil(res)
+	res = sync2.Do("SET", "db", 1)
+	s.r().NoError(redis.AsError(res))
+	res = sync2.Do("GET", "db")
+	s.r().Equal(res, []byte("1"))
+
+	res = sync1.Do("GET", "db")
+	s.r().Equal(res, []byte("0"))
+}
+
+func (s *Suite) TestFailedWithWrongDB() {
+	opts := defopts
+	opts.DB = 1024
+	conn, err := Connect(s.ctx, s.s.Addr(), opts)
+	s.r().Nil(conn)
+	s.r().Error(err)
+}
+
+func (s *Suite) TestFailedWithNonEmptyPassword() {
+	opts := defopts
+	opts.Password = "asdf"
+	conn, err := Connect(s.ctx, s.s.Addr(), opts)
+	s.r().Nil(conn)
+	s.r().Error(err)
+	s.r().True(redis.AsRedisError(err).KindOf(redis.ErrAuth))
+}
+
+func (s *Suite) Test_justToCover() {
+	opts := defopts
+	opts.Handle = &struct{}{}
+	conn, err := Connect(s.ctx, s.s.Addr(), opts)
+	s.r().Nil(err)
+	defer conn.Close()
+	s.r().Equal(s.s.Addr(), conn.Addr())
+	s.r().NotNil(conn.Ctx())
+	s.r().NotEqual(s.ctx, conn.Ctx()) // because it is derived from
+	s.r().True(conn.MayBeConnected())
+	s.r().True(conn.ConnectedNow())
+	s.r().Equal(s.s.Addr(), conn.RemoteAddr())
+	s.r().Equal(opts.Handle, conn.Handle())
+}
+
+func (s *Suite) TestSendMany_FailedWholeBatchBecauseOfOne() {
+	conn, err := Connect(s.ctx, s.s.Addr(), defopts)
+	s.r().Nil(err)
+	defer conn.Close()
+
+	results := redis.Sync{conn}.SendMany([]redis.Request{
+		redis.Req("GET", "a"),
+		redis.Req("GET", "b"),
+		redis.Req("DO_BAD_THING", make(chan int)),
+		redis.Req("SYNC"),
+	})
+	s.r().Len(results, 4)
+	for _, res := range results {
+		s.r().Error(redis.AsError(res))
+	}
+}
+
 func (s *Suite) TestStopped_DoesntConnectWithNegativeReconnectPause() {
 	s.s.Stop()
 	opts := defopts

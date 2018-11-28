@@ -1,4 +1,4 @@
-# redispipe
+# RedisPipe - the scalable Redis connector
 
 redispipe - is client for redis that uses "implicit pipelining" for highest performance
 of "caching" usage scenarios.
@@ -127,7 +127,7 @@ lesser CPU usage on Redis (ie 50%CPU->35%CPU), and 5-10% improvement on client s
 
 ## Limitations
 
-- while it allows you to send blocking calls, thou shalt not, because it will block whole pipeline:
+- while it allows you to send blocking calls, you shouldn't, because it will block whole pipeline:
   `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BZPOPMIN`, `BZPOPMAX`, `XREAD`, `XREADGROUP`, `SAVE` - you'd better
   not call this commands.
 - `WATCH` command is useless and harmful, because arbitrary commands from concurrent goroutines

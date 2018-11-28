@@ -119,7 +119,7 @@ func BenchmarkSerialGetSet(b *B) {
 
 func BenchmarkParallelGetSet(b *B) {
 	defer benchCluster(45000)()
-	parallel := runtime.GOMAXPROCS(0)
+	parallel := runtime.GOMAXPROCS(0) * 8
 	i := uint32(1)
 
 	do := func(b *B, fn func(*rand.Rand)) {
@@ -198,7 +198,7 @@ func newRedigo() *redigo.Cluster {
 		StartNodes:  []string{"127.0.0.1:45000"},
 		ConnTimeout: time.Minute,
 		KeepAlive:   128,
-		AliveTime:   time.Second,
+		AliveTime:   time.Minute,
 	})
 	if err != nil {
 		panic(err)

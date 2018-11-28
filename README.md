@@ -48,13 +48,13 @@ go test -count 1 -run FooBar -bench . -benchmem -benchtime 5s ./redisconn
 goos: linux
 goarch: amd64
 pkg: github.com/joomcode/redispipe/redisconn
-BenchmarkSerialGetSet/radixv2-8             200000    33950 ns/op    256 B/op    11 allocs/op
-BenchmarkSerialGetSet/redigo-8              200000    33143 ns/op     86 B/op     5 allocs/op
-BenchmarkSerialGetSet/redispipe-8            30000   222391 ns/op    169 B/op     8 allocs/op
-BenchmarkSerialGetSet/redispipe_pause0-8    200000    46704 ns/op    168 B/op     8 allocs/op
-BenchmarkParallelGetSet/radixv2-8          1000000    10549 ns/op    254 B/op    11 allocs/op
-BenchmarkParallelGetSet/redigo-8           1000000    10465 ns/op    119 B/op     6 allocs/op
-BenchmarkParallelGetSet/redispipe-8        3000000     2788 ns/op    168 B/op     8 allocs/op
+BenchmarkSerialGetSet/radixv2-8             200000    32257 ns/op    256 B/op    11 allocs/op
+BenchmarkSerialGetSet/redigo-8              200000    31785 ns/op     86 B/op     5 allocs/op
+BenchmarkSerialGetSet/redispipe-8            30000   266490 ns/op    168 B/op     8 allocs/op
+BenchmarkSerialGetSet/redispipe_pause0-8    200000    44396 ns/op    168 B/op     8 allocs/op
+BenchmarkParallelGetSet/radixv2-8           500000    12756 ns/op    260 B/op    11 allocs/op
+BenchmarkParallelGetSet/redigo-8           1000000    12486 ns/op    123 B/op     6 allocs/op
+BenchmarkParallelGetSet/redispipe-8        5000000     1435 ns/op    168 B/op     8 allocs/op
 ```
 
 You can see couple of things:
@@ -84,13 +84,13 @@ go test -count 1 -tags=debugredis -run FooBar -bench . -benchmem -benchtime 5s .
 goos: linux
 goarch: amd64
 pkg: github.com/joomcode/redispipe/rediscluster
-BenchmarkSerialGetSet/radixv2-8           100000    56445 ns/op   1008 B/op   31 allocs/op
-BenchmarkSerialGetSet/redigo-8            200000    43533 ns/op    246 B/op   12 allocs/op
-BenchmarkSerialGetSet/redispipe-8          30000   305684 ns/op    220 B/op   12 allocs/op
-BenchmarkSerialGetSet/redispipe_pause0-8  100000    59486 ns/op    217 B/op   12 allocs/op
-BenchmarkParallelGetSet/radixv2-8        1000000     7643 ns/op   1010 B/op   31 allocs/op
-BenchmarkParallelGetSet/redigo-8         1000000     5616 ns/op    248 B/op   13 allocs/op
-BenchmarkParallelGetSet/redispipe-8      2000000     3818 ns/op    217 B/op   12 allocs/op
+BenchmarkSerialGetSet/radixv2-8           200000    53585 ns/op   1007 B/op   31 allocs/op
+BenchmarkSerialGetSet/redigo-8            200000    40705 ns/op    246 B/op   12 allocs/op
+BenchmarkSerialGetSet/redispipe-8          30000   279838 ns/op    220 B/op   12 allocs/op
+BenchmarkSerialGetSet/redispipe_pause0-8  200000    56356 ns/op    216 B/op   12 allocs/op
+BenchmarkParallelGetSet/radixv2-8        1000000     9245 ns/op   1268 B/op   32 allocs/op
+BenchmarkParallelGetSet/redigo-8         1000000     6886 ns/op    399 B/op   13 allocs/op
+BenchmarkParallelGetSet/redispipe-8      5000000     1636 ns/op    219 B/op   12 allocs/op
 ```
 
 

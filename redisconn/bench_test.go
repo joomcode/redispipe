@@ -104,7 +104,7 @@ func BenchmarkSerialGetSet(b *B) {
 
 func BenchmarkParallelGetSet(b *B) {
 	defer benchServer(45678)()
-	parallel := runtime.GOMAXPROCS(0)
+	parallel := runtime.GOMAXPROCS(0) * 8
 
 	do := func(b *B, fn func()) {
 		b.SetParallelism(parallel)

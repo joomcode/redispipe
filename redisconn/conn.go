@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,7 +25,7 @@ const (
 	connClosed       = 3
 
 	defaultIOTimeout  = 1 * time.Second
-	defaultWritePause = 10 * time.Microsecond
+	defaultWritePause = 50 * time.Microsecond
 )
 
 // Opts - options for Connection
@@ -52,8 +51,6 @@ type Opts struct {
 	TCPKeepAlive time.Duration
 	// Handle is returned with Connection.Handle()
 	Handle interface{}
-	// Concurrency - number for shards. Default is runtime.GOMAXPROCS(-1)*4
-	Concurrency uint32
 	// WritePause - write loop pauses for this time to collect more requests.
 	// Default is 10microseconds. Set < 0 to disable.
 	// It is not wise to set it larger than 100 microseconds.
@@ -78,9 +75,9 @@ type Connection struct {
 	c     net.Conn
 	mutex sync.Mutex
 
-	shardid    uint32
-	shard      []connShard
-	dirtyShard chan uint32
+	futures   []future
+	futsignal chan struct{}
+	futmtx    sync.Mutex
 
 	firstConn chan struct{}
 	opts      Opts
@@ -93,12 +90,6 @@ type oneconn struct {
 	err     error
 	erronce sync.Once
 	futpool chan []future
-}
-
-type connShard struct {
-	sync.Mutex
-	futures []future
-	_pad    [16]uint64
 }
 
 // Connect establishes new connection to redis server.
@@ -117,13 +108,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	}
 	conn.ctx, conn.cancel = context.WithCancel(ctx)
 
-	maxprocs := uint32(runtime.GOMAXPROCS(-1))
-	if opts.Concurrency == 0 || opts.Concurrency > maxprocs*128 {
-		conn.opts.Concurrency = maxprocs
-	}
-
-	conn.shard = make([]connShard, conn.opts.Concurrency)
-	conn.dirtyShard = make(chan uint32, conn.opts.Concurrency*2)
+	conn.futsignal = make(chan struct{}, 1)
 
 	if conn.opts.IOTimeout == 0 {
 		conn.opts.IOTimeout = defaultIOTimeout
@@ -251,12 +236,6 @@ func (conn *Connection) Ping() error {
 	return nil
 }
 
-// choose next "shard" to send query to
-func (conn *Connection) getShard() (uint32, *connShard) {
-	shardn := atomic.AddUint32(&conn.shardid, 1) % conn.opts.Concurrency
-	return shardn, &conn.shard[shardn]
-}
-
 // dumb redis.Future implementation
 type dumbcb struct{}
 
@@ -293,9 +272,8 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 		return err.With(EKConnection, conn)
 	}
 
-	shardn, shard := conn.getShard()
-	shard.Lock()
-	defer shard.Unlock()
+	conn.futmtx.Lock()
+	defer conn.futmtx.Unlock()
 
 	// we need to check conn.state first
 	// since we do not lock connection itself, we need to use atomics.
@@ -306,7 +284,7 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 	case connDisconnected:
 		return conn.err(redis.ErrNotConnected)
 	}
-	futures := shard.futures
+	futures := conn.futures
 	if asking {
 		// send ASKING request before actual
 		futures = append(futures, future{&dumb, 0, 0, Request{"ASKING", nil}})
@@ -315,10 +293,10 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 
 	// should notify writer about this shard having queries.
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
-	if len(shard.futures) == 0 {
-		conn.dirtyShard <- shardn
+	if len(conn.futures) == 0 {
+		conn.futsignal <- struct{}{}
 	}
-	shard.futures = futures
+	conn.futures = futures
 	return nil
 }
 
@@ -400,9 +378,8 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 		return conn.err(redis.ErrRequestCancelled)
 	}
 
-	shardn, shard := conn.getShard()
-	shard.Lock()
-	defer shard.Unlock()
+	conn.futmtx.Lock()
+	defer conn.futmtx.Unlock()
 
 	// we need to check conn.state first
 	// since we do not lock connection itself, we need to use atomics.
@@ -414,7 +391,7 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 		return conn.err(redis.ErrNotConnected)
 	}
 
-	futures := shard.futures
+	futures := conn.futures
 	if flags&DoAsking != 0 {
 		// send ASKING request before actual
 		futures = append(futures, future{&dumb, 0, 0, Request{"ASKING", nil}})
@@ -437,10 +414,10 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 
 	// should notify writer about this shard having queries
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
-	if len(shard.futures) == 0 {
-		conn.dirtyShard <- shardn
+	if len(conn.futures) == 0 {
+		conn.futsignal <- struct{}{}
 	}
-	shard.futures = futures
+	conn.futures = futures
 	return nil
 }
 
@@ -472,20 +449,6 @@ func (conn *Connection) String() string {
 }
 
 /********** private api **************/
-
-// lock all shards to prevent creation of new requests.
-// Under this lock, all already sent requests are revoked.
-func (conn *Connection) lockShards() {
-	for i := range conn.shard {
-		conn.shard[i].Lock()
-	}
-}
-
-func (conn *Connection) unlockShards() {
-	for i := range conn.shard {
-		conn.shard[i].Unlock()
-	}
-}
 
 // setup connection to redis
 func (conn *Connection) dial() error {
@@ -595,9 +558,9 @@ func (conn *Connection) dial() error {
 		// During this time, many new request will be buffered, and then we will
 		// be switching to steady state pipelining: new requests will be written
 		// with the same speed responses will arrive.
-		futures: make(chan []future, conn.opts.Concurrency/2+1),
+		futures: make(chan []future, 64),
 		control: make(chan struct{}),
-		futpool: make(chan []future, conn.opts.Concurrency),
+		futpool: make(chan []future, 128),
 	}
 
 	go conn.writer(one)
@@ -631,9 +594,9 @@ func (conn *Connection) createConnection(reconnect bool, wg *sync.WaitGroup) err
 		// stop accepting request
 		atomic.StoreUint32(&conn.state, connDisconnected)
 		// revoke accumulated requests
-		conn.lockShards()
-		conn.dropShardFutures(err)
-		conn.unlockShards()
+		conn.futmtx.Lock()
+		conn.dropFutures(err)
+		conn.futmtx.Unlock()
 
 		// If you doesn't use reconnection, quit
 		if !reconnect {
@@ -653,26 +616,19 @@ func (conn *Connection) createConnection(reconnect bool, wg *sync.WaitGroup) err
 	return err
 }
 
-// dropShardFutures revokes all accumulated requests
+// dropFutures revokes all accumulated requests
 // Should be called with all shards locked.
-func (conn *Connection) dropShardFutures(err error) {
-	// first, empty dirtyShard queue.
-	// since shards are locked at the moment, it has finite work to be done.
-	for ok := true; ok; {
-		select {
-		case _, ok = <-conn.dirtyShard:
-		default:
-			ok = false
-		}
+func (conn *Connection) dropFutures(err error) {
+	// first, empty futsignal queue.
+	select {
+	case <-conn.futsignal:
+	default:
 	}
 	// then Resolve all future with error
-	for i := range conn.shard {
-		sh := &conn.shard[i]
-		for _, fut := range sh.futures {
-			conn.resolve(fut, err)
-		}
-		sh.futures = nil
+	for _, fut := range conn.futures {
+		conn.resolve(fut, err)
 	}
+	conn.futures = nil
 }
 
 func (conn *Connection) closeConnection(neterr *redis.Error, forever bool) {
@@ -693,14 +649,14 @@ func (conn *Connection) closeConnection(neterr *redis.Error, forever bool) {
 		conn.c = nil
 	}
 
-	conn.lockShards()
-	defer conn.unlockShards()
+	conn.futmtx.Lock()
+	defer conn.futmtx.Unlock()
 	if forever {
 		// have to close dirtyShard under shards lock
-		close(conn.dirtyShard)
+		close(conn.futsignal)
 	}
 
-	conn.dropShardFutures(neterr)
+	conn.dropFutures(neterr)
 }
 
 func (conn *Connection) control() {
@@ -764,7 +720,6 @@ func (conn *Connection) reconnect(neterr *redis.Error, c net.Conn) {
 // It doesn't write requests immediately to network, but throttles itself to accumulate more requests.
 // It is root of good pipelined performance: trade latency for throughtput.
 func (conn *Connection) writer(one *oneconn) {
-	var shardn uint32
 	var packet []byte
 	var futures []future
 	var ok bool
@@ -801,7 +756,7 @@ func (conn *Connection) writer(one *oneconn) {
 BigLoop:
 	// wait for dirtyShard or close of our reader-writer pair.
 	select {
-	case shardn, ok = <-conn.dirtyShard:
+	case _, ok = <-conn.futsignal:
 		if !ok {
 			// user closed connection
 			return
@@ -817,11 +772,10 @@ BigLoop:
 	}
 
 	for {
-		shard := &conn.shard[shardn]
-		shard.Lock()
+		conn.futmtx.Lock()
 		// fetch requests from shard, and replace it with empty buffer with non-zero capacity
-		futures, shard.futures = shard.futures, futures
-		shard.Unlock()
+		futures, conn.futures = conn.futures, futures
+		conn.futmtx.Unlock()
 
 		// serialize requests
 		for _, fut := range futures {
@@ -834,7 +788,7 @@ BigLoop:
 		}
 
 		if len(futures) == 0 {
-			// There are multiple ways to come here, and most of them are through dropShardFutures.
+			// There are multiple ways to come here, and most of them are through dropFutures.
 			// Lets just ignore them.
 			goto control
 		}
@@ -872,7 +826,7 @@ BigLoop:
 		}
 
 		select {
-		case shardn, ok = <-conn.dirtyShard:
+		case _, ok = <-conn.futsignal:
 			if !ok {
 				// user closed connection
 				return

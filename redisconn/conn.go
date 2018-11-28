@@ -294,7 +294,10 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 	// should notify writer about this shard having queries.
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
 	if len(conn.futures) == 0 {
-		conn.futsignal <- struct{}{}
+		select {
+		case conn.futsignal <- struct{}{}:
+		default:
+		}
 	}
 	conn.futures = futures
 	return nil
@@ -415,7 +418,10 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	// should notify writer about this shard having queries
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
 	if len(conn.futures) == 0 {
-		conn.futsignal <- struct{}{}
+		select {
+		case conn.futsignal <- struct{}{}:
+		default:
+		}
 	}
 	conn.futures = futures
 	return nil

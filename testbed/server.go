@@ -14,9 +14,13 @@ import (
 	"github.com/joomcode/redispipe/redisdumb"
 )
 
+// Binary is a path to redis-server
 var Binary = func() string { p, _ := exec.LookPath("redis-server"); return p }()
+
+// Dir is temporary directory where redis will run.
 var Dir = ""
 
+// InitDir initiates Dir with temporary directory in base.
 func InitDir(base string) {
 	if Dir == "" {
 		var err error
@@ -27,6 +31,7 @@ func InitDir(base string) {
 	}
 }
 
+// RmDir removes temporary directory.
 func RmDir() {
 	if Dir == "" {
 		return
@@ -37,6 +42,7 @@ func RmDir() {
 	Dir = ""
 }
 
+// Server is a handle for running redis-server.
 type Server struct {
 	Port   uint16
 	Args   []string
@@ -45,14 +51,17 @@ type Server struct {
 	Conn   redisdumb.Conn
 }
 
+// PortStr returns server's port as a string
 func (s *Server) PortStr() string {
 	return strconv.Itoa(int(s.Port))
 }
 
+// Addr - address + port
 func (s *Server) Addr() string {
 	return "127.0.0.1:" + s.PortStr()
 }
 
+// Start starts redis and waits for its initialization.
 func (s *Server) Start() {
 	if s.Cmd != nil {
 		return
@@ -104,14 +113,17 @@ func (s *Server) Start() {
 	s.Conn.Addr = s.Addr()
 }
 
+// Running returns true if server should be running at the moment.
 func (s *Server) Running() bool {
 	return s.Cmd != nil
 }
 
+// RunningNow returns true if server should be running and it is not paused (with SIGSTOP).
 func (s *Server) RunningNow() bool {
 	return s.Cmd != nil && !s.Paused
 }
 
+// Pause pauses server with SIGSTOP.
 func (s *Server) Pause() {
 	if s.Paused {
 		return
@@ -122,6 +134,7 @@ func (s *Server) Pause() {
 	s.Paused = true
 }
 
+// Resume resumes server with SIGCONT.
 func (s *Server) Resume() {
 	if !s.Paused {
 		return
@@ -132,6 +145,7 @@ func (s *Server) Resume() {
 	s.Paused = false
 }
 
+// Stop kills server.
 func (s *Server) Stop() {
 	if s.Paused {
 		s.Resume()
@@ -147,10 +161,12 @@ func (s *Server) Stop() {
 	p.Wait()
 }
 
+// Do executes command on server.
 func (s *Server) Do(cmd string, args ...interface{}) interface{} {
 	return s.Conn.Do(cmd, args...)
 }
 
+// DoSure executes command and panics if it returns error.
 func (s *Server) DoSure(cmd string, args ...interface{}) interface{} {
 	r := s.Do(cmd, args...)
 	if err, ok := r.(error); ok {

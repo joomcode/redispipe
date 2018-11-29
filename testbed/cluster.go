@@ -8,15 +8,20 @@ import (
 	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 )
 
+// Node is wrapper for Server with its NodeId
 type Node struct {
 	Server
 	NodeId []byte
 }
 
+// Cluster is a tool for starting/stopping redis cluster for tests.
 type Cluster struct {
 	Node []Node
 }
 
+// NewCluster instantiate cluster of 6 nodes (3 masters and 3 slaves).
+// Master are on ports startport, startport+1, startport+2,
+// and slaves are on ports startport+3, startport+4, startport+5
 func NewCluster(startport uint16) *Cluster {
 	cl := &Cluster{}
 	cl.Node = make([]Node, 6)
@@ -51,6 +56,7 @@ func NewCluster(startport uint16) *Cluster {
 	return cl
 }
 
+// Stop stops all cluster's servers
 func (cl *Cluster) Stop() {
 	for i := range cl.Node {
 		func() {
@@ -60,6 +66,7 @@ func (cl *Cluster) Stop() {
 	}
 }
 
+// Start starts all cluster's servers
 func (cl *Cluster) Start() {
 	for i := range cl.Node {
 		cl.Node[i].Start()
@@ -67,6 +74,7 @@ func (cl *Cluster) Start() {
 	cl.WaitClusterOk()
 }
 
+// WaitClusterOk wait for cluster configuration to be stable.
 func (cl *Cluster) WaitClusterOk() {
 	i := 0
 	for !cl.ClusterOk() {
@@ -77,6 +85,7 @@ func (cl *Cluster) WaitClusterOk() {
 	}
 }
 
+// ClusterOk checks cluster configuration.
 func (cl *Cluster) ClusterOk() bool {
 	stopped := []int{}
 	for i := range cl.Node {
@@ -132,6 +141,8 @@ func (cl *Cluster) ClusterOk() bool {
 	return true
 }
 
+// AttemptFailover tries to issue CLUSTER FAILOVER FORCE to slaves of falled masters.
+// This is work around replication bug present in Redis till 4.0.9 (including)
 func (cl *Cluster) AttemptFailover() {
 	for i := range cl.Node[:6] {
 		if !cl.Node[i].RunningNow() {
@@ -142,23 +153,27 @@ func (cl *Cluster) AttemptFailover() {
 	}
 }
 
+// InitMoveSlot issues start for slot migration.
 func (cl *Cluster) InitMoveSlot(slot, from, to int) {
 	cl.Node[to].DoSure("CLUSTER SETSLOT", slot, "IMPORTING", cl.Node[from].NodeId)
 	cl.Node[from].DoSure("CLUSTER SETSLOT", slot, "MIGRATING", cl.Node[to].NodeId)
 }
 
+// CancelMoveSlot resets slot migration.
 func (cl *Cluster) CancelMoveSlot(slot int) {
 	for i := 0; i < 3; i++ {
 		cl.Node[i].DoSure("CLUSTER SETSLOT", slot, "STABLE")
 	}
 }
 
+// FinishMoveSlot finalizes slot migration
 func (cl *Cluster) FinishMoveSlot(slot, from, to int) {
 	cl.Node[to].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 	cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST")
 }
 
+// MoveSlot moves slot's keys from host to host.
 func (cl *Cluster) MoveSlot(slot, from, to int) {
 	cl.InitMoveSlot(slot, from, to)
 	for {
@@ -176,6 +191,7 @@ func (cl *Cluster) MoveSlot(slot, from, to int) {
 	cl.WaitClusterOk()
 }
 
+// StartSeventhNode start additional node
 func (cl *Cluster) StartSeventhNode() {
 	cl.Node = append(cl.Node, Node{})
 	cl.Node[6].Port = cl.Node[0].Port + 6
@@ -197,11 +213,13 @@ func (cl *Cluster) StartSeventhNode() {
 	cl.WaitClusterOk()
 }
 
+// StopSeventhNode stops additional node
 func (cl *Cluster) StopSeventhNode() {
 	cl.Node[6].Stop()
 	cl.Node = cl.Node[:6]
 }
 
+// SetupNodeId learns nodeid of this node
 func (n *Node) SetupNodeId() {
 	res := n.Do("CLUSTER NODES")
 	lines := bytes.Split(res.([]byte), []byte{'\n'})
@@ -213,6 +231,7 @@ func (n *Node) SetupNodeId() {
 	}
 }
 
+// AddSlots issues CLUSTER ADDSLOTS command.
 func (n *Node) AddSlots(from, to int) {
 	var args = []interface{}{}
 	for i := from; i <= to; i++ {

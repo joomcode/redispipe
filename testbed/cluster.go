@@ -14,11 +14,12 @@ type Node struct {
 }
 
 type Cluster struct {
-	Node [6]Node
+	Node []Node
 }
 
 func NewCluster(startport uint16) *Cluster {
 	cl := &Cluster{}
+	cl.Node = make([]Node, 6)
 	for i := range cl.Node {
 		cl.Node[i].Port = startport + uint16(i)
 		cl.Node[i].Args = []string{
@@ -124,7 +125,7 @@ func (cl *Cluster) ClusterOk() bool {
 				masters++
 			}
 		}
-		if masters != 3 {
+		if masters != 3+(len(cl.Node)-6) {
 			return false
 		}
 	}
@@ -132,7 +133,7 @@ func (cl *Cluster) ClusterOk() bool {
 }
 
 func (cl *Cluster) AttemptFailover() {
-	for i := range cl.Node {
+	for i := range cl.Node[:6] {
 		if !cl.Node[i].RunningNow() {
 			slave := (i + 3) % 6
 			log.Printf("FORCE FAILVER %d=>%d", cl.Node[i].Port, cl.Node[slave].Port)
@@ -152,10 +153,10 @@ func (cl *Cluster) CancelMoveSlot(slot int) {
 	}
 }
 
-func (cl *Cluster) FinishMoveSlot(slot, to int) {
-	for i := 0; i < 3; i++ {
-		cl.Node[i].DoSure("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
-	}
+func (cl *Cluster) FinishMoveSlot(slot, from, to int) {
+	cl.Node[to].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST")
 }
 
 func (cl *Cluster) MoveSlot(slot, from, to int) {
@@ -170,9 +171,35 @@ func (cl *Cluster) MoveSlot(slot, from, to int) {
 		args = append(args, keys...)
 		cl.Node[from].DoSure("MIGRATE", args...)
 	}
-	cl.FinishMoveSlot(slot, to)
+	cl.FinishMoveSlot(slot, from, to)
 
 	cl.WaitClusterOk()
+}
+
+func (cl *Cluster) StartSeventhNode() {
+	cl.Node = append(cl.Node, Node{})
+	cl.Node[6].Port = cl.Node[0].Port + 6
+	cl.Node[6].Args = []string{
+		"--cluster-enabled", "yes",
+		"--cluster-config-file", "node-" + cl.Node[6].PortStr() + ".conf",
+		"--cluster-node-timeout", "200",
+		"--cluster-slave-validity-factor", "1000",
+		"--slave-serve-stale-data", "yes",
+		"--cluster-require-full-coverage", "no",
+	}
+	cl.Node[6].Start()
+	cl.Node[6].SetupNodeId()
+	cl.Node[6].DoSure("CLUSTER SET-CONFIG-EPOCH", 0)
+	for i := 0; i < 6; i++ {
+		cl.Node[i].DoSure("CLUSTER MEET", "127.0.0.1", cl.Node[6].Port)
+	}
+	time.Sleep(1 * time.Second)
+	cl.WaitClusterOk()
+}
+
+func (cl *Cluster) StopSeventhNode() {
+	cl.Node[6].Stop()
+	cl.Node = cl.Node[:6]
 }
 
 func (n *Node) SetupNodeId() {

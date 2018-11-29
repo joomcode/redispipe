@@ -2,10 +2,12 @@ package rediscluster_test
 
 import (
 	"context"
+	"log"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -578,6 +580,92 @@ Loop:
 	s.Equal([]string(nil), DebugEvents())
 }
 
+func (s *Suite) TestAllReturns_GoodMoving() {
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl}
+
+	s.fillMany(sconn, "allgoodmove")
+	log.Println("Starting seventh")
+	s.cl.StartSeventhNode()
+	log.Println("Started seventh")
+	defer s.cl.StopSeventhNode()
+
+	const N = 400
+	ch := make(chan struct{}, N)
+	var good uint32
+	var bad uint32
+	var stop uint32
+
+	for i := 0; i < N; i++ {
+		go func(i int) {
+			defer func() { ch <- struct{}{} }()
+			for j := 0; atomic.LoadUint32(&stop) == 0; j++ {
+				log.Printf("%d:%d\n", i, j)
+				skey := s.keys[(i*N+j)*127%NumSlots]
+				key := slotkey("allgoodmove", skey)
+				res := sconn.Do(s.ctx, "GET", key)
+				if !s.Equal([]byte(skey), res) {
+					log.Println("Res ", res)
+					atomic.AddUint32(&bad, 1)
+				}
+
+				keya := slotkey("allgoodmove", skey, "a")
+				keyb := slotkey("allgoodmove", skey, "b")
+
+				z := i*53 + j*51
+				reverse := (z^z>>8)&1 == 0
+				if reverse {
+					keya, keyb = keyb, keya
+				}
+
+				reqs := []redis.Request{
+					redis.Req("SET", keya, keyb),
+					redis.Req("GET", keyb),
+				}
+				ress := sconn.SendMany(s.ctx, reqs)
+
+				if !s.Equal("OK", ress[0]) {
+					log.Println("Ress[0] ", ress[0])
+					atomic.AddUint32(&bad, 1)
+				}
+				if ress[1] != nil && !s.Equal([]byte(keya), ress[1]) {
+					log.Println("Ress[1] ", ress[1])
+					atomic.AddUint32(&bad, 1)
+				}
+			}
+			atomic.AddUint32(&good, 1)
+		}(i)
+	}
+
+	s.cl.MoveSlot(1, 0, 6)
+	for i := 0; i < 10; i++ {
+		s.cl.MoveSlot(2, 0, 6)
+		s.cl.MoveSlot(2, 6, 0)
+	}
+	s.cl.MoveSlot(1, 6, 0)
+	atomic.StoreUint32(&stop, 1)
+
+	cnt := 0
+Loop:
+	for cnt < N {
+		select {
+		case <-s.ctx.Done():
+			break Loop
+		case <-ch:
+			cnt++
+		}
+	}
+	s.Equal(N, cnt, "Not all goroutines finished")
+	s.Equal(N, int(good))
+	s.Equal(0, int(bad))
+	s.Contains(DebugEvents(), "moved")
+	s.Contains(DebugEvents(), "asking")
+	s.Contains(DebugEvents(), "addNode")
+}
+
 func (s *Suite) TestAllReturns_Bad() {
 	s.ctxcancel()
 	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 10*time.Minute)
@@ -620,7 +708,9 @@ func (s *Suite) TestAllReturns_Bad() {
 				keya := slotkey("allbad", skey, "a")
 				keyb := slotkey("allbad", skey, "b")
 				z := i*53 + j*51
-				reverse := (z^z>>8)&1 == 0
+				z ^= z >> 8
+				reverse := z&1 == 0
+				transact := z&2 == 0
 				if reverse {
 					keya, keyb = keyb, keya
 				}
@@ -628,10 +718,16 @@ func (s *Suite) TestAllReturns_Bad() {
 					redis.Req("SET", keya, keyb),
 					redis.Req("GET", keyb),
 				}
-				ress := sconn.SendMany(s.ctx, reqs)
-
+				var ress []interface{}
+				var err error
+				if !transact {
+					ress = sconn.SendMany(s.ctx, reqs)
+				} else {
+					ress, err = sconn.SendTransaction(s.ctx, reqs)
+				}
 				if check {
 					ok := s.Equal([]byte(skey), res)
+					ok = ok && err == nil
 					ok = ok && s.Equal("OK", ress[0])
 					if ress[1] != nil {
 						ok = ok && s.Equal([]byte(keya), ress[1])

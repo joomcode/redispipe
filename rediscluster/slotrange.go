@@ -124,7 +124,7 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 	}
 
 	c.nodeWait.Lock()
-	c.nodeWait.promises = nil
+	c.nodeWait.promises = make(map[string]*[]connThen, 1)
 	c.nodeWait.Unlock()
 
 	go newConfig.setConnRoles()

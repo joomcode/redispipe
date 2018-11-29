@@ -86,7 +86,8 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 
 	// initiate queue for this address
 	future := &[]connThen{then}
-	c.nodeWait.promises[addr] = future
+	promises := c.nodeWait.promises
+	promises[addr] = future
 
 	go func() {
 		node := c.addNode(addr)
@@ -96,7 +97,7 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 			err = c.err(redis.ErrDial).With(EKAddress, addr)
 		}
 		c.nodeWait.Lock()
-		delete(c.nodeWait.promises, addr)
+		delete(promises, addr)
 		c.nodeWait.Unlock()
 		// since we deleted from promises under lock, no one could append to *future any more.
 		// lets run callbacks.
@@ -108,6 +109,7 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 
 // addNode creates host handle and adds it to cluster configuration.
 func (c *Cluster) addNode(addr string) *node {
+	DebugEvent("addNode")
 	var node *node
 	var ok bool
 	if node, ok = c.getConfig().nodes[addr]; ok {

@@ -682,7 +682,7 @@ var transactionPool = sync.Pool{New: func() interface{} { return &transaction{} 
 
 func (t *transaction) resolve(res interface{}) {
 	if err := redis.AsRedisError(res); err != nil {
-		err = err.With(redis.EKRequests, t.reqs).WithNewKey(EKCluster, t.c)
+		err = err.WithNewKey(redis.EKRequests, t.reqs).WithNewKey(EKCluster, t.c)
 	}
 	t.cb.Resolve(res, t.off)
 	*t = transaction{}

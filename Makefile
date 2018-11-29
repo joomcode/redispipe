@@ -4,9 +4,13 @@ testredis:
 	go test ./redis
 
 testconn:
+ 	killall redis-server
+ 	rm ./rediscluster/redis_test_*
 	go test -count 1 ./redisconn
 
 testcluster:
+ 	killall redis-server
+ 	rm ./rediscluster/redis_test_*
 	go test -count 1 -tags debugredis ./rediscluster
 
 bench: benchconn benchcluster

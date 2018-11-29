@@ -374,9 +374,9 @@ func (s *Suite) TestMasterOnly() {
 			time.Sleep(clustopts.CheckInterval * 2)
 			s.Contains(DebugEvents(), "automatic masteronly")
 
-			DebugEventsReset()
 			err = redisclusterutil.UnsetMasterOnly(cl, "", []uint16{1, 2})
 			s.r().Nil(err)
+			DebugEventsReset()
 			time.Sleep(clustopts.CheckInterval * 2)
 			s.NotContains(DebugEvents(), "automatic masteronly")
 		}()
@@ -662,7 +662,6 @@ Loop:
 	s.Equal(N, int(good))
 	s.Equal(0, int(bad))
 	s.Contains(DebugEvents(), "moved")
-	s.Contains(DebugEvents(), "asking")
 	s.Contains(DebugEvents(), "addNode")
 }
 

@@ -154,18 +154,55 @@ func (s *Suite) TestFailedWithNonEmptyPassword() {
 }
 
 func (s *Suite) Test_justToCover() {
+	// this test just to increase code coverage
 	opts := defopts
 	opts.Handle = &struct{}{}
-	conn, err := Connect(s.ctx, s.s.Addr(), opts)
+	opts.IOTimeout = -1
+	opts.TCPKeepAlive = -1
+
+	conn, err := Connect(nil, s.s.Addr(), opts)
+	s.r().Nil(conn)
+	s.r().Error(err)
+	conn, err = Connect(s.ctx, "", opts)
+	s.r().Nil(conn)
+	s.r().Error(err)
+
+	conn, err = Connect(s.ctx, "tcp://"+s.s.Addr(), opts)
 	s.r().Nil(err)
 	defer conn.Close()
-	s.r().Equal(s.s.Addr(), conn.Addr())
+	s.r().Equal("tcp://"+s.s.Addr(), conn.Addr())
 	s.r().NotNil(conn.Ctx())
 	s.r().NotEqual(s.ctx, conn.Ctx()) // because it is derived from
 	s.r().True(conn.MayBeConnected())
 	s.r().True(conn.ConnectedNow())
 	s.r().Equal(s.s.Addr(), conn.RemoteAddr())
+	s.r().True(strings.HasPrefix(conn.LocalAddr(), "127.0.0.1:"))
 	s.r().Equal(opts.Handle, conn.Handle())
+
+	var c cancelledFuture
+	conn.Send(redis.Req("GET", "a"), &c, 0)
+	s.r().Equal(1, c.cnt)
+	s.r().Error(redis.AsError(c.res))
+	conn.SendTransaction([]redis.Request{}, &c, 0)
+	s.r().Equal(2, c.cnt)
+	s.r().Error(redis.AsError(c.res))
+
+	conn.Send(redis.Req("GET", make(chan int)), nil, 0)
+	conn.SendMany([]redis.Request{redis.Req("GET", 1)}, nil, 0)
+}
+
+type cancelledFuture struct {
+	cnt int
+	res interface{}
+}
+
+func (c *cancelledFuture) Cancelled() bool {
+	return true
+}
+
+func (c *cancelledFuture) Resolve(res interface{}, n uint64) {
+	c.res = res
+	c.cnt++
 }
 
 func (s *Suite) TestSendMany_FailedWholeBatchBecauseOfOne() {

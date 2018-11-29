@@ -306,7 +306,7 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *r
 // Sends several requests asynchronously. Fills with cb.Resolve(res, n), cb.Resolve(res, n+1), ... etc.
 // Note: it could resolve requests in arbitrary order.
 func (conn *Connection) SendMany(requests []Request, cb Future, start uint64) {
-	// split requests by chunks of 16 to not block shards for a long time.
+	// split requests by chunks of 16 to not block futures for a long time.
 	// Also it could help a bit to save pipeline with writer loop.
 	for i := 0; i < len(requests); i += 16 {
 		j := i + 16
@@ -369,15 +369,15 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 }
 
 func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64, flags int) *redis.Error {
+	if cb.Cancelled() {
+		return conn.err(redis.ErrRequestCancelled)
+	}
+
 	if len(requests) == 0 {
 		if flags&DoTransaction != 0 {
 			cb.Resolve([]interface{}{}, start)
 		}
 		return nil
-	}
-
-	if cb != nil && cb.Cancelled() {
-		return conn.err(redis.ErrRequestCancelled)
 	}
 
 	conn.futmtx.Lock()
@@ -802,7 +802,6 @@ func (conn *Connection) writer(one *oneconn) {
 		if !write() {
 			return
 		}
-		// It blocks here. It is ok, because requests are buffered at this moment.
 		one.futures <- futures
 
 		select {

@@ -441,10 +441,6 @@ func (cw transactionFuture) Resolve(res interface{}, n uint64) {
 
 // SendTransaction implements redis.Sender.SendTransaction
 func (conn *Connection) SendTransaction(reqs []Request, cb Future, off uint64) {
-	if cb.Cancelled() {
-		cb.Resolve(conn.err(redis.ErrRequestCancelled), off)
-		return
-	}
 	conn.SendBatchFlags(reqs, transactionFuture{cb, len(reqs), off}, 0, DoTransaction)
 }
 

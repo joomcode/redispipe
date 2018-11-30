@@ -681,15 +681,15 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 	var good uint32
 	var bad uint32
 	var stop uint32
+	ctx := s.ctx
 
 	for i := 0; i < N; i++ {
 		go func(i int) {
 			defer func() { ch <- struct{}{} }()
 			for j := 0; atomic.LoadUint32(&stop) == 0; j++ {
-				log.Printf("%d:%d\n", i, j)
 				skey := s.keys[(i*N+j)*127%NumSlots]
 				key := slotkey("allgoodmove", skey)
-				res := sconn.Do(s.ctx, "GET", key)
+				res := sconn.Do(ctx, "GET", key)
 				if !s.Equal([]byte(skey), res) {
 					log.Println("Res ", res)
 					atomic.AddUint32(&bad, 1)
@@ -708,7 +708,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 					redis.Req("SET", keya, keyb),
 					redis.Req("GET", keyb),
 				}
-				ress := sconn.SendMany(s.ctx, reqs)
+				ress := sconn.SendMany(ctx, reqs)
 
 				if !s.Equal("OK", ress[0]) {
 					log.Println("Ress[0] ", ress[0])
@@ -735,7 +735,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 Loop:
 	for cnt < N {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			break Loop
 		case <-ch:
 			cnt++

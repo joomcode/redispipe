@@ -93,6 +93,7 @@ func (cl *Cluster) ClusterOk() bool {
 			stopped = append(stopped, i)
 		}
 	}
+	var hashsum uint64
 	for i := range cl.Node {
 		if !cl.Node[i].RunningNow() {
 			continue
@@ -137,6 +138,12 @@ func (cl *Cluster) ClusterOk() bool {
 		if masters != 3+(len(cl.Node)-6) {
 			return false
 		}
+		infos, _ := redisclusterutil.ParseClusterNodes(res)
+		hash := infos.HashSum()
+		if hash != hashsum && hashsum != 0 {
+			return false
+		}
+		hashsum = hash
 	}
 	return true
 }
@@ -170,7 +177,8 @@ func (cl *Cluster) CancelMoveSlot(slot int) {
 func (cl *Cluster) FinishMoveSlot(slot, from, to int) {
 	cl.Node[to].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 	cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
-	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST")
+	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST") // proprietary extention
+	cl.Node[to].Do("CLUSTER BUMPEPOCH")
 }
 
 // MoveSlot moves slot's keys from host to host.

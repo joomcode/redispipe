@@ -1,7 +1,18 @@
 # RedisPipe - the scalable Redis connector
 
-redispipe - is client for redis that uses "implicit pipelining" for highest performance
-of "caching" usage scenarios.
+RedisPipe - is client for redis that uses "implicit pipelining" for highest performance.
+
+## Highlights
+
+- scalable: more thoughput you try to get from, faster it does.
+- thread-safe: no need to lock around connection, no need to "return to pool", etc
+- Pipelining is implicit,
+- transactions supported (but without `WATCH`),
+- hook for custom logging,
+- hook for request timing reporting.
+
+
+## Introduction
 
 https://redis.io/topics/pipelining
 
@@ -37,7 +48,7 @@ in a highly concurrent environment. It writes all requests to single connection 
 continuously reads answers in other goroutine.
 
 Note that it trades a bit of latency for throughput, and therefore could be not optimal for
-non-concurrent usage.
+low-concurrent low-request-per-second usage.
 
 ## Performance
 
@@ -58,9 +69,8 @@ BenchmarkParallelGetSet/redispipe-8        5000000     1435 ns/op    168 B/op   
 ```
 
 You can see couple of things:
-- first, redispipe has highest performance in Parallel benchmarks both for single connection
-and for cluster,
-- second, redispipe has lower performance for single-threaded-single-redis case.
+- first, redispipe has highest performance in Parallel benchmarks,
+- second, redispipe has lower performance for single-threaded case.
 
 That is true: redispipe trades latency for throughput. Every single request has additional
 latency for hidden batching in a connector. But thanks to batching, more requests can be sent
@@ -69,12 +79,12 @@ to redis and answered by redis in an interval of time.
 `SerialGetSet/redispipe_pause0` shows single-threaded results with disabled "batching".
 This way redispipe is quite close to other connectors in performance, though there is still
 small overhead of internal design. But I would not recommend disable batching (unless your use case
-is single threaded), because it increases CPU usage under high concurrent load both on client
-and on redisd.
+is single threaded), because it increases CPU usage under highly concurrent load both on client
+and on redis-server.
 
 Parallel benchmark for single redis has Redis CPU usage as a bottleneck for both `radix.v2` and
-`redigo` (ie Redis eats whole CPU core). But with redispipe Redis consumes only 75% of a core
-despite it could serve 3 times more requests. It clearly shows how usage of implicitly
+`redigo` (ie Redis eats whole CPU core). But with redispipe Redis server consumes only 75% of
+a core despite it could serve 8 times more requests. It clearly shows how usage of implicitly
 pipelined connector helps to get much more RPS from single Redis server.
 
 ### Cluster
@@ -115,15 +125,6 @@ for such good results.
 In practice, performance gain is lesser, because your application do other useful work aside
 of sending requests to Redis. But gain is still noticeable. At our setup, we have around 10-15%
 lesser CPU usage on Redis (ie 50%CPU->35%CPU), and 5-10% improvement on client side. 
-
-## Capabilities
-
-- fast
-- thread-safe: no need to lock around connection, no need to "return to pool", etc
-- Pipelining is implicit,
-- transactions supported (but without `WATCH`),
-- hook for custom logging,
-- hook for request timing reporting.
 
 ## Limitations
 

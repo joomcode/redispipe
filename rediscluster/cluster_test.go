@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -143,6 +144,88 @@ func (s *Suite) TestBasicOps() {
 	for _, key := range s.keys {
 		s.Equal([]byte(key+"y"), scl.Do(s.ctx, "GET", slotkey("basic", key)))
 	}
+}
+
+func (s *Suite) Test_justToCover() {
+	cl, err := NewCluster(nil, nil, clustopts)
+	s.r().Nil(cl)
+	s.r().Error(err)
+
+	cl, err = NewCluster(s.ctx, nil, clustopts)
+	s.r().Nil(cl)
+	s.r().Error(err)
+
+	opts := clustopts
+	opts.CheckInterval = 0
+	opts.MovedRetries = 11
+	opts.WaitToMigrate = time.Microsecond
+	cl, err = NewCluster(s.ctx, []string{"never-known-lost-my-host.badubadu.duba:43210"}, opts)
+	s.r().Nil(cl)
+	s.r().Error(err)
+
+	opts.CheckInterval = 11 * time.Minute
+	opts.MovedRetries = 1
+	opts.WaitToMigrate = time.Second
+	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:43200"}, opts)
+	s.r().Nil(cl)
+	s.r().Error(err)
+
+	opts = clustopts
+	opts.ConnsPerHost = 1
+	opts.Handle = new(struct{})
+	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	s.r().NotEqual(s.ctx, cl.Ctx())
+	s.r().NotNil(cl.Ctx())
+	s.r().Regexp("Cluster.*default", cl.String())
+	s.r().Equal(opts.Handle, cl.Handle())
+
+	var cnc cancelledFuture
+	cl.SendTransaction(nil, &cnc, 0)
+	s.r().Equal(1, cnc.cnt)
+	s.r().Error(redis.AsError(cnc.res))
+	cl.Send(redis.Req("GET", "a"), &cnc, 0)
+	s.r().Equal(2, cnc.cnt)
+	s.r().Error(redis.AsError(cnc.res))
+
+	var results interface{}
+	fut := redis.FuncFuture(func(res interface{}, n uint64) { results = res })
+	cl.SendTransaction(nil, fut, 0)
+	s.r().Equal([]interface{}{}, results)
+
+	cl.SendTransaction([]redis.Request{redis.Req("GET", "A"), redis.Req("GET", "a")}, fut, 0)
+	s.r().Error(redis.AsError(results))
+
+	res := redis.Sync{cl}.Send(redis.Req("SADD", "tocoverset", "a", "b", "c"))
+	s.r().NoError(redis.AsError(res))
+	var allkeys []string
+	scanner := redis.Sync{cl}.Scanner(redis.ScanOpts{Cmd: "SSCAN", Key: "tocoverset"})
+	for {
+		keys, err := scanner.Next()
+		if err != nil {
+			s.r().Equal(redis.ScanEOF, err)
+			break
+		}
+		allkeys = append(allkeys, keys...)
+	}
+	sort.Strings(allkeys)
+	s.r().Equal([]string{"a", "b", "c"}, allkeys)
+}
+
+type cancelledFuture struct {
+	cnt int
+	res interface{}
+}
+
+func (c *cancelledFuture) Cancelled() bool {
+	return true
+}
+
+func (c *cancelledFuture) Resolve(res interface{}, n uint64) {
+	c.res = res
+	c.cnt++
 }
 
 func (s *Suite) TestSendMany() {
@@ -297,7 +380,7 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 	s.r().Nil(err)
 	defer cl.Close()
 
-	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+	sconn := redis.SyncCtx{cl.WithPolicy(PreferSlaves)}
 
 	key := slotkey("toslave", s.keys[1], "timeout")
 	sconn.Do(s.ctx, "SET", key, "1")

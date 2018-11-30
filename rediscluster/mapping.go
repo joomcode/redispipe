@@ -1,6 +1,7 @@
 package rediscluster
 
 import (
+	"fmt"
 	"sync/atomic"
 	"unsafe"
 
@@ -261,12 +262,13 @@ func (c *Cluster) connForAddress(addr string) *redisconn.Connection {
 }
 
 func connHealthy(c *redisconn.Connection, needState int) bool {
-	if needState == needConnected {
+	switch needState {
+	case needConnected:
 		return c.ConnectedNow()
-	} else if needState == mayBeConnected {
+	case mayBeConnected, preferConnected:
 		return c.MayBeConnected()
-	} else {
-		panic("unknown needState")
+	default:
+		panic(fmt.Sprintf("unknown needState: %d", needState))
 	}
 }
 

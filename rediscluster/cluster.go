@@ -441,6 +441,11 @@ func (c *Cluster) Send(req Request, cb Future, off uint64) {
 // SendWithPolicy allows to choose master/replica policy for individual requests.
 // You can also call cluster.WithPolicy() to obtain redis.Sender with predefined policy.
 func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Future, off uint64) {
+	if cb != nil && cb.Cancelled() {
+		cb.Resolve(c.err(redis.ErrRequestCancelled).With(redis.EKRequest, req), off)
+		return
+	}
+
 	slot, ok := redisclusterutil.ReqSlot(req)
 	if !ok {
 		// Probably, redis-cluster is not configured properly yet, or it is broken at the moment.
@@ -506,10 +511,12 @@ type request struct {
 var requestPool = sync.Pool{New: func() interface{} { return &request{} }}
 
 func (r *request) resolve(res interface{}) {
-	if err := redis.AsRedisError(res); err != nil {
-		res = err.WithNewKey(redis.EKRequest, r.req).WithNewKey(EKCluster, r.c)
+	if r.cb != nil {
+		if err := redis.AsRedisError(res); err != nil {
+			res = err.WithNewKey(redis.EKRequest, r.req).WithNewKey(EKCluster, r.c)
+		}
+		r.cb.Resolve(res, r.off)
 	}
-	r.cb.Resolve(res, r.off)
 	*r = request{}
 	requestPool.Put(r)
 }
@@ -626,6 +633,10 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 // It redirects whole transaction on MOVED/ASKING requests, and waits a bit
 // if not all keys in transaction were moved.
 func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
+	if cb != nil && cb.Cancelled() {
+		cb.Resolve(c.err(redis.ErrRequestCancelled).With(redis.EKRequests, reqs), off+uint64(len(reqs)))
+		return
+	}
 	if len(reqs) == 0 {
 		if cb != nil {
 			cb.Resolve([]interface{}{}, off)
@@ -681,10 +692,12 @@ type transaction struct {
 var transactionPool = sync.Pool{New: func() interface{} { return &transaction{} }}
 
 func (t *transaction) resolve(res interface{}) {
-	if err := redis.AsRedisError(res); err != nil {
-		err = err.WithNewKey(redis.EKRequests, t.reqs).WithNewKey(EKCluster, t.c)
+	if t.cb != nil {
+		if err := redis.AsRedisError(res); err != nil {
+			err = err.WithNewKey(redis.EKRequests, t.reqs).WithNewKey(EKCluster, t.c)
+		}
+		t.cb.Resolve(res, t.off)
 	}
-	t.cb.Resolve(res, t.off)
 	*t = transaction{}
 	transactionPool.Put(t)
 }

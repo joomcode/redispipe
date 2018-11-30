@@ -2,6 +2,7 @@ package redis
 
 import (
 	"errors"
+	"log"
 )
 
 // Sender is interface of client implementation.
@@ -62,22 +63,24 @@ type ScanOpts struct {
 // Request returns corresponding request to be send.
 // Used mostly internally
 func (s ScanOpts) Request(it []byte) Request {
-	if it == nil {
+	if len(it) == 0 {
 		it = []byte("0")
 	}
-	args := []interface{}{it}
+	args := make([]interface{}, 0, 6)
 	if s.Cmd == "" {
 		s.Cmd = "SCAN"
 	}
 	if s.Cmd != "SCAN" {
 		args = append(args, s.Key)
 	}
+	args = append(args, it)
 	if s.Match != "" {
 		args = append(args, "MATCH", s.Match)
 	}
 	if s.Count > 0 {
 		args = append(args, "COUNT", s.Count)
 	}
+	log.Println(append([]interface{}{"SCAN REQUEST: ", s.Cmd}, args...)...)
 	return Request{s.Cmd, args}
 }
 
@@ -114,6 +117,7 @@ func (s *ScannerBase) Cancelled() bool {
 func (s *ScannerBase) Resolve(res interface{}, _ uint64) {
 	var keys []string
 	s.Iter, keys, s.Err = ScanResponse(res)
+	log.Println("scan result ", s, keys)
 	cb := s.cb
 	s.cb = nil
 	if s.Err != nil {

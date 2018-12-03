@@ -144,10 +144,10 @@ func BenchmarkParallelGetSet(b *B) {
 		b.ResetTimer()
 		do(b, func(rng *rand.Rand) {
 			key := "foo" + strconv.Itoa(rng.Intn(65536))
-			if rdx2.Cmd("SET", key, "bar").Err != nil {
+			if err := rdx2.Cmd("SET", key, "bar").Err; err != nil {
 				b.Fatal(err)
 			}
-			if rdx2.Cmd("GET", key).Err != nil {
+			if err := rdx2.Cmd("GET", key).Err; err != nil {
 				b.Fatal(err)
 			}
 		})

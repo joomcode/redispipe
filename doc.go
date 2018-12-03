@@ -1,23 +1,21 @@
 /*
-Package redispipe - is client for redis that uses "implicit pipelining" for highest performance
-of "caching" usage scenarios.
+Package redispipe - high throughput Redis connector with implicit pipelining.
 
 https://redis.io/topics/pipelining
 
 Pipelining improves maximum throughput that redis can serve, and reduces CPU usage both on
 redis server and on client. Mostly it comes from saving system CPU consumption.
 
-But it is not always possible to use pipelining explicitly: not always you have bunch of
-commands you ready to send. Usually there are dozen of concurrent goroutines, each sends just
-one request at a time. To handle usual workload, pipelining have to be implicit.
+But it is not always possible to use pipelining explicitly: usually there are dozen of
+concurrent goroutines, each sends just one request at a time. To handle usual workload,
+pipelining have to be implicit.
 
-All known Golang redis connectors use connection-per-request working model with pool of
-connection, and provide only explicit pipelining. It worked far from optimally under highly
-concurrent load.
+All known Golang redis connectors use connection-per-request working model with connection pool,
+and provide only explicit pipelining. It worked far from optimal under highly concurrent load.
 
-This connector were created as implicitly pipelined from ground to achieve maximum performance
+This connector was created as implicitly pipelined from ground to achieve maximum performance
 in a highly concurrent environment. It writes all requests to single connection to redis, and
-continuously reads answers in other goroutine.
+continuously reads answers from in other goroutine.
 
 Note that it trades a bit of latency for throughput, and therefore could be not optimal for
 non-concurrent usage.

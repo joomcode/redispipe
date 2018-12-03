@@ -1,16 +1,22 @@
-# RedisPipe - the scalable Redis connector
+# RedisPipe - high throughput Redis connector with implicit pipelining.
 
 RedisPipe - is client for redis that uses "implicit pipelining" for highest performance.
 
 ## Highlights
 
-- scalable: more thoughput you try to get from, faster it does.
+- scalable: the more throughput you try to get, the more efficient it is.
+- cares about redis: redis needs less CPU to perform same throughput.
 - thread-safe: no need to lock around connection, no need to "return to pool", etc
 - Pipelining is implicit,
-- transactions supported (but without `WATCH`),
+- transactions are supported (but without `WATCH`),
 - hook for custom logging,
 - hook for request timing reporting.
 
+```
+BenchmarkParallelGetSet/radixv2-8        1000000     9245 ns/op   1268 B/op   32 allocs/op
+BenchmarkParallelGetSet/redigo-8         1000000     6886 ns/op    399 B/op   13 allocs/op
+BenchmarkParallelGetSet/redispipe-8      5000000     1636 ns/op    219 B/op   12 allocs/op
+ ```
 
 ## Introduction
 
@@ -19,12 +25,12 @@ https://redis.io/topics/pipelining
 Pipelining improves maximum throughput that redis can serve, and reduces CPU usage both on
 redis server and on client. Mostly it comes from saving system CPU consumption.
 
-But it is not always possible to use pipelining explicitly: not always you have bunch of
-commands you ready to send. Usually there are dozen of concurrent goroutines, each sends just
-one request at a time. To handle usual workload, pipelining have to be implicit. 
+But it is not always possible to use pipelining explicitly: usually there are dozen of
+concurrent goroutines, each sends just one request at a time. To handle usual workload,
+pipelining have to be implicit.
 
-All known Golang redis connectors use connection-per-request working model with pool of
-connection, and provide only explicit pipelining. It worked far from optimally under our load.
+All known Golang redis connectors use connection-per-request model with connection pool,
+and provide only explicit pipelining. It worked far from optimal under our load.
 
 "Implicit pipelining" is used in many drivers for other languages:
 - https://github.com/NodeRedis/node_redis , https://github.com/h0x91b/redis-fast-driver ,
@@ -43,9 +49,9 @@ connection, and provide only explicit pipelining. It worked far from optimally u
 
 But there were no such connector for Golang.
 
-This connector were created as implicitly pipelined from ground to achieve maximum performance
+This connector was created as implicitly pipelined from ground to achieve maximum performance
 in a highly concurrent environment. It writes all requests to single connection to redis, and
-continuously reads answers in other goroutine.
+continuously reads answers from in other goroutine.
 
 Note that it trades a bit of latency for throughput, and therefore could be not optimal for
 low-concurrent low-request-per-second usage.

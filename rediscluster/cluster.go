@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joomcode/errorx"
+
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 	"github.com/joomcode/redispipe/redisconn"
@@ -161,10 +163,10 @@ type clusterCommand struct {
 // to all cluster's hosts.
 func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, error) {
 	if ctx == nil {
-		return nil, redis.ErrContextIsNil.New()
+		return nil, redis.ErrContextIsNil.New("context is not specified")
 	}
 	if len(initAddrs) == 0 {
-		return nil, redis.ErrNoAddressProvided.New()
+		return nil, redis.ErrNoAddressProvided.New("addresses are not specified")
 	}
 	cluster := &Cluster{
 		opts: opts,
@@ -225,7 +227,7 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 		// Lets resolve them to ip addresses.
 		addr, err = redisclusterutil.Resolve(addr)
 		if err != nil {
-			return nil, ErrAddressNotResolved.NewWrap(err)
+			return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
 		}
 		if _, ok := config.masters[addr]; !ok {
 			config.nodes[addr], err = cluster.newNode(addr, true)
@@ -442,14 +444,14 @@ func (c *Cluster) Send(req Request, cb Future, off uint64) {
 // You can also call cluster.WithPolicy() to obtain redis.Sender with predefined policy.
 func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Future, off uint64) {
 	if cb != nil && cb.Cancelled() {
-		cb.Resolve(c.err(redis.ErrRequestCancelled).With(redis.EKRequest, req), off)
+		cb.Resolve(c.err(redis.ErrRequestCancelled).WithProperty(redis.EKRequest, req), off)
 		return
 	}
 
 	slot, ok := redisclusterutil.ReqSlot(req)
 	if !ok {
 		// Probably, redis-cluster is not configured properly yet, or it is broken at the moment.
-		err := c.err(redis.ErrNoSlotKey).With(redis.EKRequest, req)
+		err := c.err(redis.ErrNoSlotKey).WithProperty(redis.EKRequest, req)
 		cb.Resolve(err, off)
 		return
 	}
@@ -458,7 +460,7 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 
 	conn, err := c.connForSlot(slot, policy, nil)
 	if err != nil {
-		cb.Resolve(err.(*redis.Error).With(redis.EKRequest, req), off)
+		cb.Resolve(err.WithProperty(redis.EKRequest, req), off)
 		return
 	}
 
@@ -512,8 +514,10 @@ var requestPool = sync.Pool{New: func() interface{} { return &request{} }}
 
 func (r *request) resolve(res interface{}) {
 	if r.cb != nil {
-		if err := redis.AsRedisError(res); err != nil {
-			res = err.WithNewKey(redis.EKRequest, r.req).WithNewKey(EKCluster, r.c)
+		if err := redis.AsErrorx(res); err != nil {
+			err = withNewProperty(err, redis.EKRequest, r.req)
+			err = withNewProperty(err, EKCluster, r.c)
+			res = err
 		}
 		r.cb.Resolve(res, r.off)
 	}
@@ -531,7 +535,7 @@ func (r *request) Cancelled() bool {
 // If request resolved with network error, and its master-replica policy allows for retry,
 // another request attempt will be invoked here.
 func (r *request) Resolve(res interface{}, _ uint64) {
-	err := redis.AsRedisError(res)
+	err := redis.AsErrorx(res)
 	if err == nil {
 		// if there is no error, resolve
 		r.resolve(res)
@@ -551,16 +555,15 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 		return
 	}
 
-	kind := err.Kind()
 	switch {
-	case kind.KindOf(redis.ErrIO):
+	case err.IsOfType(redis.ErrIO):
 		if !r.mayRetry {
 			// It is not safe to retry read-write operation
 			r.resolve(err)
 			return
 		}
 		fallthrough
-	case kind.KindOf(redis.ErrConnection), kind.KindOf(redis.ErrContextClosed):
+	case err.HasTrait(redis.ErrTraitNotSent):
 		// It is safe to retry readonly requests, and if request were not sent at all.
 
 		r.c.ForceReloading() // Something is happen with cluster. Lets know actual information asap.
@@ -589,21 +592,19 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 		r.lastconn = conn
 		conn.Send(r.req, r, 0)
 		return
-	case kind.KindOf(redis.ErrResult):
-		if kind == redis.ErrLoading {
-			// Some host is not started properly yet. Lets learn actual cluster state asap.
-			r.c.ForceReloading()
-		}
-		if (kind == redis.ErrMoved || kind == redis.ErrAsk) && int(r.redir) < r.c.opts.MovedRetries {
+	case err.HasTrait(redis.ErrTraitClusterMove):
+		if int(r.redir) < r.c.opts.MovedRetries {
 			// Slot is moving or were moved.
 			r.redir++
 			r.hardErrs = 0 // reset hardErrors because we are going to another physical shard.
 			r.seen = nil
-			addr := err.Get(redis.EKMovedTo).(string)
-			if kind == redis.ErrMoved {
+			addr := movedTo(err)
+			ask := false
+			if err.IsOfType(redis.ErrMoved) {
 				DebugEvent("moved")
 				r.c.sendCommand("moved", r.slot, addr)
 			} else {
+				ask = true
 				DebugEvent("asking")
 				r.c.sendCommand("asking", r.slot, "")
 			}
@@ -616,7 +617,7 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 					r.resolve(cerr)
 				} else {
 					r.lastconn = conn
-					conn.SendAsk(r.req, r, 0, kind == redis.ErrAsk)
+					conn.SendAsk(r.req, r, 0, ask)
 				}
 			})
 			return
@@ -634,7 +635,8 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 // if not all keys in transaction were moved.
 func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 	if cb != nil && cb.Cancelled() {
-		cb.Resolve(c.err(redis.ErrRequestCancelled).With(redis.EKRequests, reqs), off+uint64(len(reqs)))
+		err := c.err(redis.ErrRequestCancelled).WithProperty(redis.EKRequests, reqs)
+		cb.Resolve(err, off+uint64(len(reqs)))
 		return
 	}
 	if len(reqs) == 0 {
@@ -645,7 +647,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 	}
 	slot, ok := redisclusterutil.BatchSlot(reqs)
 	if !ok {
-		err := c.err(redis.ErrNoSlotKey).With(redis.EKRequests, reqs)
+		err := c.err(redis.ErrNoSlotKey).WithProperty(redis.EKRequests, reqs)
 		cb.Resolve(err, off)
 		return
 	}
@@ -654,7 +656,7 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 
 	if err != nil {
 		// ? no known alive connection for slot
-		cb.Resolve(err.(*redis.Error).With(redis.EKRequests, reqs), off)
+		cb.Resolve(err.WithProperty(redis.EKRequests, reqs), off)
 		return
 	}
 
@@ -693,8 +695,10 @@ var transactionPool = sync.Pool{New: func() interface{} { return &transaction{} 
 
 func (t *transaction) resolve(res interface{}) {
 	if t.cb != nil {
-		if err := redis.AsRedisError(res); err != nil {
-			err = err.WithNewKey(redis.EKRequests, t.reqs).WithNewKey(EKCluster, t.c)
+		if err := redis.AsErrorx(res); err != nil {
+			err = withNewProperty(err, redis.EKRequests, t.reqs)
+			err = withNewProperty(err, EKCluster, t.c)
+			res = err
 		}
 		t.cb.Resolve(res, t.off)
 	}
@@ -727,7 +731,7 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		return
 	}
 
-	err := redis.AsRedisError(res)
+	err := redis.AsErrorx(res)
 	if err == nil {
 		t.resolve(res)
 		return
@@ -746,14 +750,13 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		return
 	}
 
-	kind := err.Kind()
 	switch {
-	case kind.KindOf(redis.ErrIO):
+	case err.IsOfType(redis.ErrIO):
 		// redis treats all transactions as read-write, and it is not safe
 		// to retry
 		t.resolve(err)
 		return
-	case kind.KindOf(redis.ErrConnection), kind.KindOf(redis.ErrContextClosed):
+	case err.HasTrait(redis.ErrTraitNotSent):
 		// Transaction were not sent at all.
 		// It is safe to retry transaction.
 		t.c.ForceReloading()
@@ -767,44 +770,44 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 		t.seen = append(t.seen, t.lastconn)
 		conn, err := t.c.connForSlot(t.slot, MasterOnly, t.seen)
 		if err != nil {
-			t.resolve(err.(*redis.Error).With(redis.EKRequests, t.reqs))
+			t.resolve(err.WithProperty(redis.EKRequests, t.reqs))
 			return
 		}
 		t.lastconn = conn
 		t.send(conn, false)
 		return
-	case kind.KindOf(redis.ErrResult):
+	case err.IsOfType(redis.ErrResult):
 		var moved string
 		allmoved := true // all keys were moved
 		moving := false  // has moving keys
 		asking := false  // has asking keys
-		if kind == redis.ErrMoved {
+		if err.IsOfType(redis.ErrMoved) {
 			// we occasionally sent transaction to slave
-			moved = err.Get(redis.EKMovedTo).(string)
+			moved = movedTo(err)
 			moving = true
-		} else if strings.HasPrefix(err.Msg(), "EXECABORT") {
+		} else if err.IsOfType(redis.ErrExecAbort) {
 			// check if all partial responses were ASK or MOVED
 			responses := t.res[:len(t.res)-1]
 			for _, r := range responses {
-				err := redis.AsRedisError(r)
+				err := redis.AsErrorx(r)
 				if err == nil {
 					allmoved = false
 					break
 				}
-				emoved := err.KindOf(redis.ErrMoved)
-				eask := err.KindOf(redis.ErrAsk)
+				emoved := err.IsOfType(redis.ErrMoved)
+				eask := err.IsOfType(redis.ErrAsk)
 				if !emoved && !eask {
 					allmoved = false
 					break
 				}
-				moved = err.Get(redis.EKMovedTo).(string)
+				moved = movedTo(err)
 				if emoved {
 					moving = true
 				} else if eask {
 					asking = true
 				}
 			}
-		} else if strings.HasPrefix(err.Msg(), "TRYAGAIN") && int(t.redir) < t.c.opts.MovedRetries {
+		} else if err.IsOfType(redis.ErrTryAgain) && int(t.redir) < t.c.opts.MovedRetries {
 			// Redis informs, that some, but not all, keys were migrated.
 			// Lets wait a bit for migration finalization.
 			t.redir++
@@ -864,6 +867,10 @@ func (t *transaction) sendMoved(addr string, asking bool) {
 	})
 }
 
-func (c *Cluster) err(kind redis.ErrorKind) *redis.Error {
-	return kind.New().With(EKCluster, c)
+func (c *Cluster) err(kind *errorx.Type) *errorx.Error {
+	return kind.NewWithNoMessage().WithProperty(EKCluster, c)
+}
+
+func (c *Cluster) errWrap(kind *errorx.Type, err error) *errorx.Error {
+	return kind.WrapWithNoMessage(err).WithProperty(EKCluster, c)
 }

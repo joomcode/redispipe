@@ -48,7 +48,7 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 		if c.C == nil {
 			c.C, err = net.DialTimeout("tcp", c.Addr, timeout)
 			if err != nil {
-				return redis.ErrDial.NewWrap(err)
+				return redis.ErrDial.WrapWithNoMessage(err)
 			}
 			c.R = bufio.NewReader(c.C)
 		}
@@ -60,20 +60,21 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 		if err == nil {
 			if _, err = c.C.Write(req); err == nil {
 				res := redis.ReadResponse(c.R)
-				if rerr := redis.AsRedisError(res); rerr == nil {
+				if rerr := redis.AsErrorx(res); rerr == nil {
 					return res
 				} else {
 					err = rerr
-					if c.Type == TypeCluster && (rerr.Kind() == redis.ErrAsk || rerr.Kind() == redis.ErrMoved) {
-						asking = rerr.Kind() == redis.ErrAsk
-						c.Addr = rerr.Get(redis.EKMovedTo).(string)
+					if c.Type == TypeCluster && rerr.HasTrait(redis.ErrTraitClusterMove) {
+						asking = rerr.IsOfType(redis.ErrAsk)
+						v, _ := rerr.Property(redis.EKMovedTo)
+						c.Addr = v.(string)
 						if try < 5 {
 							try++
 						}
 					}
 				}
 			} else {
-				err = redis.ErrIO.NewWrap(err)
+				err = redis.ErrIO.WrapWithNoMessage(err)
 			}
 		}
 		c.C.Close()
@@ -103,7 +104,7 @@ func (c *Conn) SendTransaction(reqs []redis.Request, cb redis.Future, n uint64) 
 		// first, redirect ourself to right master
 		key, ok := redisclusterutil.BatchKey(reqs)
 		if !ok {
-			cb.Resolve(redis.ErrNoSlotKey.New(), n)
+			cb.Resolve(redis.ErrNoSlotKey.New("no key to determine slot"), n)
 			return
 		}
 		c.Do("TYPE", key)
@@ -116,7 +117,7 @@ func (c *Conn) SendTransaction(reqs []redis.Request, cb redis.Future, n uint64) 
 	}
 	for _, r := range reqs {
 		res = c.Do(r.Cmd, r.Args...)
-		if err := redis.AsRedisError(res); redis.HardError(err) {
+		if err := redis.AsErrorx(res); !err.IsOfType(redis.ErrResult) {
 			cb.Resolve(res, n)
 			return
 		}
@@ -186,7 +187,7 @@ func (c *Conn) Close() {
 func Do(addr string, cmd string, args ...interface{}) interface{} {
 	conn, err := net.DialTimeout("tcp", addr, DefaultTimeout)
 	if err != nil {
-		return redis.ErrDial.NewWrap(err)
+		return redis.ErrDial.WrapWithNoMessage(err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(DefaultTimeout))
@@ -195,7 +196,7 @@ func Do(addr string, cmd string, args ...interface{}) interface{} {
 		return rerr
 	}
 	if _, err = conn.Write(req); err != nil {
-		return redis.ErrIO.NewWrap(err)
+		return redis.ErrIO.WrapWithNoMessage(err)
 	}
 	res := redis.ReadResponse(bufio.NewReader(conn))
 	return res

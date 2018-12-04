@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joomcode/errorx"
+
 	"github.com/joomcode/redispipe/redis"
 	. "github.com/joomcode/redispipe/redisconn"
 	"github.com/joomcode/redispipe/testbed"
@@ -48,9 +50,9 @@ func (s *Suite) r() *require.Assertions {
 	return s.Require()
 }
 
-func (s *Suite) AsError(v interface{}) *redis.Error {
-	s.r().IsType((*redis.Error)(nil), v)
-	return v.(*redis.Error)
+func (s *Suite) AsError(v interface{}) *errorx.Error {
+	s.r().IsType((*errorx.Error)(nil), v)
+	return v.(*errorx.Error)
 }
 
 var defopts = Opts{
@@ -72,10 +74,10 @@ func (s *Suite) goodPing(conn *Connection, timeout time.Duration) {
 	s.Equal("PONG", s.ping(conn, timeout))
 }
 
-func (s *Suite) badPing(conn *Connection, kind redis.ErrorKind, timeout time.Duration) {
+func (s *Suite) badPing(conn *Connection, kind *errorx.Type, timeout time.Duration) {
 	res := s.ping(conn, timeout)
 	rerr := s.AsError(res)
-	s.Equal(kind, rerr.Kind())
+	s.True(rerr.IsOfType(kind))
 }
 
 func (s *Suite) waitReconnect(conn *Connection) {
@@ -85,8 +87,8 @@ func (s *Suite) waitReconnect(conn *Connection) {
 		res := redis.Sync{conn}.Do("PING")
 		done := time.Now()
 		s.r().WithinDuration(at, done, defopts.IOTimeout*3/2)
-		if rerr := redis.AsRedisError(res); rerr != nil {
-			s.Equal(redis.ErrNotConnected, rerr.Kind())
+		if rerr := redis.AsErrorx(res); rerr != nil {
+			s.True(rerr.IsOfType(redis.ErrNotConnected))
 			s.r().WithinDuration(start, at, defopts.IOTimeout*2)
 		} else {
 			s.Equal("PONG", res)
@@ -150,7 +152,7 @@ func (s *Suite) TestFailedWithNonEmptyPassword() {
 	conn, err := Connect(s.ctx, s.s.Addr(), opts)
 	s.r().Nil(conn)
 	s.r().Error(err)
-	s.r().True(redis.AsRedisError(err).KindOf(redis.ErrAuth))
+	s.r().True(redis.AsErrorx(err).IsOfType(redis.ErrAuth))
 }
 
 func (s *Suite) Test_justToCover() {
@@ -229,7 +231,7 @@ func (s *Suite) TestStopped_DoesntConnectWithNegativeReconnectPause() {
 	_, err := Connect(s.ctx, s.s.Addr(), opts)
 	s.r().NotNil(err)
 	rerr := s.AsError(err)
-	s.Equal(redis.ErrDial, rerr.Kind())
+	s.True(rerr.IsOfType(redis.ErrDial))
 }
 
 func (s *Suite) TestStopped_Reconnects() {
@@ -287,12 +289,12 @@ func (s *Suite) TestTimeout() {
 	for events != 7 {
 		res := s.ping(conn, 0)
 		rerr := s.AsError(res)
-		switch rerr.Kind() {
-		case redis.ErrIO:
+		switch {
+		case rerr.IsOfType(redis.ErrIO):
 			events |= 1
-		case redis.ErrConnSetup:
+		case rerr.IsOfType(redis.ErrConnSetup):
 			events |= 2
-		case redis.ErrNotConnected:
+		case rerr.IsOfType(redis.ErrNotConnected):
 			events |= 4
 		}
 		s.r().WithinDuration(start, time.Now(), defopts.IOTimeout*10)
@@ -329,8 +331,8 @@ func (s *Suite) TestTransaction() {
 	})
 	s.NotNil(err)
 	rerr := s.AsError(err)
-	s.Equal(redis.ErrResult, rerr.Kind())
-	s.True(strings.HasPrefix(rerr.Msg(), "EXECABORT"))
+	s.True(rerr.IsOfType(redis.ErrResult))
+	s.True(strings.HasPrefix(rerr.Message(), "EXECABORT"))
 
 	s.Equal([]byte("1"), s.s.DoSure("GET", "tran:x"))
 
@@ -345,8 +347,8 @@ func (s *Suite) TestTransaction() {
 	if s.IsType([]interface{}{}, res) && s.Len(res, 2) {
 		s.r().Equal(int64(2), res[0])
 		rerr := s.AsError(res[1])
-		s.Equal(redis.ErrResult, rerr.Kind())
-		s.True(strings.HasPrefix(rerr.Msg(), "WRONGTYPE"))
+		s.True(rerr.IsOfType(redis.ErrResult))
+		s.True(strings.HasPrefix(rerr.Message(), "WRONGTYPE"))
 	}
 
 	s.Equal([]byte("2"), s.s.DoSure("GET", "tran:x"))
@@ -466,9 +468,9 @@ func (s *Suite) TestAllReturns_Bad() {
 					ok = ok && s.IsType([]byte{}, ress[1]) && s.Equal("b"+sij, string(ress[1].([]byte)))
 					checks <- ok
 				} else if check && !good {
-					ok := s.IsType((*redis.Error)(nil), res)
-					ok = ok && s.IsType((*redis.Error)(nil), ress[0])
-					ok = ok && s.IsType((*redis.Error)(nil), ress[1])
+					ok := s.IsType((*errorx.Error)(nil), res)
+					ok = ok && s.IsType((*errorx.Error)(nil), ress[0])
+					ok = ok && s.IsType((*errorx.Error)(nil), ress[1])
 					checks <- ok
 				}
 				check = false

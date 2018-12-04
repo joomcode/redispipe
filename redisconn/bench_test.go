@@ -5,9 +5,8 @@ import (
 	"runtime"
 	. "testing"
 
-	"github.com/joomcode/redispipe/testbed"
-
 	"github.com/joomcode/redispipe/redis"
+	"github.com/joomcode/redispipe/testbed"
 
 	redigo "github.com/garyburd/redigo/redis"
 	"github.com/joomcode/redispipe/redisconn"

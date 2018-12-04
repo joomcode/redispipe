@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/joomcode/errorx"
+
 	. "github.com/joomcode/redispipe/redis"
 	"github.com/stretchr/testify/assert"
 )
@@ -19,10 +21,10 @@ func readLines(lines ...string) interface{} {
 	return ReadResponse(lines2bufio(lines...))
 }
 
-func checkErr(t *testing.T, res interface{}, kind ErrorKind) bool {
-	if assert.IsType(t, (*Error)(nil), res) {
-		err := res.(*Error)
-		return assert.Equal(t, kind, err.Kind())
+func checkErrType(t *testing.T, res interface{}, kind *errorx.Type) bool {
+	if assert.IsType(t, (*errorx.Error)(nil), res) {
+		err := res.(*errorx.Error)
+		return assert.True(t, err.IsOfType(kind))
 	}
 	return false
 }
@@ -31,70 +33,70 @@ func TestReadResponse_IOAndFormatErrors(t *testing.T) {
 	var res interface{}
 
 	res = readLines("")
-	checkErr(t, res, ErrIO)
+	checkErrType(t, res, ErrIO)
 
 	res = readLines("\n")
-	checkErr(t, res, ErrHeaderlineEmpty)
+	checkErrType(t, res, ErrHeaderlineEmpty)
 
 	res = readLines("\r\n")
-	checkErr(t, res, ErrHeaderlineEmpty)
+	checkErrType(t, res, ErrHeaderlineEmpty)
 
 	res = readLines("$\r\n")
-	checkErr(t, res, ErrIntegerParsing)
+	checkErrType(t, res, ErrIntegerParsing)
 
 	res = readLines("/\r\n")
-	checkErr(t, res, ErrUnknownHeaderType)
+	checkErrType(t, res, ErrUnknownHeaderType)
 
 	res = readLines("+" + strings.Repeat("A", 1024*1024) + "\r\n")
-	checkErr(t, res, ErrHeaderlineTooLarge)
+	checkErrType(t, res, ErrHeaderlineTooLarge)
 
 	res = readLines(":\r\n")
-	checkErr(t, res, ErrIntegerParsing)
+	checkErrType(t, res, ErrIntegerParsing)
 
 	res = readLines(":1.1\r\n")
-	checkErr(t, res, ErrIntegerParsing)
+	checkErrType(t, res, ErrIntegerParsing)
 
 	res = readLines(":a\r\n")
-	checkErr(t, res, ErrIntegerParsing)
+	checkErrType(t, res, ErrIntegerParsing)
 
 	res = readLines("$a\r\n")
-	checkErr(t, res, ErrIntegerParsing)
+	checkErrType(t, res, ErrIntegerParsing)
 
 	res = readLines("*a\r\n")
-	checkErr(t, res, ErrIntegerParsing)
+	checkErrType(t, res, ErrIntegerParsing)
 
 	res = readLines("$0\r\n")
-	checkErr(t, res, ErrIO)
+	checkErrType(t, res, ErrIO)
 
 	res = readLines("$1\r\n")
-	checkErr(t, res, ErrIO)
+	checkErrType(t, res, ErrIO)
 
 	res = readLines("$1\r\na")
-	checkErr(t, res, ErrIO)
+	checkErrType(t, res, ErrIO)
 
 	res = readLines("$1\r\nabc")
-	checkErr(t, res, ErrNoFinalRN)
+	checkErrType(t, res, ErrNoFinalRN)
 
 	res = readLines("*1\r\n")
-	checkErr(t, res, ErrIO)
+	checkErrType(t, res, ErrIO)
 
 	res = readLines("*1\r\n$1\r\n")
-	checkErr(t, res, ErrIO)
+	checkErrType(t, res, ErrIO)
 
 	res = readLines("*1\r\n$1\r\nabc")
-	checkErr(t, res, ErrNoFinalRN)
+	checkErrType(t, res, ErrNoFinalRN)
 
 	res = readLines("-MOVED 1234\r\n")
-	checkErr(t, res, ErrResponseFormat)
+	checkErrType(t, res, ErrResponseFormat)
 
 	res = readLines("-MOVED asdf 1.1.1.1:3456\r\n")
-	checkErr(t, res, ErrIntegerParsing)
+	checkErrType(t, res, ErrIntegerParsing)
 
 	res = readLines("-ASK 1234\r\n")
-	checkErr(t, res, ErrResponseFormat)
+	checkErrType(t, res, ErrResponseFormat)
 
 	res = readLines("-ASK asdf 1.1.1.1:3456\r\n")
-	checkErr(t, res, ErrIntegerParsing)
+	checkErrType(t, res, ErrIntegerParsing)
 }
 
 func TestReadResponse_Correct(t *testing.T) {
@@ -107,35 +109,39 @@ func TestReadResponse_Correct(t *testing.T) {
 	assert.Equal(t, "asdf", res)
 
 	res = readLines("-\r\n")
-	if checkErr(t, res, ErrResult) {
-		assert.Equal(t, "", res.(*Error).Msg())
+	if checkErrType(t, res, ErrResult) {
+		assert.Equal(t, "", res.(*errorx.Error).Message())
 	}
 
 	res = readLines("-asdf\r\n")
-	if checkErr(t, res, ErrResult) {
-		assert.Equal(t, "asdf", res.(*Error).Msg())
+	if checkErrType(t, res, ErrResult) {
+		assert.Equal(t, "asdf", res.(*errorx.Error).Message())
 	}
 
 	res = readLines("-MOVED 1234 1.1.1.1:3456\r\n")
-	if checkErr(t, res, ErrMoved) {
-		err := res.(*Error)
-		assert.Equal(t, "MOVED 1234 1.1.1.1:3456", err.Msg())
-		assert.Equal(t, "1.1.1.1:3456", err.Get(EKMovedTo))
-		assert.Equal(t, int64(1234), err.Get(EKSlot))
+	if checkErrType(t, res, ErrMoved) {
+		err := res.(*errorx.Error)
+		assert.Equal(t, "MOVED 1234 1.1.1.1:3456", err.Message())
+		v, _ := err.Property(EKMovedTo)
+		assert.Equal(t, "1.1.1.1:3456", v)
+		v, _ = err.Property(EKSlot)
+		assert.Equal(t, int64(1234), v)
 	}
 
 	res = readLines("-ASK 1234 1.1.1.1:3456\r\n")
-	if checkErr(t, res, ErrAsk) {
-		err := res.(*Error)
-		assert.Equal(t, "ASK 1234 1.1.1.1:3456", err.Msg())
-		assert.Equal(t, "1.1.1.1:3456", err.Get(EKMovedTo))
-		assert.Equal(t, int64(1234), err.Get(EKSlot))
+	if checkErrType(t, res, ErrAsk) {
+		err := res.(*errorx.Error)
+		assert.Equal(t, "ASK 1234 1.1.1.1:3456", err.Message())
+		v, _ := err.Property(EKMovedTo)
+		assert.Equal(t, "1.1.1.1:3456", v)
+		v, _ = err.Property(EKSlot)
+		assert.Equal(t, int64(1234), v)
 	}
 
 	res = readLines("-LOADING\r\n")
-	if checkErr(t, res, ErrLoading) {
-		err := res.(*Error)
-		assert.Equal(t, "LOADING", err.Msg())
+	if checkErrType(t, res, ErrLoading) {
+		err := res.(*errorx.Error)
+		assert.Equal(t, "LOADING", err.Message())
 	}
 
 	for i := -1000; i <= 1000; i++ {

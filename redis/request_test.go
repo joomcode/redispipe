@@ -298,8 +298,8 @@ func TestAppendRequestArgument(t *testing.T) {
 	k, err = AppendRequest(nil, Req("CMD", make(chan int)))
 	assert.Len(t, k, 0)
 	assert.NotNil(t, err)
-	rerr := AsRedisError(err)
-	assert.Equal(t, ErrArgumentType, rerr.Kind())
+	rerr := AsErrorx(err)
+	assert.True(t, rerr.IsOfType(ErrArgumentType))
 }
 
 func TestAppendRequestCmdAndArgcount(t *testing.T) {

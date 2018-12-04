@@ -63,7 +63,6 @@ var defaultSeed *TimedRoundRobinSeed
 var defaultSeedOnce sync.Once
 
 // DefaultRoundRobinSeed returns singleton of TimedRoundRobinSeed with random interval between 45ms and 100ms.
-// Random interval used to
 func DefaultRoundRobinSeed() *TimedRoundRobinSeed {
 	defaultSeedOnce.Do(func() {
 		v := uint64(time.Now().UnixNano())

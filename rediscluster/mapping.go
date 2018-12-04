@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/joomcode/errorx"
+
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/redisconn"
 )
@@ -68,7 +70,7 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 		if conn != nil {
 			then(conn, nil)
 		} else {
-			err := c.err(redis.ErrDial).With(EKAddress, addr)
+			err := c.err(redis.ErrDial).WithProperty(EKAddress, addr)
 			then(nil, err)
 		}
 		return
@@ -95,7 +97,7 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 		var err error
 		conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected, nil)
 		if conn == nil {
-			err = c.err(redis.ErrDial).With(EKAddress, addr)
+			err = c.err(redis.ErrDial).WithProperty(EKAddress, addr)
 		}
 		c.nodeWait.Lock()
 		delete(promises, addr)
@@ -192,14 +194,14 @@ func (cfg *clusterConfig) slot2shard(slot uint16) *shard {
 }
 
 // connForSlot returns established connection for slot, if it exists.
-func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*redisconn.Connection) (*redisconn.Connection, error) {
+func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*redisconn.Connection) (*redisconn.Connection, *errorx.Error) {
 	var conn *redisconn.Connection
 	cfg := c.getConfig()
 	shard := cfg.slot2shard(slot)
 	nodes := cfg.nodes
 
 	if shard == nil {
-		return nil, c.err(ErrClusterConfigEmpty).With(redis.EKSlot, slot)
+		return nil, c.err(ErrClusterConfigEmpty).WithProperty(redis.EKSlot, slot)
 	}
 
 	var addr string
@@ -247,7 +249,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 	}
 	if conn == nil {
 		c.ForceReloading()
-		return nil, c.err(redis.ErrDial).With(redis.EKSlot, slot).With(EKPolicy, policy)
+		return nil, c.err(redis.ErrDial).WithProperty(redis.EKSlot, slot).WithProperty(EKPolicy, policy)
 	}
 	return conn, nil
 }

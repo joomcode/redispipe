@@ -2,6 +2,8 @@ package redis
 
 import (
 	"fmt"
+
+	"github.com/joomcode/errorx"
 )
 
 // AsError casts interface to error (if it is error)
@@ -10,10 +12,10 @@ func AsError(v interface{}) error {
 	return e
 }
 
-// AsRedisError casts interface to *redis.Error.
+// AsErrorx casts interface to *errorx.Error.
 // It panics if value is error but not *redis.Error.
-func AsRedisError(v interface{}) *Error {
-	e, _ := v.(*Error)
+func AsErrorx(v interface{}) *errorx.Error {
+	e, _ := v.(*errorx.Error)
 	if e == nil {
 		if _, ok := v.(error); ok {
 			panic(fmt.Errorf("result should be either *rediserror.Error, or not error at all, but got %#v", v))
@@ -52,7 +54,7 @@ func ScanResponse(res interface{}) ([]byte, []string, error) {
 	return it, strs, nil
 
 wrong:
-	return nil, nil, ErrResponseUnexpected.New().With(EKResponse, res)
+	return nil, nil, ErrResponseUnexpected.NewWithNoMessage().WithProperty(EKResponse, res)
 }
 
 // TransactionResponse parses response of EXEC command, returns array of answers.
@@ -61,10 +63,10 @@ func TransactionResponse(res interface{}) ([]interface{}, error) {
 		return arr, nil
 	}
 	if res == nil {
-		res = ErrExecEmpty.New()
+		res = ErrExecEmpty.NewWithNoMessage()
 	}
 	if _, ok := res.(error); !ok {
-		res = ErrResponseUnexpected.New().With(EKResponse, res)
+		res = ErrResponseUnexpected.NewWithNoMessage().WithProperty(EKResponse, res)
 	}
 	return nil, res.(error)
 }

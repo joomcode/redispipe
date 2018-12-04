@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joomcode/errorx"
+
 	"github.com/joomcode/redispipe/redis"
 	. "github.com/joomcode/redispipe/rediscluster"
 	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
@@ -68,12 +70,12 @@ func (s *Suite) r() *require.Assertions {
 	return s.Require()
 }
 
-func (s *Suite) AsError(v interface{}) *redis.Error {
+func (s *Suite) AsError(v interface{}) *errorx.Error {
 	if v == nil {
 		return nil
 	}
-	s.r().IsType((*redis.Error)(nil), v)
-	return v.(*redis.Error)
+	s.r().IsType((*errorx.Error)(nil), v)
+	return v.(*errorx.Error)
 }
 
 var defopts = redisconn.Opts{
@@ -287,8 +289,7 @@ func (s *Suite) TestTransactionNormal() {
 	})
 	s.NotNil(err)
 	rerr := s.AsError(err)
-	s.Equal(redis.ErrResult, rerr.Kind())
-	s.True(strings.HasPrefix(rerr.Msg(), "EXECABORT"))
+	s.True(rerr.IsOfType(redis.ErrExecAbort))
 
 	s.Equal([]byte("1"), s.cl.Node[0].DoSure("GET", key1))
 
@@ -300,8 +301,8 @@ func (s *Suite) TestTransactionNormal() {
 	if s.IsType([]interface{}{}, res) && s.Len(res, 2) {
 		s.r().Equal(int64(2), res[0])
 		rerr := s.AsError(res[1])
-		s.Equal(redis.ErrResult, rerr.Kind())
-		s.True(strings.HasPrefix(rerr.Msg(), "WRONGTYPE"))
+		s.True(rerr.IsOfType(redis.ErrResult))
+		s.True(strings.HasPrefix(rerr.Message(), "WRONGTYPE"))
 	}
 
 	s.Equal([]byte("2"), s.cl.Node[0].DoSure("GET", key1))
@@ -483,10 +484,10 @@ func (s *Suite) TestAsk() {
 
 	// recheck that redis responses with correct errors
 	rerr := s.AsError(s.cl.Node[2].Do("GET", key))
-	s.Equal(redis.ErrMoved, rerr.Kind())
+	s.True(rerr.IsOfType(redis.ErrMoved))
 
 	rerr = s.AsError(s.cl.Node[1].Do("GET", key))
-	s.Equal(redis.ErrAsk, rerr.Kind())
+	s.True(rerr.IsOfType(redis.ErrAsk))
 
 	s.Equal(int64(1), sconn.Do(s.ctx, "DEL", key))
 
@@ -532,7 +533,7 @@ func (s *Suite) TestAskTransaction() {
 		redis.Req("SET", key2, "1"),
 		redis.Req("SET", key3, "2"),
 	})
-	s.True(strings.HasPrefix(s.AsError(err).Msg(), "TRYAGAIN"))
+	s.True(s.AsError(err).IsOfType(redis.ErrTryAgain))
 	s.Contains(DebugEvents(), "transaction asking")
 	s.Contains(DebugEvents(), "transaction tryagain")
 

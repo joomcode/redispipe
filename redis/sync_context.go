@@ -30,7 +30,7 @@ func (s SyncCtx) Send(ctx context.Context, r Request) interface{} {
 
 	select {
 	case <-ctx.Done():
-		return ErrRequestCancelled.NewWrap(ctx.Err())
+		return ErrRequestCancelled.WrapWithNoMessage(ctx.Err())
 	case <-res.ch:
 		return res.r
 	}
@@ -55,7 +55,7 @@ func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
 
 	select {
 	case <-ctx.Done():
-		err := ErrRequestCancelled.NewWrap(ctx.Err())
+		err := ErrRequestCancelled.WrapWithNoMessage(ctx.Err())
 		for i := range res.o {
 			res.Resolve(err, uint64(i))
 		}
@@ -78,7 +78,7 @@ func (s SyncCtx) SendTransaction(ctx context.Context, reqs []Request) ([]interfa
 	var r interface{}
 	select {
 	case <-ctx.Done():
-		r = ErrRequestCancelled.NewWrap(ctx.Err())
+		r = ErrRequestCancelled.WrapWithNoMessage(ctx.Err())
 	case <-res.ch:
 		r = res.r
 	}
@@ -158,7 +158,7 @@ func (s SyncCtxIterator) Next() ([]string, error) {
 	s.s.Next(&res)
 	select {
 	case <-s.ctx.Done():
-		return nil, ErrRequestCancelled.NewWrap(s.ctx.Err())
+		return nil, ErrRequestCancelled.WrapWithNoMessage(s.ctx.Err())
 	case <-res.ch:
 	}
 	if err := AsError(res.r); err != nil {

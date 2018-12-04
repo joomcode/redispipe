@@ -33,7 +33,7 @@ func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 
 	errf := func(f string, args ...interface{}) ([]SlotsRange, error) {
 		msg := fmt.Sprintf(f, args...)
-		err := ErrResponseUnexpected.NewMsg(msg)
+		err := ErrResponseUnexpected.New(msg)
 		return nil, err
 	}
 
@@ -260,7 +260,7 @@ func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 
 	errf := func(f string, args ...interface{}) (InstanceInfos, error) {
 		msg := fmt.Sprintf(f, args...)
-		err := ErrResponseUnexpected.NewMsg(msg)
+		err := ErrResponseUnexpected.New(msg)
 		return nil, err
 	}
 

@@ -2,6 +2,8 @@ package redis
 
 import (
 	"strconv"
+
+	"github.com/joomcode/errorx"
 )
 
 // AppendRequest appends request to byte slice as RESP request (ie as array of strings).
@@ -78,8 +80,10 @@ func AppendRequest(buf []byte, req Request) ([]byte, error) {
 		case nil:
 			buf = append(buf, "$0\r\n"...)
 		default:
-			return buf[:oldSize], ErrArgumentType.New().
-				With(EKVal, val).With(EKArgPos, i).With(EKRequest, req)
+			return buf[:oldSize], ErrArgumentType.New("wrong argument %d", i).
+				WithProperty(EKVal, val).
+				WithProperty(EKArgPos, i).
+				WithProperty(EKRequest, req)
 		}
 		buf = append(buf, '\r', '\n')
 	}
@@ -213,14 +217,16 @@ func ArgToString(arg interface{}) (string, bool) {
 }
 
 // CheckArgs checks that all values could be used in redis request.
-func CheckArgs(req Request) *Error {
+func CheckArgs(req Request) *errorx.Error {
 	for i, arg := range req.Args {
 		switch val := arg.(type) {
 		case string, []byte, int, uint, int64, uint64, int32, uint32, int8, uint8, int16, uint16, bool, float32, float64, nil:
 			// ok
 		default:
-			return ErrArgumentType.New().
-				With(EKVal, val).With(EKArgPos, i).With(EKRequest, req)
+			return ErrArgumentType.New("wrong argument %d", i).
+				WithProperty(EKVal, val).
+				WithProperty(EKArgPos, i).
+				WithProperty(EKRequest, req)
 		}
 	}
 	return nil

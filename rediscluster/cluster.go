@@ -440,10 +440,21 @@ func (c *Cluster) Send(req Request, cb Future, off uint64) {
 	c.SendWithPolicy(MasterOnly, req, cb, off)
 }
 
+// dumb redis.Future implementation
+type dumbcb struct{}
+
+func (d dumbcb) Cancelled() bool             { return false }
+func (d dumbcb) Resolve(interface{}, uint64) {}
+
+var dumb dumbcb
+
 // SendWithPolicy allows to choose master/replica policy for individual requests.
 // You can also call cluster.WithPolicy() to obtain redis.Sender with predefined policy.
 func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Future, off uint64) {
-	if cb != nil && cb.Cancelled() {
+	if cb == nil {
+		cb = &dumb
+	}
+	if cb.Cancelled() {
 		cb.Resolve(c.err(redis.ErrRequestCancelled).WithProperty(redis.EKRequest, req), off)
 		return
 	}
@@ -513,7 +524,7 @@ type request struct {
 var requestPool = sync.Pool{New: func() interface{} { return &request{} }}
 
 func (r *request) resolve(res interface{}) {
-	if r.cb != nil {
+	if r.cb != &dumb {
 		if err := redis.AsErrorx(res); err != nil {
 			err = withNewProperty(err, redis.EKRequest, r.req)
 			err = withNewProperty(err, EKCluster, r.c)
@@ -634,15 +645,16 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 // It redirects whole transaction on MOVED/ASKING requests, and waits a bit
 // if not all keys in transaction were moved.
 func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
-	if cb != nil && cb.Cancelled() {
+	if cb == nil {
+		cb = &dumb
+	}
+	if cb.Cancelled() {
 		err := c.err(redis.ErrRequestCancelled).WithProperty(redis.EKRequests, reqs)
 		cb.Resolve(err, off+uint64(len(reqs)))
 		return
 	}
 	if len(reqs) == 0 {
-		if cb != nil {
-			cb.Resolve([]interface{}{}, off)
-		}
+		cb.Resolve([]interface{}{}, off)
 		return
 	}
 	slot, ok := redisclusterutil.BatchSlot(reqs)
@@ -694,7 +706,7 @@ type transaction struct {
 var transactionPool = sync.Pool{New: func() interface{} { return &transaction{} }}
 
 func (t *transaction) resolve(res interface{}) {
-	if t.cb != nil {
+	if t.cb != &dumb {
 		if err := redis.AsErrorx(res); err != nil {
 			err = withNewProperty(err, redis.EKRequests, t.reqs)
 			err = withNewProperty(err, EKCluster, t.c)

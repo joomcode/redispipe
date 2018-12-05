@@ -113,3 +113,8 @@ var (
 	// EKResponse - unexpected response
 	EKResponse = errorx.RegisterProperty("response")
 )
+
+var (
+	// CollectTrace - should Sync and SyncCtx wrappers collect stack traces on a call side.
+	CollectTrace = false
+)

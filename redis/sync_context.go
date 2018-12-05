@@ -3,6 +3,8 @@ package redis
 import (
 	"context"
 	"sync/atomic"
+
+	"github.com/joomcode/errorx"
 )
 
 // SyncCtx (like Sync) provides convenient synchronous interface over asynchronous Sender.
@@ -30,8 +32,17 @@ func (s SyncCtx) Send(ctx context.Context, r Request) interface{} {
 
 	select {
 	case <-ctx.Done():
-		return ErrRequestCancelled.WrapWithNoMessage(ctx.Err())
+		err := ErrRequestCancelled.WrapWithNoMessage(ctx.Err())
+		if CollectTrace {
+			err = errorx.EnsureStackTrace(err)
+		}
+		return err
 	case <-res.ch:
+		if CollectTrace {
+			if err := AsError(res.r); err != nil {
+				res.r = errorx.EnsureStackTrace(err)
+			}
+		}
 		return res.r
 	}
 }
@@ -56,11 +67,21 @@ func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
 	select {
 	case <-ctx.Done():
 		err := ErrRequestCancelled.WrapWithNoMessage(ctx.Err())
-		for i := range res.o {
+		if CollectTrace {
+			err = errorx.EnsureStackTrace(err)
+		}
+		for i := range res.r {
 			res.Resolve(err, uint64(i))
 		}
 		<-res.ch
 	case <-res.ch:
+	}
+	if CollectTrace {
+		for i, v := range res.r {
+			if err := AsErrorx(v); err != nil {
+				res.r[i] = errorx.EnsureStackTrace(err)
+			}
+		}
 	}
 	return res.r
 }
@@ -83,7 +104,11 @@ func (s SyncCtx) SendTransaction(ctx context.Context, reqs []Request) ([]interfa
 		r = res.r
 	}
 
-	return TransactionResponse(r)
+	ress, err := TransactionResponse(r)
+	if CollectTrace && err != nil {
+		err = errorx.EnsureStackTrace(err)
+	}
+	return ress, err
 }
 
 // Scanner returns synchronous iterator over redis keyspace/key.
@@ -158,10 +183,17 @@ func (s SyncCtxIterator) Next() ([]string, error) {
 	s.s.Next(&res)
 	select {
 	case <-s.ctx.Done():
-		return nil, ErrRequestCancelled.WrapWithNoMessage(s.ctx.Err())
+		err := ErrRequestCancelled.WrapWithNoMessage(s.ctx.Err())
+		if CollectTrace {
+			err = errorx.EnsureStackTrace(err)
+		}
+		return nil, err
 	case <-res.ch:
 	}
 	if err := AsError(res.r); err != nil {
+		if CollectTrace {
+			err = errorx.EnsureStackTrace(err)
+		}
 		return nil, err
 	} else if res.r == nil {
 		return nil, ScanEOF

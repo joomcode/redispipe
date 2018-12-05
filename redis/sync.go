@@ -2,6 +2,8 @@ package redis
 
 import (
 	"sync"
+
+	"github.com/joomcode/errorx"
 )
 
 // Sync provides convenient synchronouse interface over asynchronouse Sender.
@@ -22,6 +24,11 @@ func (s Sync) Send(r Request) interface{} {
 	res.Add(1)
 	s.S.Send(r, &res, 0)
 	res.Wait()
+	if CollectTrace {
+		if err := AsErrorx(res.r); err != nil {
+			res.r = errorx.EnsureStackTrace(err)
+		}
+	}
 	return res.r
 }
 
@@ -38,6 +45,13 @@ func (s Sync) SendMany(reqs []Request) []interface{} {
 	res.Add(len(reqs))
 	s.S.SendMany(reqs, &res, 0)
 	res.Wait()
+	if CollectTrace {
+		for i, v := range res.r {
+			if err := AsErrorx(v); err != nil {
+				res.r[i] = errorx.EnsureStackTrace(err)
+			}
+		}
+	}
 	return res.r
 }
 
@@ -50,7 +64,11 @@ func (s Sync) SendTransaction(reqs []Request) ([]interface{}, error) {
 	res.Add(1)
 	s.S.SendTransaction(reqs, &res, 0)
 	res.Wait()
-	return TransactionResponse(res.r)
+	ress, err := TransactionResponse(res.r)
+	if CollectTrace && err != nil {
+		err = errorx.EnsureStackTrace(err)
+	}
+	return ress, err
 }
 
 // Scanner returns synchronous iterator over redis keyspace/key.
@@ -103,6 +121,9 @@ func (s SyncIterator) Next() ([]string, error) {
 	s.s.Next(&res)
 	res.Wait()
 	if err := AsError(res.r); err != nil {
+		if CollectTrace {
+			err = errorx.EnsureStackTrace(err.(*errorx.Error))
+		}
 		return nil, err
 	} else if res.r == nil {
 		return nil, ScanEOF

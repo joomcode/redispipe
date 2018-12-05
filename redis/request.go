@@ -40,16 +40,16 @@ type Future interface {
 	// n argument is used then to distinguish request this result is for.
 	Resolve(res interface{}, n uint64)
 	// Cancelled method could inform sender that request is abandoned.
-	// It is called usually before sending request, and if Cancelled returns true,
-	// then Sender calls Resolve with ErrRequestCancelled error.
-	Cancelled() bool
+	// It is called usually before sending request, and if Cancelled returns non-nil error,
+	// then Sender calls Resolve with ErrRequestCancelled error wrapped around returned error.
+	Cancelled() error
 }
 
 // FuncFuture simple wrapper that makes Future from function.
 type FuncFuture func(res interface{}, n uint64)
 
 // Cancelled implements Future.Cancelled (always false)
-func (f FuncFuture) Cancelled() bool { return false }
+func (f FuncFuture) Cancelled() error { return nil }
 
 // Resolve implements Future.Resolve (by calling wrapped function).
 func (f FuncFuture) Resolve(res interface{}, n uint64) { f(res, n) }

@@ -57,16 +57,16 @@ func (f *ChanFuture) Resolve(res interface{}, _ uint64) {
 }
 
 // Cancelled - implementation of Future.Cancelled (always false).
-func (f *ChanFuture) Cancelled() bool {
-	return false
+func (f *ChanFuture) Cancelled() error {
+	return nil
 }
 
 // ChanFutures - implementation of Future over slice of *ChanFuture
 type ChanFutures []*ChanFuture
 
 // Cancelled - implementation of Future.Cancelled (always false).
-func (f ChanFutures) Cancelled() bool {
-	return false
+func (f ChanFutures) Cancelled() error {
+	return nil
 }
 
 // Resolve - implementation of Future.Resolve.

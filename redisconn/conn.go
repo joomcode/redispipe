@@ -240,7 +240,7 @@ func (conn *Connection) Ping() error {
 // dumb redis.Future implementation
 type dumbcb struct{}
 
-func (d dumbcb) Cancelled() bool             { return false }
+func (d dumbcb) Cancelled() error            { return nil }
 func (d dumbcb) Resolve(interface{}, uint64) {}
 
 var dumb dumbcb
@@ -264,7 +264,7 @@ func (conn *Connection) SendAsk(req Request, cb Future, n uint64, asking bool) {
 }
 
 func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *errorx.Error {
-	if cb != nil && cb.Cancelled() {
+	if err := cb.Cancelled(); err != nil {
 		return conn.err(redis.ErrRequestCancelled)
 	}
 
@@ -370,7 +370,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 }
 
 func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64, flags int) *errorx.Error {
-	if cb.Cancelled() {
+	if err := cb.Cancelled(); err != nil {
 		return conn.err(redis.ErrRequestCancelled)
 	}
 

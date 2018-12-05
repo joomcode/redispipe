@@ -127,12 +127,12 @@ func newActive(ctx context.Context) active {
 }
 
 // Cancelled implements Future.Cancelled
-func (c active) Cancelled() bool {
+func (c active) Cancelled() error {
 	select {
 	case <-c.ctx.Done():
-		return true
+		return c.ctx.Err()
 	default:
-		return false
+		return nil
 	}
 }
 

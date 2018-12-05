@@ -107,7 +107,7 @@ func (s *ScannerBase) IterLast() bool {
 }
 
 // Cancelled - implements Future.Cancelled method
-func (s *ScannerBase) Cancelled() bool {
+func (s *ScannerBase) Cancelled() error {
 	return s.cb.Cancelled()
 }
 

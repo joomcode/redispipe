@@ -443,7 +443,7 @@ func (c *Cluster) Send(req Request, cb Future, off uint64) {
 // dumb redis.Future implementation
 type dumbcb struct{}
 
-func (d dumbcb) Cancelled() bool             { return false }
+func (d dumbcb) Cancelled() error            { return nil }
 func (d dumbcb) Resolve(interface{}, uint64) {}
 
 var dumb dumbcb
@@ -454,8 +454,8 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 	if cb == nil {
 		cb = &dumb
 	}
-	if cb.Cancelled() {
-		cb.Resolve(c.err(redis.ErrRequestCancelled).WithProperty(redis.EKRequest, req), off)
+	if err := cb.Cancelled(); err != nil {
+		cb.Resolve(c.errWrap(redis.ErrRequestCancelled, err).WithProperty(redis.EKRequest, req), off)
 		return
 	}
 
@@ -538,7 +538,7 @@ func (r *request) resolve(res interface{}) {
 
 // Cancelled implements redis.Future.Cancelled.
 // It proxies call to original request.
-func (r *request) Cancelled() bool {
+func (r *request) Cancelled() error {
 	return r.cb.Cancelled()
 }
 
@@ -561,8 +561,8 @@ func (r *request) Resolve(res interface{}, _ uint64) {
 	default:
 	}
 	// or if request is not active already
-	if r.cb.Cancelled() {
-		r.resolve(r.c.err(redis.ErrRequestCancelled))
+	if err := r.cb.Cancelled(); err != nil {
+		r.resolve(r.c.errWrap(redis.ErrRequestCancelled, err))
 		return
 	}
 
@@ -648,8 +648,8 @@ func (c *Cluster) SendTransaction(reqs []Request, cb Future, off uint64) {
 	if cb == nil {
 		cb = &dumb
 	}
-	if cb.Cancelled() {
-		err := c.err(redis.ErrRequestCancelled).WithProperty(redis.EKRequests, reqs)
+	if err := cb.Cancelled(); err != nil {
+		err := c.errWrap(redis.ErrRequestCancelled, err).WithProperty(redis.EKRequests, reqs)
 		cb.Resolve(err, off+uint64(len(reqs)))
 		return
 	}
@@ -731,7 +731,7 @@ func (t *transaction) send(conn *redisconn.Connection, ask bool) {
 
 // Cancelled implements redis.Future.Cancelled.
 // It proxies call to original Future.
-func (t *transaction) Cancelled() bool {
+func (t *transaction) Cancelled() error {
 	return t.cb.Cancelled()
 }
 
@@ -757,8 +757,8 @@ func (t *transaction) Resolve(res interface{}, n uint64) {
 	default:
 	}
 	// or if request is not active already
-	if t.cb.Cancelled() {
-		t.resolve(t.c.err(redis.ErrRequestCancelled))
+	if err := t.cb.Cancelled(); err != nil {
+		t.resolve(t.c.errWrap(redis.ErrRequestCancelled, err))
 		return
 	}
 

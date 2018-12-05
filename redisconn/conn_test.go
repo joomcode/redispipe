@@ -2,6 +2,7 @@ package redisconn_test
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"strconv"
 	"strings"
@@ -198,8 +199,8 @@ type cancelledFuture struct {
 	res interface{}
 }
 
-func (c *cancelledFuture) Cancelled() bool {
-	return true
+func (c *cancelledFuture) Cancelled() error {
+	return errors.New("cancelled")
 }
 
 func (c *cancelledFuture) Resolve(res interface{}, n uint64) {

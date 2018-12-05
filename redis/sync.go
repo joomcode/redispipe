@@ -82,8 +82,8 @@ type syncRes struct {
 }
 
 // Cancelled implements Future.Cancelled
-func (s *syncRes) Cancelled() bool {
-	return false
+func (s *syncRes) Cancelled() error {
+	return nil
 }
 
 // Resolve implements Future.Resolve
@@ -98,8 +98,8 @@ type syncBatch struct {
 }
 
 // Cancelled implements Future.Cancelled
-func (s *syncBatch) Cancelled() bool {
-	return false
+func (s *syncBatch) Cancelled() error {
+	return nil
 }
 
 // Resolve implements Future.Resolve

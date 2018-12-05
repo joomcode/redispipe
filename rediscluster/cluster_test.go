@@ -310,7 +310,10 @@ func (s *Suite) TestTransactionNormal() {
 }
 
 func (s *Suite) TestScan() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	opts := clustopts
+	opts.HostOpts.IOTimeout = time.Second
+
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -320,8 +323,10 @@ func (s *Suite) TestScan() {
 	for i := 0; i < NumSlots*4; i++ {
 		reqs = append(reqs, redis.Req("SET", slotkey("scan:", s.keys[i/4], strconv.Itoa(i%4)), "1"))
 	}
-	res := sconn.SendMany(s.ctx, reqs)
-	s.r().Nil(redis.AsError(res))
+	ress := sconn.SendMany(s.ctx, reqs)
+	for _, res := range ress {
+		s.r().Nil(redis.AsError(res))
+	}
 
 	allkeys := make(map[string]struct{}, len(reqs))
 	for scanner := sconn.Scanner(s.ctx, redis.ScanOpts{Match: "scan:*", Count: 1000}); ; {
@@ -666,7 +671,9 @@ Loop:
 }
 
 func (s *Suite) TestAllReturns_GoodMoving() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	opts := clustopts
+	opts.CheckInterval = 4 * time.Second
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -747,8 +754,8 @@ Loop:
 	s.Equal(N, int(good))
 	s.Equal(0, int(bad))
 	s.Contains(DebugEvents(), "moved")
-	// s.Contains(DebugEvents(), "addNode") // could not be reliably triggered :-(
-	// s.Contains(DebugEvents(), "asking") // could not be reliably triggered either :-(
+	s.Contains(DebugEvents(), "addNode")
+	//s.Contains(DebugEvents(), "asking")  // could not be reliably triggered either :-(
 }
 
 func (s *Suite) TestAllReturns_Bad() {

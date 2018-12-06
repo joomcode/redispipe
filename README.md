@@ -279,7 +279,7 @@ func Example_usage() {
 
 	res = sync.Send(ctx, redis.Req("HMGET", "key", "field1"))
 	if err := redis.AsError(res); err != nil {
-		if rerr := redis.AsRedisError(res); rerr != nil && rerr.KindOf(redis.ErrResult) {
+		if rerr := redis.AsErrorx(res); rerr != nil && rerr.IsOfType(redis.ErrResult) {
 			fmt.Printf("expected error: %v\n", rerr)
 		} else {
 			fmt.Printf("unexpected error: %v\n", err)

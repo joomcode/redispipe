@@ -8,6 +8,7 @@ import (
 
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
+	"github.com/joomcode/redispipe/redisconn"
 )
 
 // ConnType - type of connection (simple server, or cluster aware).
@@ -48,7 +49,7 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 		if c.C == nil {
 			c.C, err = net.DialTimeout("tcp", c.Addr, timeout)
 			if err != nil {
-				return redis.ErrDial.WrapWithNoMessage(err)
+				return redisconn.ErrDial.WrapWithNoMessage(err)
 			}
 			c.R = bufio.NewReader(c.C)
 		}
@@ -187,7 +188,7 @@ func (c *Conn) Close() {
 func Do(addr string, cmd string, args ...interface{}) interface{} {
 	conn, err := net.DialTimeout("tcp", addr, DefaultTimeout)
 	if err != nil {
-		return redis.ErrDial.WrapWithNoMessage(err)
+		return redisconn.ErrDial.WrapWithNoMessage(err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(DefaultTimeout))

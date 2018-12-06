@@ -10,12 +10,12 @@ func (c *Cluster) EachShard(cb func(redis.Sender, error) bool) {
 	for _, shard := range cfg.shards {
 		node := cfg.nodes[shard.addr[0]]
 		if node == nil {
-			cb(nil, c.err(redis.ErrDial))
+			cb(nil, c.err(ErrNoAliveConnection).WithProperty(redis.EKAddress, shard.addr[0]))
 			return
 		}
 		conn := node.getConn(c.opts.ConnHostPolicy, preferConnected, nil)
 		if conn == nil {
-			cb(nil, c.err(redis.ErrDial))
+			cb(nil, c.err(ErrNoAliveConnection).WithProperty(redis.EKAddress, shard.addr[0]))
 			return
 		}
 		if !cb(conn, nil) {

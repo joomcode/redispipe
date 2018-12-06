@@ -89,7 +89,7 @@ func (s *Suite) waitReconnect(conn *Connection) {
 		done := time.Now()
 		s.r().WithinDuration(at, done, defopts.IOTimeout*3/2)
 		if rerr := redis.AsErrorx(res); rerr != nil {
-			s.True(rerr.IsOfType(redis.ErrNotConnected))
+			s.True(rerr.IsOfType(ErrNotConnected))
 			s.r().WithinDuration(start, at, defopts.IOTimeout*2)
 		} else {
 			s.Equal("PONG", res)
@@ -153,7 +153,7 @@ func (s *Suite) TestFailedWithNonEmptyPassword() {
 	conn, err := Connect(s.ctx, s.s.Addr(), opts)
 	s.r().Nil(conn)
 	s.r().Error(err)
-	s.r().True(redis.AsErrorx(err).IsOfType(redis.ErrAuth))
+	s.r().True(redis.AsErrorx(err).IsOfType(ErrAuth))
 }
 
 func (s *Suite) Test_justToCover() {
@@ -232,7 +232,7 @@ func (s *Suite) TestStopped_DoesntConnectWithNegativeReconnectPause() {
 	_, err := Connect(s.ctx, s.s.Addr(), opts)
 	s.r().NotNil(err)
 	rerr := s.AsError(err)
-	s.True(rerr.IsOfType(redis.ErrDial))
+	s.True(rerr.IsOfType(ErrDial))
 }
 
 func (s *Suite) TestStopped_Reconnects() {
@@ -242,14 +242,14 @@ func (s *Suite) TestStopped_Reconnects() {
 	s.r().Nil(err)
 	defer conn.Close()
 
-	s.badPing(conn, redis.ErrNotConnected, 0)
+	s.badPing(conn, ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
 
 	s.s.Stop()
 	time.Sleep(1 * time.Millisecond)
-	s.badPing(conn, redis.ErrNotConnected, 0)
+	s.badPing(conn, ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
@@ -264,14 +264,14 @@ func (s *Suite) TestStopped_Reconnects2() {
 
 	s.s.Stop()
 	time.Sleep(1 * time.Millisecond)
-	s.badPing(conn, redis.ErrNotConnected, 0)
+	s.badPing(conn, ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
 
 	s.s.Stop()
 	time.Sleep(1 * time.Millisecond)
-	s.badPing(conn, redis.ErrNotConnected, 0)
+	s.badPing(conn, ErrNotConnected, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
@@ -293,9 +293,9 @@ func (s *Suite) TestTimeout() {
 		switch {
 		case rerr.IsOfType(redis.ErrIO):
 			events |= 1
-		case rerr.IsOfType(redis.ErrConnSetup):
+		case rerr.IsOfType(ErrConnSetup):
 			events |= 2
-		case rerr.IsOfType(redis.ErrNotConnected):
+		case rerr.IsOfType(ErrNotConnected):
 			events |= 4
 		}
 		s.r().WithinDuration(start, time.Now(), defopts.IOTimeout*10)

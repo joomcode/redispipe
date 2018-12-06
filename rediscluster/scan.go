@@ -63,8 +63,8 @@ func (s *Scanner) Next(cb redis.Future) {
 	}
 	conn := s.c.connForAddress(s.addrs[0])
 	if conn == nil {
-		s.Err = s.c.err(redis.ErrNotConnected).
-			WithProperty(EKAddress, s.addrs[0])
+		s.Err = s.c.err(ErrNoAliveConnection).
+			WithProperty(redis.EKAddress, s.addrs[0])
 		cb.Resolve(s.Err, 0)
 		return
 	}

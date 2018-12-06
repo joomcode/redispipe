@@ -7,7 +7,7 @@ import (
 
 var (
 	// ErrCluster - some cluster related errors.
-	ErrCluster = errorx.NewNamespace("cluster")
+	ErrCluster = redis.Errors.NewSubNamespace("cluster")
 	// ErrClusterSlots - fetching slots configuration failed
 	ErrClusterSlots = ErrCluster.NewType("retreive_slots")
 	// ErrAddressNotResolved - address could not be resolved
@@ -15,13 +15,13 @@ var (
 	ErrAddressNotResolved = ErrCluster.NewType("resolve_address")
 	// ErrClusterConfigEmpty - no addresses found in config.
 	ErrClusterConfigEmpty = ErrCluster.NewType("config_empty")
+	// ErrNoAliveConnection - no alive connection to shard
+	ErrNoAliveConnection = ErrCluster.NewType("no_alive_connection", redis.ErrTraitConnectivity)
 )
 
 var (
 	// EKCluster - cluster for error
 	EKCluster = errorx.RegisterProperty("cluster")
-	// EKAddress - set when no alive connection found for address
-	EKAddress = errorx.RegisterProperty("address")
 	// EKPolicy - policy used to choose between master and replicas.
 	EKPolicy = errorx.RegisterProperty("policy")
 )

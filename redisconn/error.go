@@ -2,6 +2,25 @@ package redisconn
 
 import (
 	"github.com/joomcode/errorx"
+	"github.com/joomcode/redispipe/redis"
+)
+
+var (
+	ErrTraitInitPermanent = errorx.RegisterTrait("init_permanent")
+
+	// ErrConnection - connection was not established at the moment request were done,
+	// request is definitely not sent anywhere.
+	ErrConnection = redis.Errors.NewSubNamespace("connection", redis.ErrTraitNotSent, redis.ErrTraitConnectivity)
+	// ErrNotConnected - connection were not established at the moment
+	ErrNotConnected = ErrConnection.NewType("not_connected")
+	// ErrDial - could not connect.
+	ErrDial = ErrConnection.NewType("could_not_connect")
+	// ErrAuth - password didn't match
+	ErrAuth = ErrConnection.NewType("count_not_auth", ErrTraitInitPermanent)
+	// ErrInit - other error during initial conversation with redis
+	ErrInit = ErrConnection.NewType("initialization_error", ErrTraitInitPermanent)
+	// ErrConnSetup - other connection initialization error (including io errors)
+	ErrConnSetup = ErrConnection.NewType("initialization_temp_error")
 )
 
 var (

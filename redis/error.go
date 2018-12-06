@@ -20,25 +20,12 @@ var (
 	// ErrContextClosed - context were explicitly closed (or connection / cluster were shut down)
 	ErrContextClosed = Errors.NewType("connection_context_closed", ErrTraitNotSent)
 
-	ErrTraitInitPermanent = errorx.RegisterTrait("init_permanent")
-
-	// ErrConnection - connection was not established at the moment request were done,
-	// request is definitely not sent anywhere.
-	ErrConnection = Errors.NewSubNamespace("connection", ErrTraitNotSent)
-	// ErrNotConnected - connection were not established at the moment
-	ErrNotConnected = ErrConnection.NewType("not_connected")
-	// ErrDial - could not connect.
-	ErrDial = ErrConnection.NewType("could_not_connect")
-	// ErrAuth - password didn't match
-	ErrAuth = ErrConnection.NewType("count_not_auth", ErrTraitInitPermanent)
-	// ErrInit - other error during initial conversation with redis
-	ErrInit = ErrConnection.NewType("initialization_error", ErrTraitInitPermanent)
-	// ErrConnSetup - other connection initialization error (including io errors)
-	ErrConnSetup = ErrConnection.NewType("initialization_temp_error")
+	// ErrTraitConnectivity marks all networking and io errors
+	ErrTraitConnectivity = errorx.RegisterTrait("network")
 
 	// ErrIO - io error: read/write error, or timeout, or connection closed while reading/writting
 	// It is not known if request were processed or not
-	ErrIO = Errors.NewType("io error")
+	ErrIO = Errors.NewType("io error", ErrTraitConnectivity)
 
 	// ErrRequest - request malformed. Can not serialize request, no reason to retry.
 	ErrRequest = Errors.NewSubNamespace("request")
@@ -51,9 +38,8 @@ var (
 	// ErrRequestCancelled - request already cancelled
 	ErrRequestCancelled = ErrRequest.NewType("request_cancelled")
 
-	ErrTraitResponse = errorx.RegisterTrait("response")
 	// ErrResponse - response malformed. Redis returns unexpected response.
-	ErrResponse = Errors.NewSubNamespace("response", ErrTraitResponse)
+	ErrResponse = Errors.NewSubNamespace("response")
 	// ErrResponseFormat - response is not valid Redis response
 	ErrResponseFormat = ErrResponse.NewType("format")
 	// ErrResponseUnexpected - response is valid redis response, but its structure/type unexpected
@@ -112,6 +98,8 @@ var (
 	EKRequests = errorx.RegisterProperty("requests")
 	// EKResponse - unexpected response
 	EKResponse = errorx.RegisterProperty("response")
+	// EKAddress - address of redis that has a problems
+	EKAddress = errorx.RegisterProperty("address")
 )
 
 var (

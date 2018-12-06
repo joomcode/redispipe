@@ -70,7 +70,7 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 		if conn != nil {
 			then(conn, nil)
 		} else {
-			err := c.err(redis.ErrDial).WithProperty(EKAddress, addr)
+			err := c.err(ErrNoAliveConnection).WithProperty(redis.EKAddress, addr)
 			then(nil, err)
 		}
 		return
@@ -97,7 +97,7 @@ func (c *Cluster) ensureConnForAddress(addr string, then connThen) {
 		var err error
 		conn := node.getConn(c.opts.ConnHostPolicy, mayBeConnected, nil)
 		if conn == nil {
-			err = c.err(redis.ErrDial).WithProperty(EKAddress, addr)
+			err = c.err(ErrNoAliveConnection).WithProperty(redis.EKAddress, addr)
 		}
 		c.nodeWait.Lock()
 		delete(promises, addr)
@@ -249,7 +249,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 	}
 	if conn == nil {
 		c.ForceReloading()
-		return nil, c.err(redis.ErrDial).WithProperty(redis.EKSlot, slot).WithProperty(EKPolicy, policy)
+		return nil, c.err(ErrNoAliveConnection).WithProperty(redis.EKSlot, slot).WithProperty(EKPolicy, policy)
 	}
 	return conn, nil
 }

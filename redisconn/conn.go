@@ -145,7 +145,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 			if opts.ReconnectPause < 0 {
 				return nil, err
 			}
-			if cer, ok := err.(*errorx.Error); ok && cer.HasTrait(redis.ErrTraitInitPermanent) {
+			if cer, ok := err.(*errorx.Error); ok && cer.HasTrait(ErrTraitInitPermanent) {
 				return nil, err
 			}
 		}
@@ -283,7 +283,7 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *e
 	case connClosed:
 		return conn.errWrap(redis.ErrContextClosed, conn.ctx.Err())
 	case connDisconnected:
-		return conn.err(redis.ErrNotConnected)
+		return conn.err(ErrNotConnected)
 	}
 	futures := conn.futures
 	if asking {
@@ -391,7 +391,7 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	case connClosed:
 		return conn.errWrap(redis.ErrContextClosed, conn.ctx.Err())
 	case connDisconnected:
-		return conn.err(redis.ErrNotConnected)
+		return conn.err(ErrNotConnected)
 	}
 
 	futures := conn.futures
@@ -483,7 +483,7 @@ func (conn *Connection) dial() error {
 	}
 	connection, err = dialer.DialContext(conn.ctx, network, address)
 	if err != nil {
-		return conn.errWrap(redis.ErrDial, err)
+		return conn.errWrap(ErrDial, err)
 	}
 
 	dc := newDeadlineIO(connection, conn.opts.IOTimeout)
@@ -507,7 +507,7 @@ func (conn *Connection) dial() error {
 	}
 	if _, err = dc.Write(req); err != nil {
 		connection.Close()
-		return conn.errWrap(redis.ErrConnSetup, err)
+		return conn.errWrap(ErrConnSetup, err)
 	}
 	// Disarm timeout
 	connection.SetWriteDeadline(time.Time{})
@@ -519,9 +519,9 @@ func (conn *Connection) dial() error {
 		if err := redis.AsErrorx(res); err != nil {
 			connection.Close()
 			if !err.IsOfType(redis.ErrIO) {
-				return conn.errWrap(redis.ErrAuth, err)
+				return conn.errWrap(ErrAuth, err)
 			}
-			return conn.errWrap(redis.ErrConnSetup, err)
+			return conn.errWrap(ErrConnSetup, err)
 		}
 	}
 	// PING Response
@@ -529,13 +529,13 @@ func (conn *Connection) dial() error {
 	if err := redis.AsErrorx(res); err != nil {
 		connection.Close()
 		if !err.IsOfType(redis.ErrIO) {
-			return conn.errWrap(redis.ErrInit, err)
+			return conn.errWrap(ErrInit, err)
 		}
-		return conn.errWrap(redis.ErrConnSetup, err)
+		return conn.errWrap(ErrConnSetup, err)
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
 		connection.Close()
-		return redis.ErrInit.New("ping response mismatch").
+		return ErrInit.New("ping response mismatch").
 			WithProperty(EKConnection, conn).
 			WithProperty(redis.EKResponse, res)
 	}
@@ -545,13 +545,13 @@ func (conn *Connection) dial() error {
 		if err := redis.AsErrorx(res); err != nil {
 			connection.Close()
 			if !err.IsOfType(redis.ErrIO) {
-				return conn.errWrap(redis.ErrInit, err)
+				return conn.errWrap(ErrInit, err)
 			}
-			return conn.errWrap(redis.ErrConnSetup, err)
+			return conn.errWrap(ErrConnSetup, err)
 		}
 		if str, ok := res.(string); !ok || str != "OK" {
 			connection.Close()
-			return redis.ErrInit.New("SELECT db response mismatch").
+			return ErrInit.New("SELECT db response mismatch").
 				WithProperty(EKDb, conn.opts.DB).
 				WithProperty(redis.EKResponse, res)
 		}

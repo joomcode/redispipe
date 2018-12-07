@@ -77,6 +77,8 @@ func (cl *Cluster) Start() {
 // WaitClusterOk wait for cluster configuration to be stable.
 func (cl *Cluster) WaitClusterOk() {
 	i := 0
+	t := time.AfterFunc(10*time.Second, func() { panic("cluster didn't stabilize") })
+	defer t.Stop()
 	for !cl.ClusterOk() {
 		if i++; i == 10 {
 			cl.AttemptFailover()

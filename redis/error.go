@@ -76,30 +76,24 @@ var (
 )
 
 var (
-	// EKMessage - key to store message associated with error.
-	// Note: you'd better use `Msg()` method.
-	EKMessage = errorx.RegisterProperty("message")
-	// EKCause - key to store wrapped error.
-	// There is Cause() convenient method to get it.
-	EKCause = errorx.RegisterProperty("cause")
 	// EKLine - set by response parser for unrecognized header lines.
 	EKLine = errorx.RegisterProperty("line")
 	// EKMovedTo - set by response parser for MOVED and ASK responses.
 	EKMovedTo = errorx.RegisterProperty("movedto")
 	// EKSlot - set by response parser for MOVED and ASK responses.
-	EKSlot = errorx.RegisterProperty("slot")
+	EKSlot = errorx.RegisterPrintableProperty("slot")
 	// EKVal - set by request writer and checker to argument value which could not be serialized.
-	EKVal = errorx.RegisterProperty("val")
+	EKVal = errorx.RegisterPrintableProperty("val")
 	// EKArgPos - set by request writer and checker to argument position which could not be serialized.
-	EKArgPos = errorx.RegisterProperty("argpos")
+	EKArgPos = errorx.RegisterPrintableProperty("argpos")
 	// EKRequest - request that triggered error.
-	EKRequest = errorx.RegisterProperty("request")
+	EKRequest = errorx.RegisterPrintableProperty("request")
 	// EKRequests - batch requests that triggered error.
-	EKRequests = errorx.RegisterProperty("requests")
+	EKRequests = errorx.RegisterPrintableProperty("requests")
 	// EKResponse - unexpected response
 	EKResponse = errorx.RegisterProperty("response")
 	// EKAddress - address of redis that has a problems
-	EKAddress = errorx.RegisterProperty("address")
+	EKAddress = errorx.RegisterPrintableProperty("address")
 )
 
 var (

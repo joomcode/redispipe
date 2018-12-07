@@ -1,5 +1,7 @@
 package redis
 
+import "fmt"
+
 // Req - convenient wrapper to create Request.
 func Req(cmd string, args ...interface{}) Request {
 	return Request{cmd, args}
@@ -11,6 +13,25 @@ type Request struct {
 	// It could contain single space, then it will be split, and last part will be serialized as an argument.
 	Cmd  string
 	Args []interface{}
+}
+
+func (r Request) String() string {
+	args := r.Args
+	if len(args) > 5 {
+		args = args[:5]
+	}
+	argss := make([]string, 0, 1+len(args))
+	for _, arg := range args {
+		arg_s := fmt.Sprintf("%v", arg)
+		if len(arg_s) > 32 {
+			arg_s = arg_s[:32] + "..."
+		}
+		argss = append(argss, arg_s)
+	}
+	if len(r.Args) > 5 {
+		argss = append(argss, "...")
+	}
+	return fmt.Sprintf("Req(%q, %q)", r.Cmd, argss)
 }
 
 // Key returns first field of request that should be used as a key for redis cluster.

@@ -27,7 +27,7 @@ var (
 	// EKConnection - key for connection that handled request.
 	EKConnection = errorx.RegisterProperty("connection")
 	// EKDb - db number to select.
-	EKDb = errorx.RegisterProperty("db")
+	EKDb = errorx.RegisterPrintableProperty("db")
 )
 
 func withNewProperty(err *errorx.Error, p errorx.Property, v interface{}) *errorx.Error {

@@ -26,7 +26,7 @@ func ExampleAppendRequest() {
 	// "*2\r\n$3\r\nGET\r\n$3\r\none\r\n*3\r\n$6\r\nINCRBY\r\n$3\r\ncnt\r\n$1\r\n5\r\n"
 	// <nil>
 	// "*2\r\n$3\r\nGET\r\n$3\r\none\r\n*3\r\n$6\r\nINCRBY\r\n$3\r\ncnt\r\n$1\r\n5\r\n"
-	// redispipe.request.argument_type: wrong argument 0
+	// redispipe.request.argument_type: {request: Req("SENDFOO", ["1s"]), argpos: 0, val: 1s}
 }
 
 func ExampleAsError() {
@@ -114,7 +114,7 @@ func ExampleSync() {
 	// OK
 	// OK
 	// ["1" "2"]
-	// redispipe.result: WRONGTYPE Operation against a key holding the wrong kind of value
+	// redispipe.result: WRONGTYPE Operation against a key holding the wrong kind of value {request: Req("HSET", ["key1" "field1" "val1"]), address: 127.0.0.1:46231}
 	// <nil>
 	// ['\x02' '\x01' "2" "1"]
 }

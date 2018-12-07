@@ -80,7 +80,7 @@ func AppendRequest(buf []byte, req Request) ([]byte, error) {
 		case nil:
 			buf = append(buf, "$0\r\n"...)
 		default:
-			return buf[:oldSize], ErrArgumentType.New("wrong argument %d", i).
+			return buf[:oldSize], ErrArgumentType.NewWithNoMessage().
 				WithProperty(EKVal, val).
 				WithProperty(EKArgPos, i).
 				WithProperty(EKRequest, req)
@@ -223,7 +223,7 @@ func CheckArgs(req Request) *errorx.Error {
 		case string, []byte, int, uint, int64, uint64, int32, uint32, int8, uint8, int16, uint16, bool, float32, float64, nil:
 			// ok
 		default:
-			return ErrArgumentType.New("wrong argument %d", i).
+			return ErrArgumentType.NewWithNoMessage().
 				WithProperty(EKVal, val).
 				WithProperty(EKArgPos, i).
 				WithProperty(EKRequest, req)

@@ -22,8 +22,10 @@ var (
 var (
 	// EKCluster - cluster for error
 	EKCluster = errorx.RegisterProperty("cluster")
+	// EKClusterName - cluster name
+	EKClusterName = errorx.RegisterPrintableProperty("clusterName")
 	// EKPolicy - policy used to choose between master and replicas.
-	EKPolicy = errorx.RegisterProperty("policy")
+	EKPolicy = errorx.RegisterPrintableProperty("policy")
 )
 
 func withNewProperty(err *errorx.Error, p errorx.Property, v interface{}) *errorx.Error {

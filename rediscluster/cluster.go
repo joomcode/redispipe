@@ -527,7 +527,7 @@ func (r *request) resolve(res interface{}) {
 	if r.cb != &dumb {
 		if err := redis.AsErrorx(res); err != nil {
 			err = withNewProperty(err, redis.EKRequest, r.req)
-			err = withNewProperty(err, EKCluster, r.c)
+			err = r.c.addProps(err)
 			res = err
 		}
 		r.cb.Resolve(res, r.off)
@@ -709,7 +709,7 @@ func (t *transaction) resolve(res interface{}) {
 	if t.cb != &dumb {
 		if err := redis.AsErrorx(res); err != nil {
 			err = withNewProperty(err, redis.EKRequests, t.reqs)
-			err = withNewProperty(err, EKCluster, t.c)
+			err = t.c.addProps(err)
 			res = err
 		}
 		t.cb.Resolve(res, t.off)
@@ -880,9 +880,15 @@ func (t *transaction) sendMoved(addr string, asking bool) {
 }
 
 func (c *Cluster) err(kind *errorx.Type) *errorx.Error {
-	return kind.NewWithNoMessage().WithProperty(EKCluster, c)
+	return c.addProps(kind.NewWithNoMessage())
 }
 
 func (c *Cluster) errWrap(kind *errorx.Type, err error) *errorx.Error {
-	return kind.WrapWithNoMessage(err).WithProperty(EKCluster, c)
+	return c.addProps(kind.WrapWithNoMessage(err))
+}
+
+func (c *Cluster) addProps(err *errorx.Error) *errorx.Error {
+	err = withNewProperty(err, EKCluster, c)
+	err = withNewProperty(err, EKClusterName, c.Name())
+	return err
 }

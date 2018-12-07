@@ -273,7 +273,7 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *e
 
 	// Since we do not pack request here, we need to be sure it could be packed
 	if err := redis.CheckArgs(req); err != nil {
-		return err.WithProperty(EKConnection, conn)
+		return conn.addProps(err)
 	}
 
 	conn.futmtx.Lock()
@@ -347,7 +347,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 	// check arguments of all commands. If single request is malformed, then all requests will be aborted.
 	for i, req := range requests {
 		if err = redis.CheckArgs(req); err != nil {
-			err = err.WithProperty(EKConnection, conn).WithProperty(redis.EKRequest, requests[i])
+			err = conn.addProps(err).WithProperty(redis.EKRequest, requests[i])
 			commonerr = conn.errWrap(redis.ErrBatchFormat, err).
 				WithProperty(redis.EKRequests, requests).
 				WithProperty(redis.EKRequest, requests[i])
@@ -546,8 +546,7 @@ func (conn *Connection) dial() error {
 	}
 	if str, ok := res.(string); !ok || str != "PONG" {
 		connection.Close()
-		return ErrInit.New("ping response mismatch").
-			WithProperty(EKConnection, conn).
+		return conn.addProps(ErrInit.New("ping response mismatch")).
 			WithProperty(redis.EKResponse, res)
 	}
 	// SELECT DB Response
@@ -719,7 +718,7 @@ func (one *oneconn) setErr(neterr error, conn *Connection) {
 		if !ok {
 			rerr = conn.errWrap(redis.ErrIO, neterr)
 		}
-		rerr = withNewProperty(rerr, EKConnection, conn)
+		rerr = conn.addProps(rerr)
 		one.err = rerr
 		// and try to reconnect asynchronously
 		go conn.reconnect(rerr, one.c)
@@ -840,9 +839,6 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 				// (most probably, it is already closed. But also it could be timeout).
 				one.setErr(rerr, conn)
 				break
-			} else {
-				// otherwise, resolve future with this error.
-				res = rerr.WithProperty(EKConnection, conn)
 			}
 		}
 		if i == len(futures) {
@@ -864,6 +860,9 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 		futures[i] = future{}
 		i++
 		// and resolve it
+		if rerr := redis.AsErrorx(res); rerr != nil {
+			res = conn.addProps(rerr).WithProperty(redis.EKRequest, fut.req)
+		}
 		conn.resolve(fut, res)
 	}
 
@@ -883,9 +882,15 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 
 // create error with connection as an attribute.
 func (conn *Connection) err(kind *errorx.Type) *errorx.Error {
-	return kind.NewWithNoMessage().WithProperty(EKConnection, conn)
+	return conn.addProps(kind.NewWithNoMessage())
 }
 
 func (conn *Connection) errWrap(kind *errorx.Type, cause error) *errorx.Error {
-	return kind.WrapWithNoMessage(cause).WithProperty(EKConnection, conn)
+	return conn.addProps(kind.WrapWithNoMessage(cause))
+}
+
+func (conn *Connection) addProps(err *errorx.Error) *errorx.Error {
+	err = withNewProperty(err, EKConnection, conn)
+	err = withNewProperty(err, redis.EKAddress, conn.Addr())
+	return err
 }

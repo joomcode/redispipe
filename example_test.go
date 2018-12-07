@@ -139,7 +139,7 @@ func Example_usage() {
 	// 0: []uint8 "val1"
 	// 1: []uint8 "val2"
 	// 2: <nil> %!q(<nil>)
-	// expected error: redispipe.result: WRONGTYPE Operation against a key holding the wrong kind of value
+	// expected error: redispipe.result: WRONGTYPE Operation against a key holding the wrong kind of value {request: Req("HMGET", ["key" "field1"]), address: 127.0.0.1:6379}
 	// result[0]: []uint8 "ho"
 	// result[1]: []interface {} ["val1" <nil>]
 	// tresult[0]: string "OK"

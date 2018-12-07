@@ -78,6 +78,7 @@ type Connection struct {
 
 	futures   []future
 	futsignal chan struct{}
+	futtimer  *time.Timer
 	futmtx    sync.Mutex
 
 	firstConn chan struct{}
@@ -110,6 +111,8 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	conn.ctx, conn.cancel = context.WithCancel(ctx)
 
 	conn.futsignal = make(chan struct{}, 1)
+	conn.futtimer = time.NewTimer(24 * time.Hour)
+	conn.futtimer.Stop()
 
 	if conn.opts.IOTimeout == 0 {
 		conn.opts.IOTimeout = defaultIOTimeout
@@ -295,9 +298,13 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *e
 	// should notify writer about this shard having queries.
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
 	if len(conn.futures) == 0 {
-		select {
-		case conn.futsignal <- struct{}{}:
-		default:
+		if conn.opts.WritePause > 0 {
+			conn.futtimer.Reset(conn.opts.WritePause)
+		} else {
+			select {
+			case conn.futsignal <- struct{}{}:
+			default:
+			}
 		}
 	}
 	conn.futures = futures
@@ -418,9 +425,13 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	// should notify writer about this shard having queries
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
 	if len(conn.futures) == 0 {
-		select {
-		case conn.futsignal <- struct{}{}:
-		default:
+		if conn.opts.WritePause > 0 {
+			conn.futtimer.Reset(conn.opts.WritePause)
+		} else {
+			select {
+			case conn.futsignal <- struct{}{}:
+			default:
+			}
 		}
 	}
 	conn.futures = futures
@@ -629,8 +640,13 @@ func (conn *Connection) createConnection(reconnect bool, wg *sync.WaitGroup) err
 // Should be called with all shards locked.
 func (conn *Connection) dropFutures(err error) {
 	// first, empty futsignal queue.
+	conn.futtimer.Stop()
 	select {
 	case <-conn.futsignal:
+	default:
+	}
+	select {
+	case <-conn.futtimer.C:
 	default:
 	}
 	// then Resolve all future with error
@@ -661,7 +677,8 @@ func (conn *Connection) closeConnection(neterr *errorx.Error, forever bool) {
 	conn.futmtx.Lock()
 	defer conn.futmtx.Unlock()
 	if forever {
-		// have to close dirtyShard under shards lock
+		conn.futtimer.Stop()
+		// have to close futsignal under futmtx locked
 		close(conn.futsignal)
 	}
 
@@ -744,24 +761,6 @@ func (conn *Connection) writer(one *oneconn) {
 	}()
 
 	round := 1023
-	write := func() bool {
-		if _, err := one.c.Write(packet); err != nil {
-			one.setErr(err, conn)
-			return false
-		}
-		// every 1023 writes check our buffer.
-		// If it is too large, then lets GC to free it.
-		if round--; round == 0 {
-			round = 1023
-			if cap(packet) > 128*1024 {
-				packet = nil
-			}
-		}
-		// otherwise, reuse buffer
-		packet = packet[:0]
-		return true
-	}
-
 	for {
 		// wait for dirtyShard or close of our reader-writer pair.
 		select {
@@ -770,20 +769,22 @@ func (conn *Connection) writer(one *oneconn) {
 				// user closed connection
 				return
 			}
+		case <-conn.futtimer.C:
 		case <-one.control:
 			// this reader-writer pair is obsolete
 			return
-		}
-
-		if conn.opts.WritePause > 0 {
-			// lets sleep a bit to accumulate more requests
-			time.Sleep(conn.opts.WritePause)
 		}
 
 		conn.futmtx.Lock()
 		// fetch requests from shard, and replace it with empty buffer with non-zero capacity
 		futures, conn.futures = conn.futures, futures
 		conn.futmtx.Unlock()
+
+		if len(futures) == 0 {
+			// There are multiple ways to come here, and most of them are through dropFutures.
+			// Lets just ignore them.
+			continue
+		}
 
 		// serialize requests
 		for _, fut := range futures {
@@ -795,15 +796,22 @@ func (conn *Connection) writer(one *oneconn) {
 			}
 		}
 
-		if len(futures) == 0 {
-			// There are multiple ways to come here, and most of them are through dropFutures.
-			// Lets just ignore them.
-			continue
-		}
-
-		if !write() {
+		if _, err := one.c.Write(packet); err != nil {
+			one.setErr(err, conn)
 			return
 		}
+
+		// every 1023 writes check our buffer.
+		// If it is too large, then lets GC to free it.
+		if round--; round == 0 {
+			round = 1023
+			if cap(packet) > 128*1024 {
+				packet = nil
+			}
+		}
+		// otherwise, reuse buffer
+		packet = packet[:0]
+
 		one.futures <- futures
 
 		select {

@@ -22,11 +22,11 @@ non-concurrent usage.
 
 Capabilities
 
-- fast
+- fast,
 
-- thread-safe: no need to lock around connection, no need to "return to pool", etc
+- thread-safe: no need to lock around connection, no need to "return to pool", etc,
 
-- Pipelining is implicit,
+- pipelining is implicit,
 
 - transactions supported (but without WATCH),
 
@@ -63,10 +63,10 @@ synchronous wrappers.
 
 To use convenient synchronous api, one should wrap "sender" with one of wrappers:
 
-- redis.Sync{sender} - provides simple synchronouse api
+- redis.Sync{sender} - provides simple synchronouse api,
 
 - redis.SyncCtx{sender} - provides same api, but all methods accepts context.Context, and
-methods returns immediately if that context is closed.
+methods returns immediately if that context is closed,
 
 - redis.ChanFutured{sender} - provides api with future through channel closing.
 

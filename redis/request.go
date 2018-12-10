@@ -22,11 +22,11 @@ func (r Request) String() string {
 	}
 	argss := make([]string, 0, 1+len(args))
 	for _, arg := range args {
-		arg_s := fmt.Sprintf("%v", arg)
-		if len(arg_s) > 32 {
-			arg_s = arg_s[:32] + "..."
+		argStr := fmt.Sprintf("%v", arg)
+		if len(argStr) > 32 {
+			argStr = argStr[:32] + "..."
 		}
-		argss = append(argss, arg_s)
+		argss = append(argss, argStr)
 	}
 	if len(r.Args) > 5 {
 		argss = append(argss, "...")
@@ -35,12 +35,12 @@ func (r Request) String() string {
 }
 
 // Key returns first field of request that should be used as a key for redis cluster.
-func (req Request) Key() (string, bool) {
-	if req.Cmd == "RANDOMKEY" {
+func (r Request) Key() (string, bool) {
+	if r.Cmd == "RANDOMKEY" {
 		return "RANDOMKEY", false
 	}
 	var n int
-	switch req.Cmd {
+	switch r.Cmd {
 	case "EVAL", "EVALSHA":
 		n = 2
 	case "BITOP":
@@ -48,10 +48,10 @@ func (req Request) Key() (string, bool) {
 	default:
 		n = 0
 	}
-	if len(req.Args) <= n {
+	if len(r.Args) <= n {
 		return "", false
 	}
-	return ArgToString(req.Args[n])
+	return ArgToString(r.Args[n])
 }
 
 // Future is interface accepted by Sender to signal request completion.

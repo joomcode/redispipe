@@ -7,17 +7,20 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/joomcode/redispipe/redis"
+	"github.com/joomcode/redispipe/redis"
 )
 
+// SlotMoving is a flag about direction of slot migration.
 type SlotMoving byte
 
 const (
+	// SlotMigrating indicates slot is migrating from this instance.
 	SlotMigrating SlotMoving = 1
+	// SlotImporting indicates slot is importing into this instance.
 	SlotImporting SlotMoving = 2
 )
 
-// SlotRange represents slice of slots
+// SlotsRange represents slice of slots
 type SlotsRange struct {
 	From  int
 	To    int
@@ -27,13 +30,13 @@ type SlotsRange struct {
 // ParseSlotsInfo parses result of CLUSTER SLOTS command
 func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 	const NumSlots = 1 << 14
-	if err := AsError(res); err != nil {
+	if err := redis.AsError(res); err != nil {
 		return nil, err
 	}
 
 	errf := func(f string, args ...interface{}) ([]SlotsRange, error) {
 		msg := fmt.Sprintf(f, args...)
-		err := ErrResponseUnexpected.New(msg)
+		err := redis.ErrResponseUnexpected.New(msg)
 		return nil, err
 	}
 
@@ -254,13 +257,13 @@ func (iis InstanceInfos) Hosts() []string {
 // ParseClusterNodes parses result of CLUSTER NODES command.
 func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 	var err error
-	if err = AsError(res); err != nil {
+	if err = redis.AsError(res); err != nil {
 		return nil, err
 	}
 
 	errf := func(f string, args ...interface{}) (InstanceInfos, error) {
 		msg := fmt.Sprintf(f, args...)
-		err := ErrResponseUnexpected.New(msg)
+		err := redis.ErrResponseUnexpected.New(msg)
 		return nil, err
 	}
 

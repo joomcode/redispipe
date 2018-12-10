@@ -5,6 +5,7 @@ import (
 )
 
 var (
+	// Errors is a root namespaces of all redispipe errors.
 	Errors = errorx.NewNamespace("redispipe").ApplyModifiers(errorx.TypeModifierOmitStackTrace)
 
 	// ErrOpts - options are wrong
@@ -59,6 +60,7 @@ var (
 	// ErrPing - ping receives wrong response
 	ErrPing = ErrResponse.NewType("ping")
 
+	// ErrTraitClusterMove signals that error happens due to cluster rebalancing.
 	ErrTraitClusterMove = errorx.RegisterTrait("cluster_move")
 
 	// ErrResult - just regular redis response.

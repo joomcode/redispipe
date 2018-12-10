@@ -6,8 +6,6 @@ import (
 )
 
 var (
-	ErrTraitInitPermanent = errorx.RegisterTrait("init_permanent")
-
 	// ErrConnection - connection was not established at the moment request were done,
 	// request is definitely not sent anywhere.
 	ErrConnection = redis.Errors.NewSubNamespace("connection", redis.ErrTraitNotSent, redis.ErrTraitConnectivity)
@@ -21,6 +19,11 @@ var (
 	ErrInit = ErrConnection.NewType("initialization_error", ErrTraitInitPermanent)
 	// ErrConnSetup - other connection initialization error (including io errors)
 	ErrConnSetup = ErrConnection.NewType("initialization_temp_error")
+
+	// ErrTraitInitPermanent signals about non-transient error in initial communication with redis.
+	// It means that either authentication fails or selected database doesn't exists or redis
+	// behaves in unexpected way.
+	ErrTraitInitPermanent = errorx.RegisterTrait("init_permanent")
 )
 
 var (

@@ -3,7 +3,7 @@ package redis
 import "strings"
 
 // hackish case insensitive hash function
-func fnv1a64_nocase(s string) uint64 {
+func fnv1a64NoCase(s string) uint64 {
 	h := uint64(14695981039346656037)
 	for _, c := range []byte(s) {
 		h ^= uint64(c) &^ 0x20
@@ -18,7 +18,7 @@ func makeSet(names []string) []uint64 {
 	}
 	hsh := make([]uint64, l)
 	for _, name := range names {
-		h := fnv1a64_nocase(name)
+		h := fnv1a64NoCase(name)
 		pos := int(h) & (l - 1)
 		for hsh[pos] != 0 {
 			pos = (pos + 1) & (l - 1)
@@ -29,7 +29,7 @@ func makeSet(names []string) []uint64 {
 }
 
 func checkSet(name string, hsh []uint64) bool {
-	h := fnv1a64_nocase(name)
+	h := fnv1a64NoCase(name)
 	msk := len(hsh) - 1
 	pos := int(h)
 	for {
@@ -77,19 +77,20 @@ func Blocking(name string) bool {
 	return checkSet(name, blocking)
 }
 
-var subscribe_hash = fnv1a64_nocase("SUBSCRIBE")
-var psubscribe_hash = fnv1a64_nocase("PSUBSCRIBE")
+var subscribeHash = fnv1a64NoCase("SUBSCRIBE")
+var psubscribeHash = fnv1a64NoCase("PSUBSCRIBE")
 
 // Dangerous returns true if command is not safe to use with the connector.
 // Currently it includes `SUBSCRIBE`, `PSUBSCRIBE` commands, because they changes connection protocol mode.
 func Dangerous(name string) bool {
-	h := fnv1a64_nocase(name)
-	return h == subscribe_hash || h == psubscribe_hash
+	h := fnv1a64NoCase(name)
+	return h == subscribeHash || h == psubscribeHash
 }
 
+// ForbiddenCommand returns true if command is not allowed to run.
 func ForbiddenCommand(name string, singleThreaded bool) error {
-	h := fnv1a64_nocase(name)
-	if h == subscribe_hash || h == psubscribe_hash {
+	h := fnv1a64NoCase(name)
+	if h == subscribeHash || h == psubscribeHash {
 		return ErrCommandForbidden.New("command %s could not be used with this connector", name)
 	}
 	if !singleThreaded && checkSet(name, blocking) {

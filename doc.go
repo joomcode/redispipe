@@ -36,21 +36,28 @@ Capabilities
 
 Limitations
 
-- while it allows you to send blocking calls, thou shalt not, because it will block whole pipeline:
-BLPOP, BRPOP, BRPOPLPUSH, BZPOPMIN, BZPOPMAX, XREAD, XREADGROUP, SAVE - you'd better
-not call this commands.
+- by default, it is not allowed to send blocking calls, because it will block whole pipeline:
+`BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BZPOPMIN`, `BZPOPMAX`, `XREAD`, `XREADGROUP`, `SAVE`.
+However, you could set `ScriptMode: true` option to enable this commands.
+`ScriptMode: true` also turns default `WritePause` to -1 (ie almost disables forced batching).
 
-- WATCH command is useless and harmful, because arbitrary commands from concurrent goroutines
-could be injected between WATCH and MULTI.
+- `WATCH` is also forbidden by default: it is useless and harmful when concurrent goroutines
+uses same connection.
+It is also allowed with `ScriptMode: true`, but you should be sure you use connection only
+from single goroutine.
 
-- PUB/SUB is not supported. PUB/SUB switches connection work mode to completely different,
-therefore it could not be combined with regular commands, and should spawn new connection
-instead.
+- `SUBSCRIBE` and `PSUBSCRIBE` commands are forbidden. They switches connection work mode to
+completely different mode of communication, therefore it could not be combined with regular
+commands. This connector doesn't implement subscribing mode.
 
-Structure:
+Structure
+
 - root package is empty
+
 - common functionality is in redis subpackage
+
 - singe connection is in redisconn subpackage
+
 - cluster support is in rediscluster subpackage
 
 Usage
@@ -88,6 +95,5 @@ are de-serialized into plain go types and are returned as interface{}:
 
 IO, connection, and other errors are not returned separately but as result (and has same
 *errorx.Error underlying type).
-
 */
 package redispipe

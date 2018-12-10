@@ -118,9 +118,9 @@ inside of Go process. And redispipe/rediscluster attempts to provide almost lock
 info handling on the way of request execution.
 
 While `redigo` is almost as fast in Parallel test, in fact it also were limited by Redis's CPU
-usage (three redis processes eats whole 3 cpu cores), and it uses huge number of connections.
-And it is not trivial to recognize non-default setting should be set for this result (both
-KeepAlive and AliveTime should be set as high as 128).
+usage (three redis processes eats whole 3 cpu cores). It uses huge number of connections,
+and it is not trivial to recognize non-default setting that should be set to achieve this result
+(both KeepAlive and AliveTime should be set as high as 128).
 ( [github.com/chasex/redis-go-cluster](https://github.com/chasex/redis-go-cluster) is used).
 
 Each Redis uses less than 60% CPU core when `redispipe` is used, despite serving more requests.
@@ -134,14 +134,17 @@ lesser CPU usage on Redis (ie 50%CPU->35%CPU), and 5-10% improvement on client s
 
 ## Limitations
 
-- while it allows you to send blocking calls, you shouldn't, because it will block whole pipeline:
-  `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BZPOPMIN`, `BZPOPMAX`, `XREAD`, `XREADGROUP`, `SAVE` - you'd better
-  not call this commands.
-- `WATCH` command is useless and harmful, because arbitrary commands from concurrent goroutines
-  could be injected between `WATCH` and `MULTI`.
-- `PUB/SUB` is not supported. `PUB/SUB` switches connection work mode to completely different,
-  therefore it could not be combined with regular commands, and should spawn new connection
-  instead.
+- by default, it is not allowed to send blocking calls, because it will block whole pipeline:
+  `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BZPOPMIN`, `BZPOPMAX`, `XREAD`, `XREADGROUP`, `SAVE`.
+  However, you could set `ScriptMode: true` option to enable this commands.
+  `ScriptMode: true` also turns default `WritePause` to -1 (ie almost disables forced batching).
+- `WATCH` is also forbidden by default: it is useless and harmful when concurrent goroutines
+  uses same connection.
+  It is also allowed with `ScriptMode: true`, but you should be sure you use connection only
+  from single goroutine.
+- `SUBSCRIBE` and `PSUBSCRIBE` commands are forbidden. They switches connection work mode to
+  completely different mode of communication, therefore it could not be combined with regular
+  commands. This connector doesn't implement subscribing mode.
   
 ## Installation/Documentation
 

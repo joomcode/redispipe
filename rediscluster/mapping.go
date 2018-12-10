@@ -38,7 +38,7 @@ func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 		addr:   addr,
 		refcnt: 1,
 	}
-	node.opts.Async = true
+	node.opts.AsyncDial = true
 	node.conns = make([]*redisconn.Connection, c.opts.ConnsPerHost)
 	for i := range node.conns {
 		node.opts.Handle = ClusterHandle{c.opts.Handle, addr, i}

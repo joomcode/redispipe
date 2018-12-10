@@ -26,7 +26,7 @@ func Example_usage() {
 			Logger:   redisconn.NoopLogger{}, // shut up logging. Could be your custom implementation.
 			Handle:   myhandle,               // custom data, useful for custom logging
 			// Other parameters (usually, no need to change)
-			// IOTimeout, DialTimeout, ReconnectTimeout, TCPKeepAlive, Concurrency, WritePause, Async
+			// IOTimeout, DialTimeout, ReconnectTimeout, TCPKeepAlive, Concurrency, WritePause, AsyncDial
 		}
 		conn, err := redisconn.Connect(ctx, "127.0.0.1:6379", opts)
 		return conn, err

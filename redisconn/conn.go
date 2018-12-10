@@ -58,8 +58,8 @@ type Opts struct {
 	WritePause time.Duration
 	// Logger
 	Logger Logger
-	// Async - do not establish connection immediately
-	Async bool
+	// AsyncDial - do not establish connection immediately
+	AsyncDial bool
 }
 
 // Connection is implementation of redis.Sender which represents single connection to single redis instance.
@@ -143,7 +143,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 		conn.opts.Logger = DefaultLogger{}
 	}
 
-	if !conn.opts.Async {
+	if !conn.opts.AsyncDial {
 		if err = conn.createConnection(false, nil); err != nil {
 			if opts.ReconnectPause < 0 {
 				return nil, err
@@ -154,7 +154,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 		}
 	}
 
-	if conn.opts.Async || err != nil {
+	if conn.opts.AsyncDial || err != nil {
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
@@ -164,7 +164,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 		}()
 		// in async mode we are still waiting for state to set to connConnecting
 		// so that Send will put requests into queue
-		if conn.opts.Async {
+		if conn.opts.AsyncDial {
 			wg.Wait()
 		}
 	}

@@ -6,10 +6,10 @@ RedisPipe - is client for redis that uses "implicit pipelining" for highest perf
 
 - scalable: the more throughput you try to get, the more efficient it is.
 - cares about redis: redis needs less CPU to perform same throughput.
-- thread-safe: no need to lock around connection, no need to "return to pool", etc
-- Pipelining is implicit,
-- transactions are supported (but without `WATCH`),
-- hook for custom logging,
+- thread-safe: no need to lock around connection, no need to "return to pool", etc.
+- pipelining is implicit.
+- transactions are supported (but without `WATCH`).
+- hook for custom logging.
 - hook for request timing reporting.
 
 ```
@@ -29,9 +29,6 @@ But it is not always possible to use pipelining explicitly: usually there are do
 concurrent goroutines, each sends just one request at a time. To handle usual workload,
 pipelining have to be implicit.
 
-All known Golang redis connectors use connection-per-request model with connection pool,
-and provide only explicit pipelining. It worked far from optimal under our load.
-
 "Implicit pipelining" is used in many drivers for other languages:
 - https://github.com/NodeRedis/node_redis , https://github.com/h0x91b/redis-fast-driver ,
   and probably, other nodejs clients,
@@ -47,14 +44,18 @@ and provide only explicit pipelining. It worked far from optimal under our load.
 - Ruby's EventMachine related connectors,
 - etc
 
-But there were no such connector for Golang.
+But there were no such connector for Golang. All known Golang redis connectors use
+connection-per-request model with connection pool, and provide only explicit pipelining.
 
 This connector was created as implicitly pipelined from ground to achieve maximum performance
 in a highly concurrent environment. It writes all requests to single connection to redis, and
 continuously reads answers from in other goroutine.
 
 Note that it trades a bit of latency for throughput, and therefore could be not optimal for
-low-concurrent low-request-per-second usage.
+low-concurrent low-request-per-second usage. Write loop latency is configurable as `WritePause`
+parameter in connection options, and could be disabled at all, or increased to higher values
+(150µs is the value used in production, 50µs is default value, -1 disables write pause). Though
+implicit runtime latency for switching goroutines still remains and could not be removed.
 
 ## Performance
 
@@ -82,11 +83,11 @@ That is true: redispipe trades latency for throughput. Every single request has 
 latency for hidden batching in a connector. But thanks to batching, more requests can be sent
 to redis and answered by redis in an interval of time.
 
-`SerialGetSet/redispipe_pause0` shows single-threaded results with disabled "batching".
-This way redispipe is quite close to other connectors in performance, though there is still
-small overhead of internal design. But I would not recommend disable batching (unless your use case
-is single threaded), because it increases CPU usage under highly concurrent load both on client
-and on redis-server.
+`SerialGetSet/redispipe_pause0` shows single-threaded results with disabled additional latency
+for "batching" (`WritePause: -1`). This way redispipe is quite close to other connectors in
+performance, though there is still small overhead of internal design. But I would not recommend
+disable batching (unless your use case is single threaded), because it increases CPU usage under
+highly concurrent load both on client and on redis-server.
 
 Parallel benchmark for single redis has Redis CPU usage as a bottleneck for both `radix.v2` and
 `redigo` (ie Redis eats whole CPU core). But with redispipe Redis server consumes only 75% of
@@ -116,21 +117,18 @@ info handling on the way of request execution.
 
 While `redigo` is almost as fast in Parallel test, in fact it also were limited by Redis's CPU
 usage (three redis processes eats whole 3 cpu cores), and it uses huge number of connections.
-I spent some noticable time to recognize both KeepAlive and AliveTime should be set (and
-KeepAlive should be set as high as 128) to make `redis-go-cluster` (cluster wrapper for `redigo`)
-so fast.
+And it is not trivial to recognize non-default setting should be set for this result (both
+KeepAlive and AliveTime should be set as high as 128).
+( [github.com/chasex/redis-go-cluster](https://github.com/chasex/redis-go-cluster) is used).
 
 Each Redis uses less than 60% CPU core when `redispipe` is used, despite serving more requests.
-Go process is also uses less CPU with `redispipe` than with `redigo`. And no hidden knowledge
-for such good results.
-
-( github.com/chasex/redis-go-cluster  is used for cluster test of redigo ).
 
 ### Practice
 
 In practice, performance gain is lesser, because your application do other useful work aside
 of sending requests to Redis. But gain is still noticeable. At our setup, we have around 10-15%
 lesser CPU usage on Redis (ie 50%CPU->35%CPU), and 5-10% improvement on client side. 
+`WritePause` is usually set to higher value (150µs) than default.
 
 ## Limitations
 
@@ -180,10 +178,10 @@ plain string | `string`
 bulk string  | `[]byte`
 integer      | `int64`
 array        | `[]interface{}`
-error        | `error` (`*redis.Error`)
+error        | `error` (`*errorx.Error`)
 
 IO, connection, and other errors are not returned separately, but as result (and has same
-`*redis.Error` underlying type).
+`*errorx.Error` underlying type).
 
 ```go
 package redispipe_test

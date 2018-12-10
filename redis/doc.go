@@ -10,7 +10,7 @@ and chan-based-future interface (ChanFutured)
 
 - response parsing,
 
-- error type
+- root errorx namespace and common error types.
 
 Usually you get Sender from redisconn.Connect or rediscluster.NewCluster, then wrap with Sync or SyncCtx, and use their
 sync methods without any locking:

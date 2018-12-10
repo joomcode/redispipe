@@ -53,8 +53,8 @@ type Opts struct {
 	// Handle is returned with Connection.Handle()
 	Handle interface{}
 	// WritePause - write loop pauses for this time to collect more requests.
-	// Default is 10microseconds. Set < 0 to disable.
-	// It is not wise to set it larger than 100 microseconds.
+	// Default is 50 microseconds. Recommended value is 150 microseconds.
+	// Set < 0 to disable for single threaded use case.
 	WritePause time.Duration
 	// Logger
 	Logger Logger

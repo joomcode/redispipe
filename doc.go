@@ -84,10 +84,10 @@ are de-serialized into plain go types and are returned as interface{}:
   bulk string  | []byte
   integer      | int64
   array        | []interface{}
-  error        | error (*redis.Error)
+  error        | error (*errorx.Error)
 
 IO, connection, and other errors are not returned separately but as result (and has same
-*redis.Error underlying type).
+*errorx.Error underlying type).
 
 */
 package redispipe

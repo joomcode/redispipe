@@ -59,6 +59,8 @@ implicit runtime latency for switching goroutines still remains and could not be
 
 ## Performance
 
+Tests were performed on localhost Xeon(R) CPU E3-1245 v6 @ 3.70GHz (4 cores, 8 HT)
+
 ### Single redis
 
 ```

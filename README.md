@@ -326,7 +326,13 @@ func Example_usage() {
 
 ## Contributing
 
-You're welcome!!!
+- Ask questions in [Issues](https://github.com/joomcode/redispipe/issues)
+- Ask questions on [StackOverflow](https://stackoverflow.com/questions/ask?tags=go+redis).
+- Report about bugs using github [Issues](https://github.com/joomcode/redispipe/issues),
+- Request new features or report about intentions to implement feature using github [Issues](https://github.com/joomcode/redispipe/issues),
+- Send [pull requests](https://github.com/joomcode/redispipe/pulls) to fix reported bugs or to implement discussed features.
+- Be kind.
+- Be lenient to our misunderstanding of your problem and our unwillingness to bloat library.
 
 ## License
 

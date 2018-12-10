@@ -37,6 +37,8 @@ var (
 	ErrNoSlotKey = ErrRequest.NewType("no_slot_key")
 	// ErrRequestCancelled - request already cancelled
 	ErrRequestCancelled = ErrRequest.NewType("request_cancelled")
+	// ErrCommandForbidden - command is blocking or dangerous
+	ErrCommandForbidden = ErrRequest.NewType("command_forbidden")
 
 	// ErrResponse - response malformed. Redis returns unexpected response.
 	ErrResponse = Errors.NewSubNamespace("response")

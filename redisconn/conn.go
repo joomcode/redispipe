@@ -60,6 +60,10 @@ type Opts struct {
 	Logger Logger
 	// AsyncDial - do not establish connection immediately
 	AsyncDial bool
+	// ScriptMode - enables blocking commands and turns default WritePause to -1.
+	// It will allow to use this connector in script like (ie single threaded) environment
+	// where it is ok to use blocking commands and pipelining gives no gain.
+	ScriptMode bool
 }
 
 // Connection is implementation of redis.Sender which represents single connection to single redis instance.
@@ -136,7 +140,11 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	}
 
 	if conn.opts.WritePause == 0 {
-		conn.opts.WritePause = defaultWritePause
+		if conn.opts.ScriptMode {
+			conn.opts.WritePause = -1
+		} else {
+			conn.opts.WritePause = defaultWritePause
+		}
 	}
 
 	if conn.opts.Logger == nil {
@@ -272,8 +280,8 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *e
 	}
 
 	// Since we do not pack request here, we need to be sure it could be packed
-	if err := redis.CheckArgs(req); err != nil {
-		return conn.addProps(err)
+	if err := redis.CheckRequest(req, conn.opts.ScriptMode); err != nil {
+		return conn.addProps(err.(*errorx.Error))
 	}
 
 	conn.futmtx.Lock()
@@ -346,11 +354,9 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 	errpos := -1
 	// check arguments of all commands. If single request is malformed, then all requests will be aborted.
 	for i, req := range requests {
-		if err = redis.CheckArgs(req); err != nil {
-			err = conn.addProps(err).WithProperty(redis.EKRequest, requests[i])
-			commonerr = conn.errWrap(redis.ErrBatchFormat, err).
-				WithProperty(redis.EKRequests, requests).
-				WithProperty(redis.EKRequest, requests[i])
+		if err := redis.CheckRequest(req, conn.opts.ScriptMode); err != nil {
+			err = conn.addProps(err.(*errorx.Error))
+			commonerr = conn.errWrap(redis.ErrBatchFormat, err)
 			errpos = i
 			break
 		}
@@ -362,11 +368,12 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 		commonerr = conn.doSendBatch(requests, cb, start, flags)
 	}
 	if commonerr != nil {
+		commonerr = commonerr.WithProperty(redis.EKRequests, requests)
 		for i := 0; i < len(requests); i++ {
 			if i != errpos {
-				cb.Resolve(commonerr, start+uint64(i))
+				cb.Resolve(commonerr.WithProperty(redis.EKRequest, requests[i]), start+uint64(i))
 			} else {
-				cb.Resolve(err, start+uint64(i))
+				cb.Resolve(err.WithProperty(redis.EKRequests, requests), start+uint64(i))
 			}
 		}
 		if flags&DoTransaction != 0 {

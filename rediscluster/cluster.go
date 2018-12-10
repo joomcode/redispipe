@@ -3,7 +3,6 @@ package rediscluster
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -391,26 +390,6 @@ func (c *Cluster) execCommand(cmd clusterCommand) {
 	}
 }
 
-// readonly - it is mostly "safe to run on replica" commands, therefore "scan" is not included, because its could differ
-// between master and replica.
-var readonly = func() map[string]bool {
-	cmds := "PING ECHO DUMP MEMORY EXISTS GET GETRANGE RANDOMKEY KEYS TYPE TTL PTTL " +
-		"BITCOUNT BITPOS GETBIT " +
-		"GEOHASH GEOPOS GEODIST GEORADIUS_RO GEORADIUSBYMEMBER_RO " +
-		"HEXISTS HGET HGETALL HKEYS HLEN HMGET HSTRLEN HVALS " +
-		"LINDEX LLEN LRANGE " +
-		"PFCOUNT " +
-		"SCARD SDIFF SINTER SISMEMBER SMEMBERS SRANDMEMBER STRLEN SUNION " +
-		"ZCARD ZCOUNT ZLEXCOUNT ZRANGE ZRANGEBYLEX ZREVRANGEBYLEX " +
-		"ZRANGEBYSCORE ZRANK ZREVRANGE ZREVRANGEBYSCORE ZREVRANK ZSCORE " +
-		"XPENDING XREVRANGE XREAD XLEN "
-	ro := make(map[string]bool)
-	for _, str := range strings.Split(cmds, " ") {
-		ro[str] = true
-	}
-	return ro
-}()
-
 // fixPolicy correct current policy according to command 'write-ness' or forced mode.
 func (c *Cluster) fixPolicy(slot uint16, req Request, policy ReplicaPolicyEnum) ReplicaPolicyEnum {
 	// If slot is "asking" we could not use slaves.
@@ -427,7 +406,7 @@ func (c *Cluster) fixPolicy(slot uint16, req Request, policy ReplicaPolicyEnum) 
 	case ForcePreferSlaves:
 		return PreferSlaves
 	}
-	if readonly[req.Cmd] {
+	if redis.ReplicaSafe(req.Cmd) {
 		return policy
 	}
 	return MasterOnly
@@ -487,7 +466,7 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 		// can retry if it is readonly command or if user forced to use slaves
 		// (and then user is sure that command is readonly, for example, complex
 		// readonly lua script.)
-		mayRetry: policy != MasterOnly || readonly[req.Cmd],
+		mayRetry: policy != MasterOnly || redis.ReplicaSafe(req.Cmd),
 
 		lastconn: conn,
 	}

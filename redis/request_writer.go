@@ -216,8 +216,11 @@ func ArgToString(arg interface{}) (string, bool) {
 	return string(buf), true
 }
 
-// CheckArgs checks that all values could be used in redis request.
-func CheckArgs(req Request) *errorx.Error {
+// CheckRequest checks requests command and arguments to be compatible with connector.
+func CheckRequest(req Request, singleThreaded bool) error {
+	if err := ForbiddenCommand(req.Cmd, singleThreaded); err != nil {
+		return err.(*errorx.Error).WithProperty(EKRequest, req)
+	}
 	for i, arg := range req.Args {
 		switch val := arg.(type) {
 		case string, []byte, int, uint, int64, uint64, int32, uint32, int8, uint8, int16, uint16, bool, float32, float64, nil:

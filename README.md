@@ -1,9 +1,12 @@
 # RedisPipe - high throughput Redis connector with implicit pipelining.
 
-RedisPipe - is client for redis that uses "implicit pipelining" for highest performance.
+RedisPipe – is a client for redis that uses "implicit pipelining" for highest performance.
+
+- https://godoc.org/joomcode/redispipe/redis
+- https://godoc.org/joomcode/redispipe/redisconn
+- https://godoc.org/joomcode/redispipe/rediscluster
 
 ## Highlights
-
 - scalable: the more throughput you try to get, the more efficient it is.
 - cares about redis: redis needs less CPU to perform same throughput.
 - thread-safe: no need to lock around connection, no need to "return to pool", etc.
@@ -16,18 +19,18 @@ RedisPipe - is client for redis that uses "implicit pipelining" for highest perf
 BenchmarkParallelGetSet/radixv2-8        1000000     9245 ns/op   1268 B/op   32 allocs/op
 BenchmarkParallelGetSet/redigo-8         1000000     6886 ns/op    399 B/op   13 allocs/op
 BenchmarkParallelGetSet/redispipe-8      5000000     1636 ns/op    219 B/op   12 allocs/op
- ```
+```
 
 ## Introduction
 
 https://redis.io/topics/pipelining
 
-Pipelining improves maximum throughput that redis can serve, and reduces CPU usage both on
-redis server and on client. Mostly it comes from saving system CPU consumption.
+Pipelining improves the maximum throughput that redis can serve, and reduces CPU usage both on
+redis server and on the client side. Mostly it comes from saving system CPU consumption.
 
-But it is not always possible to use pipelining explicitly: usually there are dozen of
-concurrent goroutines, each sends just one request at a time. To handle usual workload,
-pipelining have to be implicit.
+But it is not always possible to use pipelining explicitly: usually there are dozens of
+concurrent goroutines, each sends just one request at a time. To handle the usual workload,
+pipelining has to be implicit.
 
 "Implicit pipelining" is used in many drivers for other languages:
 - https://github.com/NodeRedis/node_redis , https://github.com/h0x91b/redis-fast-driver ,
@@ -44,18 +47,18 @@ pipelining have to be implicit.
 - Ruby's EventMachine related connectors,
 - etc
 
-But there were no such connector for Golang. All known Golang redis connectors use
-connection-per-request model with connection pool, and provide only explicit pipelining.
+But there was no such connector for Golang. All known Golang redis connectors use a
+connection-per-request model with a connection pool, and provide only explicit pipelining.
 
-This connector was created as implicitly pipelined from ground to achieve maximum performance
+This connector was created as implicitly pipelined from the ground up to achieve maximum performance
 in a highly concurrent environment. It writes all requests to single connection to redis, and
-continuously reads answers from in other goroutine.
+continuously reads answers from another goroutine.
 
 Note that it trades a bit of latency for throughput, and therefore could be not optimal for
 low-concurrent low-request-per-second usage. Write loop latency is configurable as `WritePause`
 parameter in connection options, and could be disabled at all, or increased to higher values
-(150µs is the value used in production, 50µs is default value, -1 disables write pause). Though
-implicit runtime latency for switching goroutines still remains and could not be removed.
+(150µs is the value used in production, 50µs is default value, -1 disables write pause). Implicit
+runtime latency for switching goroutines still remains, however, and could not be removed.
 
 ## Performance
 
@@ -77,9 +80,9 @@ BenchmarkParallelGetSet/redigo-8           1000000    12486 ns/op    123 B/op   
 BenchmarkParallelGetSet/redispipe-8        5000000     1435 ns/op    168 B/op     8 allocs/op
 ```
 
-You can see couple of things:
+You can see a couple of things:
 - first, redispipe has highest performance in Parallel benchmarks,
-- second, redispipe has lower performance for single-threaded case.
+- second, redispipe has lower performance for single-threaded cases.
 
 That is true: redispipe trades latency for throughput. Every single request has additional
 latency for hidden batching in a connector. But thanks to batching, more requests can be sent
@@ -92,9 +95,9 @@ disable batching (unless your use case is single threaded), because it increases
 highly concurrent load both on client and on redis-server.
 
 Parallel benchmark for single redis has Redis CPU usage as a bottleneck for both `radix.v2` and
-`redigo` (ie Redis eats whole CPU core). But with redispipe Redis server consumes only 75% of
-a core despite it could serve 8 times more requests. It clearly shows how usage of implicitly
-pipelined connector helps to get much more RPS from single Redis server.
+`redigo` (ie Redis eats whole CPU core). But with redispipe, Redis server consumes only 75% of
+a core despite the fact that it could serve 8 times more requests. It clearly shows how usage of
+implicitly pipelined connector helps to get much more RPS from single Redis server.
 
 ### Cluster
 
@@ -112,13 +115,12 @@ BenchmarkParallelGetSet/redigo-8         1000000     6886 ns/op    399 B/op   13
 BenchmarkParallelGetSet/redispipe-8      5000000     1636 ns/op    219 B/op   12 allocs/op
 ```
 
-
 With cluster configuration, internal cluster meta-info management adds additional overhead
-inside of Go process. And redispipe/rediscluster attempts to provide almost lockless cluster's
+inside of the Go process. And redispipe/rediscluster attempts to provide almost lockless cluster
 info handling on the way of request execution.
 
-While `redigo` is almost as fast in Parallel test, in fact it also were limited by Redis's CPU
-usage (three redis processes eats whole 3 cpu cores). It uses huge number of connections,
+While `redigo` is almost as fast in Parallel tests, it also happens to be limited by Redis's CPU
+usage (three redis processes eats whole 3 cpu cores). It uses a huge number of connections,
 and it is not trivial to recognize non-default setting that should be set to achieve this result
 (both KeepAlive and AliveTime should be set as high as 128).
 ( [github.com/chasex/redis-go-cluster](https://github.com/chasex/redis-go-cluster) is used).
@@ -127,33 +129,30 @@ Each Redis uses less than 60% CPU core when `redispipe` is used, despite serving
 
 ### Practice
 
-In practice, performance gain is lesser, because your application do other useful work aside
-of sending requests to Redis. But gain is still noticeable. At our setup, we have around 10-15%
-lesser CPU usage on Redis (ie 50%CPU->35%CPU), and 5-10% improvement on client side. 
+In practice, performance gain is lesser, because your application does other useful work aside
+from sending requests to Redis. But gain is still noticeable. At our setup, we have around 10-15%
+less CPU usage on Redis (ie 50%CPU->35%CPU), and 5-10% improvement on the client side.
 `WritePause` is usually set to higher value (150µs) than default.
 
 ## Limitations
 
-- by default, it is not allowed to send blocking calls, because it will block whole pipeline:
+- by default, it is not allowed to send blocking calls, because it will block the whole pipeline:
   `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BZPOPMIN`, `BZPOPMAX`, `XREAD`, `XREADGROUP`, `SAVE`.
-  However, you could set `ScriptMode: true` option to enable this commands.
-  `ScriptMode: true` also turns default `WritePause` to -1 (ie almost disables forced batching).
-- `WATCH` is also forbidden by default: it is useless and harmful when concurrent goroutines
-  uses same connection.
+  However, you could set `ScriptMode: true` option to enable these commands.
+  `ScriptMode: true` also turns default `WritePause` to -1 (meaning it practically disables forced
+  batching).
+- `WATCH` is also forbidden by default: it is useless and even harmful when concurrent goroutines
+  use the same connection.
   It is also allowed with `ScriptMode: true`, but you should be sure you use connection only
-  from single goroutine.
-- `SUBSCRIBE` and `PSUBSCRIBE` commands are forbidden. They switches connection work mode to
+  from a single goroutine.
+- `SUBSCRIBE` and `PSUBSCRIBE` commands are forbidden. They switch connection work mode to a
   completely different mode of communication, therefore it could not be combined with regular
   commands. This connector doesn't implement subscribing mode.
-  
-## Installation/Documentation
 
-- Common package, installed as dependency - 'github.com/joomcode/redispipe/redis'
-  https://godoc.org/joomcode/redispipe/redis
+## Installation
+
 - Single connection: `go get github.com/joomcode/redispipe/redisconn`
-  https://godoc.org/joomcode/redispipe/redisconn
 - Cluster connection: `go get github.com/joomcode/redispipe/rediscluster`
-  https://godoc.org/joomcode/redispipe/rediscluster
 
 ## Usage
 
@@ -332,8 +331,10 @@ func Example_usage() {
 - Ask questions in [Issues](https://github.com/joomcode/redispipe/issues)
 - Ask questions on [StackOverflow](https://stackoverflow.com/questions/ask?tags=go+redis).
 - Report about bugs using github [Issues](https://github.com/joomcode/redispipe/issues),
-- Request new features or report about intentions to implement feature using github [Issues](https://github.com/joomcode/redispipe/issues),
-- Send [pull requests](https://github.com/joomcode/redispipe/pulls) to fix reported bugs or to implement discussed features.
+- Request new features or report about intentions to implement feature using github
+[Issues](https://github.com/joomcode/redispipe/issues),
+- Send [pull requests](https://github.com/joomcode/redispipe/pulls) to fix reported bugs or
+to implement discussed features.
 - Be kind.
 - Be lenient to our misunderstanding of your problem and our unwillingness to bloat library.
 

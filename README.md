@@ -1,10 +1,17 @@
-# RedisPipe - high throughput Redis connector with implicit pipelining.
+# RedisPipe
 
 RedisPipe – is a client for redis that uses "implicit pipelining" for highest performance.
 
-- https://godoc.org/joomcode/redispipe/redis
-- https://godoc.org/joomcode/redispipe/redisconn
-- https://godoc.org/joomcode/redispipe/rediscluster
+[![GoDoc](https://godoc.org/github.com/joomcode/redispipe?status.svg)](https://godoc.org/github.com/joomcode/redispipe)
+
+- [Highlights](#highlights)
+- [Introduction](#introduction)
+- [Performance](#performance)
+- [Limitations](#limitations)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Highlights
 - scalable: the more throughput you try to get, the more efficient it is.

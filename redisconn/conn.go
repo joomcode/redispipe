@@ -354,8 +354,8 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 	errpos := -1
 	// check arguments of all commands. If single request is malformed, then all requests will be aborted.
 	for i, req := range requests {
-		if err := redis.CheckRequest(req, conn.opts.ScriptMode); err != nil {
-			err = conn.addProps(err.(*errorx.Error))
+		if rerr := redis.CheckRequest(req, conn.opts.ScriptMode); rerr != nil {
+			err = conn.addProps(rerr.(*errorx.Error))
 			commonerr = conn.errWrap(redis.ErrBatchFormat, err)
 			errpos = i
 			break

@@ -15,8 +15,10 @@ import (
 type ConnType int
 
 const (
-	TypeSimple  ConnType = 0 // TypeSimple (default) is for connection to single server.
-	TypeCluster ConnType = 1 // TypeCluster is for connection which awares for cluster redirects.
+	// TypeSimple (default) is for connection to single server.
+	TypeSimple ConnType = 0
+	// TypeCluster is for connection which awares for cluster redirects.
+	TypeCluster ConnType = 1
 )
 
 // DefaultTimeout is default timeout.
@@ -61,17 +63,17 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 		if err == nil {
 			if _, err = c.C.Write(req); err == nil {
 				res := redis.ReadResponse(c.R)
-				if rerr := redis.AsErrorx(res); rerr == nil {
+				rerr := redis.AsErrorx(res)
+				if rerr == nil {
 					return res
-				} else {
-					err = rerr
-					if c.Type == TypeCluster && rerr.HasTrait(redis.ErrTraitClusterMove) {
-						asking = rerr.IsOfType(redis.ErrAsk)
-						v, _ := rerr.Property(redis.EKMovedTo)
-						c.Addr = v.(string)
-						if try < 5 {
-							try++
-						}
+				}
+				err = rerr
+				if c.Type == TypeCluster && rerr.HasTrait(redis.ErrTraitClusterMove) {
+					asking = rerr.IsOfType(redis.ErrAsk)
+					v, _ := rerr.Property(redis.EKMovedTo)
+					c.Addr = v.(string)
+					if try < 5 {
+						try++
 					}
 				}
 			} else {
@@ -90,7 +92,7 @@ func (c *Conn) Send(r redis.Request, cb redis.Future, n uint64) {
 	cb.Resolve(res, n)
 }
 
-// Send implements redis.Sender.SendMany.
+// SendMany implements redis.Sender.SendMany.
 // Note, it does it in a dumb way: commands are executed sequentially.
 func (c *Conn) SendMany(reqs []redis.Request, cb redis.Future, n uint64) {
 	for i, r := range reqs {

@@ -15,7 +15,7 @@ func TestRequestKey(t *testing.T) {
 	assert.Equal(t, "1", k)
 	assert.True(t, ok)
 
-	k, ok = Req("GET").Key()
+	_, ok = Req("GET").Key()
 	assert.False(t, ok)
 
 	k, ok = Req("SET", 1, 2).Key()

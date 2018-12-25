@@ -24,7 +24,7 @@ var (
 	// ErrTraitConnectivity marks all networking and io errors
 	ErrTraitConnectivity = errorx.RegisterTrait("network")
 
-	// ErrIO - io error: read/write error, or timeout, or connection closed while reading/writting
+	// ErrIO - io error: read/write error, or timeout, or connection closed while reading/writing
 	// It is not known if request were processed or not
 	ErrIO = Errors.NewType("io error", ErrTraitConnectivity)
 

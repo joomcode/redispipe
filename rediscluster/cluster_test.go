@@ -284,7 +284,7 @@ func (s *Suite) TestTransactionNormal() {
 		s.r().Equal([]byte("2"), res[1])
 	}
 
-	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
+	_, err = sconn.SendTransaction(s.ctx, []redis.Request{
 		redis.Req("INCR", key1),
 		redis.Req("PANG"),
 	})
@@ -535,7 +535,7 @@ func (s *Suite) TestAskTransaction() {
 
 	DebugEventsReset()
 	// if some keys are absent in new shard, then redis returns TRYAGAIN error
-	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
+	_, err = sconn.SendTransaction(s.ctx, []redis.Request{
 		redis.Req("SET", key2, "1"),
 		redis.Req("SET", key3, "2"),
 	})
@@ -552,7 +552,7 @@ func (s *Suite) TestAskTransaction() {
 	})
 
 	DebugEventsReset()
-	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
+	_, err = sconn.SendTransaction(s.ctx, []redis.Request{
 		redis.Req("SET", key2, "1"),
 		redis.Req("SET", key3, "2"),
 	})

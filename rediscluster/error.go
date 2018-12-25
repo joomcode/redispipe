@@ -9,7 +9,7 @@ var (
 	// ErrCluster - some cluster related errors.
 	ErrCluster = redis.Errors.NewSubNamespace("cluster")
 	// ErrClusterSlots - fetching slots configuration failed
-	ErrClusterSlots = ErrCluster.NewType("retreive_slots")
+	ErrClusterSlots = ErrCluster.NewType("retrieve_slots")
 	// ErrAddressNotResolved - address could not be resolved
 	// Cluster resolves named hosts specified as start points. If this resolution fails, this error returned.
 	ErrAddressNotResolved = ErrCluster.NewType("resolve_address")

@@ -326,7 +326,7 @@ func (s *Suite) TestTransaction() {
 	s.s.DoSure("SET", "tran:x", 1)
 
 	// transaction daesn't execute in case of wrong command
-	res, err = sconn.SendTransaction(s.ctx, []redis.Request{
+	_, err = sconn.SendTransaction(s.ctx, []redis.Request{
 		redis.Req("INCR", "tran:x"),
 		redis.Req("PANG"),
 	})

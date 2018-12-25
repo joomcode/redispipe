@@ -179,7 +179,7 @@ func (cl *Cluster) CancelMoveSlot(slot int) {
 func (cl *Cluster) FinishMoveSlot(slot, from, to int) {
 	cl.Node[to].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 	cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
-	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST") // proprietary extention
+	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST") // proprietary extension
 	cl.Node[to].Do("CLUSTER BUMPEPOCH")
 }
 

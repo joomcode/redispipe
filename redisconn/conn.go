@@ -99,7 +99,7 @@ type oneconn struct {
 }
 
 // Connect establishes new connection to redis server.
-// Connect will be automatically closed if context will be cancelled or timeouted. But it could be closed explicitely
+// Connect will be automatically closed if context will be cancelled or timeouted. But it could be closed explicitly
 // as well.
 func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err error) {
 	if ctx == nil {
@@ -226,7 +226,7 @@ func (conn *Connection) LocalAddr() string {
 	return conn.c.LocalAddr().String()
 }
 
-// Addr retuns configurred address
+// Addr returns configurred address
 func (conn *Connection) Addr() string {
 	return conn.addr
 }
@@ -719,7 +719,7 @@ func (conn *Connection) control() {
 func (one *oneconn) setErr(neterr error, conn *Connection) {
 	// lets sure error is set only once
 	one.erronce.Do(func() {
-		// notify writer to stop writting
+		// notify writer to stop writing
 		close(one.control)
 		rerr, ok := neterr.(*errorx.Error)
 		if !ok {
@@ -750,7 +750,7 @@ func (conn *Connection) reconnect(neterr *errorx.Error, c net.Conn) {
 
 // writer is a core writer loop. It is part of oneconn pair.
 // It doesn't write requests immediately to network, but throttles itself to accumulate more requests.
-// It is root of good pipelined performance: trade latency for throughtput.
+// It is root of good pipelined performance: trade latency for throughput.
 func (conn *Connection) writer(one *oneconn) {
 	var packet []byte
 	var futures []future

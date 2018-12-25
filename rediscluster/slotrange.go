@@ -38,8 +38,6 @@ Outter:
 	c.m.Lock()
 	if internalForceSet {
 		c.internallyForceMasterOnly = internalForce
-	} else {
-		internalForce = c.internallyForceMasterOnly
 	}
 	c.m.Unlock()
 

@@ -68,7 +68,7 @@ func DefaultRoundRobinSeed() *TimedRoundRobinSeed {
 		v := uint64(time.Now().UnixNano())
 		v ^= (v<<40 | v>>24) ^ (v<<15 | v>>49)
 		v ^= v >> 1
-		defaultSeed = NewTimedRoundRobinSeed(time.Duration(45000+time.Now().UnixNano()%55000) * time.Microsecond)
+		defaultSeed = NewTimedRoundRobinSeed(time.Duration(45000+v%55000) * time.Microsecond)
 	})
 	return defaultSeed
 }

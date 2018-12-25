@@ -3,6 +3,7 @@
 RedisPipe – is a client for redis that uses "implicit pipelining" for highest performance.
 
 [![GoDoc](https://godoc.org/github.com/joomcode/redispipe?status.svg)](https://godoc.org/github.com/joomcode/redispipe)
+[![Report Card](https://goreportcard.com/badge/github.com/joomcode/redispipe)](https://goreportcard.com/report/github.com/joomcode/redispipe)
 
 - [Highlights](#highlights)
 - [Introduction](#introduction)

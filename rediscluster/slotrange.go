@@ -204,7 +204,7 @@ func (cfg *clusterConfig) setConnRoles() {
 				if i == 0 {
 					conn.Send(Request{"READWRITE", nil}, nil, 0)
 				} else {
-					conn.SendBatch([]Request{{"READONLY", nil}, Request{"INFO", nil}},
+					conn.SendBatch([]Request{{"READONLY", nil}, {"INFO", nil}},
 						redis.FuncFuture(sh.setReplicaInfo), uint64(i*2))
 				}
 			}

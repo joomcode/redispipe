@@ -602,7 +602,7 @@ func (s *Suite) fillMany(sconn redis.SyncCtx, prefix string) {
 	}
 	ress := sconn.SendMany(s.ctx, reqs)
 	for _, res := range ress {
-		s.r().True("OK" == res)
+		s.r().Equal("OK", res)
 	}
 	time.Sleep(10 * time.Millisecond)
 }

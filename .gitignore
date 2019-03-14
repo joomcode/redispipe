@@ -15,3 +15,6 @@
 
 # goland
 .idea/
+
+#our version with redis with patched cluster
+redis-server

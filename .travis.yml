@@ -3,7 +3,16 @@ services:
 
 language: go
 
-install: go get -t -v ./...
+before_install:
+  - make redis-server/redis-server
+
+cache:
+  directories:
+    - $HOME/redis-server
+
+install:
+  - go get -t -v ./...
+
 
 jobs:
   include:

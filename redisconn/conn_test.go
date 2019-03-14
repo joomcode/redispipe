@@ -57,7 +57,7 @@ func (s *Suite) AsError(v interface{}) *errorx.Error {
 }
 
 var defopts = Opts{
-	IOTimeout: 10 * time.Millisecond,
+	IOTimeout: 200 * time.Millisecond,
 }
 
 func (s *Suite) ping(conn *Connection, timeout time.Duration) interface{} {

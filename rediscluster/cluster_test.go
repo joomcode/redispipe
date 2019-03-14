@@ -80,13 +80,13 @@ func (s *Suite) AsError(v interface{}) *errorx.Error {
 }
 
 var defopts = redisconn.Opts{
-	IOTimeout: 50 * time.Millisecond,
+	IOTimeout: 200 * time.Millisecond,
 }
 
 var clustopts = Opts{
 	HostOpts:      defopts,
 	Name:          "default",
-	CheckInterval: 200 * time.Millisecond,
+	CheckInterval: 400 * time.Millisecond,
 
 	ConnHostPolicy: ConnHostRoundRobin,
 }

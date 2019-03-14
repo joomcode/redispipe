@@ -1,5 +1,15 @@
 language: go
 
+go:
+  - "1.9.x"
+  - "1.12.x"
+
+env:
+  matrix:
+    - STAGE=testredis
+    - STAGE=testconn
+    - STAGE=testcluster
+
 before_install:
   - make redis-server/redis-server
 
@@ -10,18 +20,4 @@ cache:
 install:
   - go get -t -v ./...
 
-
-jobs:
-  include:
-    - go: "1.9.x"
-      script: make testredis
-    - go: "1.9.x"
-      script: make testconn
-    - go: "1.9.x"
-      script: make testcluster
-    - go: "1.12.x"  
-      script: make testredis
-    - go: "1.12.x"
-      script: make testconn
-    - go: "1.12.x"
-      script: make testcluster
+script: make $STAGE

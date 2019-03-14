@@ -5,7 +5,7 @@ testredis:
 
 testconn:
 	killall redis-server || true
-	rm ./rediscluster/redis_test_* -r || true
+	rm ./redisconn/redis_test_* -r || true
 	go test -count 1 ./redisconn
 
 testcluster:

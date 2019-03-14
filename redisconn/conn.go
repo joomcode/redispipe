@@ -26,7 +26,7 @@ const (
 	connClosed       = 3
 
 	defaultIOTimeout  = 1 * time.Second
-	defaultWritePause = 50 * time.Microsecond
+	defaultWritePause = 150 * time.Microsecond
 )
 
 // Opts - options for Connection

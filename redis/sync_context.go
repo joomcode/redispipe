@@ -26,12 +26,17 @@ func (s SyncCtx) Do(ctx context.Context, cmd string, args ...interface{}) interf
 // Returns value that could be either result or error.
 // When context is cancelled, Send returns ErrRequestCancelled error.
 func (s SyncCtx) Send(ctx context.Context, r Request) interface{} {
+	ctxch := ctx.Done()
+	if ctxch == nil {
+		return Sync{s.S}.Send(r)
+	}
+
 	res := ctxRes{active: newActive(ctx)}
 
 	s.S.Send(r, &res, 0)
 
 	select {
-	case <-ctx.Done():
+	case <-ctxch:
 		err := ErrRequestCancelled.WrapWithNoMessage(ctx.Err())
 		if CollectTrace {
 			err = errorx.EnsureStackTrace(err)
@@ -51,6 +56,11 @@ func (s SyncCtx) Send(ctx context.Context, r Request) interface{} {
 // Each result could be value or error.
 // When context is cancelled, SendMany returns slice of ErrRequestCancelled errors.
 func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
+	ctxch := ctx.Done()
+	if ctxch == nil {
+		return Sync{s.S}.SendMany(reqs)
+	}
+
 	if len(reqs) == 0 {
 		return nil
 	}
@@ -65,7 +75,7 @@ func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
 	s.S.SendMany(reqs, &res, 0)
 
 	select {
-	case <-ctx.Done():
+	case <-ctxch:
 		err := ErrRequestCancelled.WrapWithNoMessage(ctx.Err())
 		if CollectTrace {
 			err = errorx.EnsureStackTrace(err)
@@ -92,13 +102,18 @@ func (s SyncCtx) SendMany(ctx context.Context, reqs []Request) []interface{} {
 // all values are valid if err == nil. But some of them could be error on their own.
 // When context is cancelled, SendTransaction returns ErrRequestCancelled error.
 func (s SyncCtx) SendTransaction(ctx context.Context, reqs []Request) ([]interface{}, error) {
+	ctxch := ctx.Done()
+	if ctxch == nil {
+		return Sync{s.S}.SendTransaction(reqs)
+	}
+
 	res := ctxRes{active: newActive(ctx)}
 
 	s.S.SendTransaction(reqs, &res, 0)
 
 	var r interface{}
 	select {
-	case <-ctx.Done():
+	case <-ctxch:
 		r = ErrRequestCancelled.WrapWithNoMessage(ctx.Err())
 	case <-res.ch:
 		r = res.r

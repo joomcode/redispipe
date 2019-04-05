@@ -77,13 +77,29 @@ func (cl *Cluster) Start() {
 // WaitClusterOk wait for cluster configuration to be stable.
 func (cl *Cluster) WaitClusterOk() {
 	i := 0
-	t := time.AfterFunc(10*time.Second, func() { panic("cluster didn't stabilize") })
+	t := time.NewTimer(20 * time.Second)
 	defer t.Stop()
-	for !cl.ClusterOk() {
-		if i++; i == 10 {
-			cl.AttemptFailover()
+
+	ch := make(chan interface{})
+	go func() {
+		defer func() {
+			ch <- recover()
+		}()
+		for !cl.ClusterOk() {
+			if i++; i == 10 {
+				cl.AttemptFailover()
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		time.Sleep(100 * time.Millisecond)
+	}()
+
+	select {
+	case v := <-ch:
+		if v != nil {
+			panic(v)
+		}
+	case <-t.C:
+		panic("cluster didn't stabilize")
 	}
 }
 
@@ -103,23 +119,28 @@ func (cl *Cluster) ClusterOk() bool {
 		res := cl.Node[i].Do("CLUSTER INFO")
 		buf, ok := res.([]byte)
 		if !ok {
+			log.Print("CLUSTER INFO failed ", res)
 			return false
 		}
 		if !bytes.Contains(buf, []byte("cluster_state:ok")) {
+			log.Printf("CLUSTER INFO is not ok: %s", buf)
 			return false
 		}
 		res = cl.Node[i].Do("INFO REPLICATION")
 		buf, ok = res.([]byte)
 		if !ok {
+			log.Print("INFO REPLICATION failed ", res)
 			return false
 		}
 		if !bytes.Contains(buf, []byte("role:master")) &&
 			!bytes.Contains(buf, []byte("master_link_status:up")) {
+			log.Printf("INFO REPLICATION is not ok: %s", buf)
 			return false
 		}
 		res = cl.Node[i].Do("CLUSTER NODES")
 		buf, ok = res.([]byte)
 		if !ok {
+			log.Print("CLUSTER NODES failed ", res)
 			return false
 		}
 		masters := 0
@@ -128,6 +149,7 @@ func (cl *Cluster) ClusterOk() bool {
 			for _, j := range stopped {
 				if bytes.HasPrefix(line, cl.Node[j].NodeId) {
 					if !bytes.Contains(line, []byte("fail ")) {
+						log.Print("stopped is not marked as failed")
 						return false
 					}
 					hasStopped = true
@@ -138,11 +160,13 @@ func (cl *Cluster) ClusterOk() bool {
 			}
 		}
 		if masters != 3+(len(cl.Node)-6) {
+			log.Printf("wrong number of masters: %d != %d", masters, 3+(len(cl.Node)-6))
 			return false
 		}
 		infos, _ := redisclusterutil.ParseClusterNodes(res)
 		hash := infos.HashSum()
 		if hash != hashsum && hashsum != 0 {
+			log.Printf("hashsum doesn't match")
 			return false
 		}
 		hashsum = hash

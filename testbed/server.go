@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/joomcode/redispipe/redisdumb"
@@ -45,6 +47,7 @@ func (s *Server) Start() {
 		"--dbfilename", "dump-" + port + ".rdb",
 	}, s.Args...)
 	var err error
+	log.Printf("testbed: %s %s", Binary, strings.Join(args, " "))
 	s.Cmd = exec.Command(Binary, args...)
 	s.Cmd.Dir = Dir
 

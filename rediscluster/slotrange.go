@@ -112,9 +112,14 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 		if oldshard != nil {
 			newConfig.shards[shardno] = oldshard
 		} else {
-			newConfig.shards[shardno] = &shard{
-				addr: addrs,
-				good: (uint32(1) << uint(len(addrs))) - 1,
+			shard := &shard{
+				addr:    addrs,
+				good:    (uint32(1) << uint(len(addrs))) - 1,
+				weights: make([]uint32, len(addrs)),
+			}
+			newConfig.shards[shardno] = shard
+			for i := range shard.weights {
+				shard.weights[i] = 1
 			}
 		}
 		newConfig.masters[addrs[0]] = shardno
@@ -159,6 +164,23 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 			}
 			for _, conn := range node.conns {
 				conn.Close()
+			}
+		}
+	})
+	time.AfterFunc(8*time.Millisecond, func() {
+		for _, node := range newConfig.nodes {
+			node.updatePingLatency()
+		}
+		for _, shard := range newConfig.shards {
+			sumLatency := uint32(0)
+			for _, addr := range shard.addr {
+				node := newConfig.nodes[addr]
+				sumLatency += node.ping
+			}
+			for i, addr := range shard.addr {
+				node := newConfig.nodes[addr]
+				weight := sumLatency / node.ping
+				atomic.StoreUint32(&shard.weights[i], weight)
 			}
 		}
 	})

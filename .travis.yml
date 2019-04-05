@@ -16,11 +16,11 @@ addons:
       - realpath
 
 before_install:
-  - make redis-server/redis-server
+  - make /tmp/redis-server/redis-server
 
 cache:
   directories:
-    - $HOME/redis-server
+    - /tmp/redis-server
 
 install:
   - go get -t -v ./...

@@ -78,6 +78,7 @@ func (s *Suite) goodPing(conn *Connection, timeout time.Duration) {
 func (s *Suite) badPing(conn *Connection, kind *errorx.Type, timeout time.Duration) {
 	res := s.ping(conn, timeout)
 	rerr := s.AsError(res)
+	s.T().Log("badPing", rerr)
 	s.True(rerr.IsOfType(kind))
 }
 

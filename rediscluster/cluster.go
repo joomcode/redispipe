@@ -91,6 +91,8 @@ type Opts struct {
 
 	// RoundRobinSeed - used to choose between master and replica.
 	RoundRobinSeed RoundRobinSeed
+	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency
+	LatencyOrientedRR bool
 }
 
 // Cluster is implementation of redis.Sender which represents connection to redis-cluster.
@@ -134,9 +136,10 @@ type clusterConfig struct {
 }
 
 type shard struct {
-	rr   uint32
-	good uint32
-	addr []string
+	rr      uint32
+	good    uint32
+	addr    []string
+	weights []uint32
 }
 type shardMap map[uint16]*shard
 type masterMap map[string]uint16
@@ -146,6 +149,7 @@ type node struct {
 	addr   string
 	rr     uint32
 	refcnt uint32
+	ping   uint32
 	opts   redisconn.Opts
 	conns  []*redisconn.Connection
 }

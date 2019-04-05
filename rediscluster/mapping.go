@@ -193,6 +193,19 @@ func (cfg *clusterConfig) slot2shard(slot uint16) *shard {
 	return shard
 }
 
+var rr, rs = func() ([]uint32, []uint32) {
+	rr := make([]uint32, 32)
+	rs := make([]uint32, 32)
+	for i := range rr {
+		rr[i] = 3
+		rs[i] = 3
+		if i == 0 {
+			rs[i] = 1
+		}
+	}
+	return rr, rs
+}()
+
 // connForSlot returns established connection for slot, if it exists.
 func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*redisconn.Connection) (*redisconn.Connection, *errorx.Error) {
 	var conn *redisconn.Connection
@@ -214,23 +227,42 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 		}
 		conn = node.getConn(c.opts.ConnHostPolicy, preferConnected, seen)
 	case MasterAndSlaves, PreferSlaves:
-		n, a := uint32(len(shard.addr))*3, uint32(0)
-		if policy == PreferSlaves {
-			// with PreferSlaves policy, slaves are three times more preferred than master.
-			// that is why master's partition is reduced from 3 to 1.
-			n, a = n-2, 2
+		weights := shard.weights
+		if !c.opts.LatencyOrientedRR {
+			weights = rr
+			if policy == PreferSlaves {
+				weights = rs
+			}
 		}
 		off := c.opts.RoundRobinSeed.Current()
 		// First, we try already established connections.
 		// If no one found, then connections thar are connecting at the moment are tried.
 		for _, needState := range []int{needConnected, mayBeConnected} {
 			mask := atomic.LoadUint32(&shard.good) // load health information
+			// a bit of quadratic algorithms
 			for mask != 0 && conn == nil {
-				k := (nextRng(&off, n) + a) / 3
-				if mask&(1<<k) == 0 {
-					// replica isn't healthy, or already viewed
-					continue
+				sumWeight := uint32(0)
+				for k, mm := uint32(0), mask; mm != 0; k, mm = k+1, mm&^(1<<k) {
+					if mm&(1<<k) == 0 {
+						continue
+					}
+					sumWeight += atomic.LoadUint32(&weights[k])
 				}
+
+				r := nextRng(&off, sumWeight)
+
+				k := uint32(0)
+				for ; ; k++ {
+					if mask&(1<<k) == 0 {
+						continue
+					}
+					w := atomic.LoadUint32(&weights[k])
+					if r < w {
+						break
+					}
+					r -= w
+				}
+
 				mask &^= 1 << k
 				addr = shard.addr[k]
 				node := nodes[addr]
@@ -328,6 +360,16 @@ func (n *node) getConnConcreteNeed(policy ConnHostPolicyEnum, liveness int, seen
 		panic("unknown ConnHostPolicy")
 	}
 	return nil
+}
+
+func (n *node) updatePingLatency() {
+	latency := redisconn.PingMaxLatency
+	for _, conn := range n.conns {
+		if l := conn.PingLatency(); l < latency {
+			latency = l
+		}
+	}
+	n.ping = uint32(latency / redisconn.PingLatencyGranularity)
 }
 
 func nextRng(state *uint32, mod uint32) uint32 {

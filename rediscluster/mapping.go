@@ -267,7 +267,7 @@ func connHealthy(c *redisconn.Connection, needState int) bool {
 	switch needState {
 	case needConnected:
 		return c.ConnectedNow()
-	case mayBeConnected, preferConnected:
+	case mayBeConnected:
 		return c.MayBeConnected()
 	default:
 		panic(fmt.Sprintf("unknown needState: %d", needState))
@@ -285,15 +285,6 @@ func isSeen(conn *redisconn.Connection, seen []*redisconn.Connection) bool {
 
 // getConn returns connection with desired "health", but without already seen(used) connections.
 func (n *node) getConn(policy ConnHostPolicyEnum, liveness int, seen []*redisconn.Connection) *redisconn.Connection {
-	if len(n.conns) == 1 {
-		if isSeen(n.conns[0], seen) {
-			return nil
-		}
-		if connHealthy(n.conns[0], liveness) {
-			return n.conns[0]
-		}
-		return nil
-	}
 	if liveness == preferConnected {
 		conn := n.getConnConcreteNeed(policy, needConnected, seen)
 		if conn == nil {

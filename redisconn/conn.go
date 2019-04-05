@@ -27,6 +27,9 @@ const (
 
 	defaultIOTimeout  = 1 * time.Second
 	defaultWritePause = 150 * time.Microsecond
+
+	PingMaxLatency         = 10 * time.Second
+	PingLatencyGranularity = 10 * time.Microsecond
 )
 
 // Opts - options for Connection
@@ -72,9 +75,10 @@ type Opts struct {
 // Queries are not retried in case of connection errors.
 // Connection is safe for multi-threaded usage, ie it doesn't need in synchronisation.
 type Connection struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	state  uint32
+	ctx         context.Context
+	cancel      context.CancelFunc
+	state       uint32
+	pingLatency uint32
 
 	addr  string
 	c     net.Conn
@@ -150,6 +154,8 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 	if conn.opts.Logger == nil {
 		conn.opts.Logger = DefaultLogger{}
 	}
+
+	conn.storePingLatency(PingMaxLatency)
 
 	if !conn.opts.AsyncDial {
 		if err = conn.createConnection(false, nil); err != nil {
@@ -234,6 +240,23 @@ func (conn *Connection) Addr() string {
 // Handle returns user specified handle from Opts
 func (conn *Connection) Handle() interface{} {
 	return conn.opts.Handle
+}
+
+// PingLatency returns last known ping latency
+func (conn *Connection) PingLatency() time.Duration {
+	d := atomic.LoadUint32(&conn.pingLatency)
+	return time.Duration(d) * PingLatencyGranularity
+}
+
+func (conn *Connection) storePingLatency(t time.Duration) {
+	if t <= 0 {
+		if atomic.LoadUint32(&conn.pingLatency) > 0 {
+			return
+		}
+		t = PingMaxLatency
+	}
+	d := uint32((t + PingLatencyGranularity - 1) / PingLatencyGranularity)
+	atomic.StoreUint32(&conn.pingLatency, d)
 }
 
 // Ping sends ping request synchronously
@@ -523,6 +546,7 @@ func (conn *Connection) dial() error {
 	if conn.opts.IOTimeout > 0 {
 		connection.SetWriteDeadline(time.Now().Add(conn.opts.IOTimeout))
 	}
+	beforeWrite := time.Now()
 	if _, err = dc.Write(req); err != nil {
 		connection.Close()
 		return conn.errWrap(ErrConnSetup, err)
@@ -551,6 +575,7 @@ func (conn *Connection) dial() error {
 		}
 		return conn.errWrap(ErrConnSetup, err)
 	}
+	pingLatency := time.Now().Sub(beforeWrite)
 	if str, ok := res.(string); !ok || str != "PONG" {
 		connection.Close()
 		return conn.addProps(ErrInit.New("ping response mismatch")).
@@ -575,6 +600,7 @@ func (conn *Connection) dial() error {
 	}
 
 	conn.c = connection
+	conn.storePingLatency(pingLatency)
 
 	one := &oneconn{
 		c: connection,
@@ -663,6 +689,7 @@ func (conn *Connection) dropFutures(err error) {
 }
 
 func (conn *Connection) closeConnection(neterr *errorx.Error, forever bool) {
+	conn.storePingLatency(PingMaxLatency)
 	if forever {
 		atomic.StoreUint32(&conn.state, connClosed)
 		conn.report(LogContextClosed{Error: neterr.Cause()})
@@ -708,9 +735,12 @@ func (conn *Connection) control() {
 			return
 		case <-t.C:
 		}
+		beforeWrite := time.Now()
 		// send PING at least 3 times per IO timeout, therefore read deadline will not be exceeded
 		if err := conn.Ping(); err != nil {
 			// I really don't know what to do here :-(
+		} else {
+			conn.storePingLatency(time.Now().Sub(beforeWrite))
 		}
 	}
 }

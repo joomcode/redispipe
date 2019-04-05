@@ -685,7 +685,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 	log.Println("Started seventh")
 	defer s.cl.StopSeventhNode()
 
-	const N = 400
+	const N = 100
 	ch := make(chan struct{}, N)
 	var good uint32
 	var bad uint32
@@ -771,7 +771,7 @@ func (s *Suite) TestAllReturns_Bad() {
 
 	s.fillMany(sconn, "allbad")
 
-	const N = 200
+	const N = 50
 	fin := make(chan struct{})
 	goods := make([]chan bool, N)
 	checks := make(chan bool, N)

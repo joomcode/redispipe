@@ -388,8 +388,8 @@ func (s *Suite) TestAllReturns_Good() {
 	s.r().Nil(err)
 	defer conn.Close()
 
-	const N = 200
-	const K = 200
+	const N = 100
+	const K = 100
 	ch := make(chan struct{}, N)
 
 	sconn := redis.SyncCtx{conn}
@@ -435,7 +435,7 @@ func (s *Suite) TestAllReturns_Bad() {
 	s.r().Nil(err)
 	defer conn.Close()
 
-	const N = 200
+	const N = 50
 	fin := make(chan struct{})
 	goods := make([]chan bool, N)
 	checks := make(chan bool, N)

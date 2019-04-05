@@ -75,11 +75,11 @@ func (s *Suite) goodPing(conn *Connection, timeout time.Duration) {
 	s.Equal("PONG", s.ping(conn, timeout))
 }
 
-func (s *Suite) badPing(conn *Connection, kind *errorx.Type, timeout time.Duration) {
+func (s *Suite) badPing(conn *Connection, timeout time.Duration) {
 	res := s.ping(conn, timeout)
 	rerr := s.AsError(res)
 	s.T().Log("badPing", rerr)
-	s.True(rerr.IsOfType(kind))
+	s.True(rerr.HasTrait(redis.ErrTraitConnectivity))
 }
 
 func (s *Suite) waitReconnect(conn *Connection) {
@@ -243,14 +243,14 @@ func (s *Suite) TestStopped_Reconnects() {
 	s.r().Nil(err)
 	defer conn.Close()
 
-	s.badPing(conn, ErrNotConnected, 0)
+	s.badPing(conn, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
 
 	s.s.Stop()
 	time.Sleep(1 * time.Millisecond)
-	s.badPing(conn, ErrNotConnected, 0)
+	s.badPing(conn, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
@@ -265,14 +265,14 @@ func (s *Suite) TestStopped_Reconnects2() {
 
 	s.s.Stop()
 	time.Sleep(1 * time.Millisecond)
-	s.badPing(conn, ErrNotConnected, 0)
+	s.badPing(conn, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)
 
 	s.s.Stop()
 	time.Sleep(1 * time.Millisecond)
-	s.badPing(conn, ErrNotConnected, 0)
+	s.badPing(conn, 0)
 
 	s.s.Start()
 	s.waitReconnect(conn)

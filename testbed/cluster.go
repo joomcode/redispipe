@@ -42,6 +42,7 @@ func NewCluster(startport uint16) *Cluster {
 	for i := 0; i < 5; i++ {
 		for j := i + 1; j < 6; j++ {
 			cl.Node[i].DoSure("CLUSTER MEET", "127.0.0.1", cl.Node[j].Port)
+			cl.Node[i].Do("CONFIG SET", "cluster-migrate-from-empty", "no") // proprietary extension
 		}
 	}
 	time.Sleep(1 * time.Second)
@@ -209,10 +210,10 @@ func (cl *Cluster) CancelMoveSlot(slot int) {
 
 // FinishMoveSlot finalizes slot migration
 func (cl *Cluster) FinishMoveSlot(slot, from, to int) {
+	cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 	cl.Node[to].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST") // proprietary extension
 	cl.Node[to].Do("CLUSTER BUMPEPOCH")
-	cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 }
 
 // MoveSlot moves slot's keys from host to host.

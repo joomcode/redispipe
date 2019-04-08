@@ -10,11 +10,6 @@ env:
     - STAGE=testconn
     - STAGE=testcluster
 
-addons:
-  apt:
-    packages:
-      - realpath
-
 before_install:
   - make /tmp/redis-server/redis-server
 

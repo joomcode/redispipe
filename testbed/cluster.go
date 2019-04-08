@@ -162,6 +162,10 @@ func (cl *Cluster) ClusterOk() bool {
 		}
 		if masters != 3+(len(cl.Node)-6) {
 			log.Printf("wrong number of masters: %d != %d", masters, 3+(len(cl.Node)-6))
+			log.Printf("cluster nodes this: %s", buf)
+			if hashinfo != nil {
+				log.Printf("cluster nodes other: %s", hashinfo)
+			}
 			return false
 		}
 		infos, _ := redisclusterutil.ParseClusterNodes(res)
@@ -169,7 +173,7 @@ func (cl *Cluster) ClusterOk() bool {
 		if hash != hashsum && hashsum != 0 {
 			log.Printf("hashsum doesn't match")
 			log.Printf("cluster nodes this: %s", buf)
-			log.Printf("cluster nodes was: %s", hashinfo)
+			log.Printf("cluster nodes other: %s", hashinfo)
 			return false
 		}
 		hashsum = hash
@@ -205,10 +209,10 @@ func (cl *Cluster) CancelMoveSlot(slot int) {
 
 // FinishMoveSlot finalizes slot migration
 func (cl *Cluster) FinishMoveSlot(slot, from, to int) {
-	//cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 	cl.Node[to].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST") // proprietary extension
 	cl.Node[to].Do("CLUSTER BUMPEPOCH")
+	cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
 }
 
 // MoveSlot moves slot's keys from host to host.

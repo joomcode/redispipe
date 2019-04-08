@@ -696,7 +696,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 		go func(i int) {
 			defer func() { ch <- struct{}{} }()
 			for j := 0; atomic.LoadUint32(&stop) == 0; j++ {
-				skey := s.keys[(i*N+j)*127%NumSlots]
+				skey := s.keys[(i*N+j)*127%256]
 				key := slotkey("allgoodmove", skey)
 				res := sconn.Do(ctx, "GET", key)
 				if !s.Equal([]byte(skey), res) {
@@ -733,10 +733,13 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 	}
 
 	s.cl.MoveSlot(1, 0, 6)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
+		time.Sleep(2 * time.Millisecond)
 		s.cl.MoveSlot(2, 0, 6)
+		time.Sleep(2 * time.Millisecond)
 		s.cl.MoveSlot(2, 6, 0)
 	}
+	time.Sleep(5 * time.Millisecond)
 	s.cl.MoveSlot(1, 6, 0)
 	atomic.StoreUint32(&stop, 1)
 

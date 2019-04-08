@@ -739,7 +739,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 		time.Sleep(2 * time.Millisecond)
 		s.cl.MoveSlot(2, 6, 0)
 	}
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(2 * time.Millisecond)
 	s.cl.MoveSlot(1, 6, 0)
 	atomic.StoreUint32(&stop, 1)
 

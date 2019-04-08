@@ -112,6 +112,7 @@ func (cl *Cluster) ClusterOk() bool {
 		}
 	}
 	var hashsum uint64
+	var hashinfo []byte
 	for i := range cl.Node {
 		if !cl.Node[i].RunningNow() {
 			continue
@@ -167,9 +168,12 @@ func (cl *Cluster) ClusterOk() bool {
 		hash := infos.HashSum()
 		if hash != hashsum && hashsum != 0 {
 			log.Printf("hashsum doesn't match")
+			log.Printf("cluster nodes this: %s", buf)
+			log.Printf("cluster nodes was: %s", hashinfo)
 			return false
 		}
 		hashsum = hash
+		hashinfo = buf
 	}
 	return true
 }

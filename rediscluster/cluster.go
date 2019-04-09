@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/joomcode/errorx"
@@ -111,6 +112,8 @@ type Cluster struct {
 
 	opts Opts
 
+	latencyAwareness uint32
+
 	m sync.Mutex
 
 	config    *clusterConfig
@@ -215,6 +218,11 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 		cluster.opts.WaitToMigrate = 100 * time.Millisecond
 	}
 
+	cluster.latencyAwareness = 0
+	if cluster.opts.LatencyOrientedRR {
+		cluster.latencyAwareness = 1
+	}
+
 	config := &clusterConfig{
 		nodes:   make(nodeMap),
 		shards:  make(shardMap),
@@ -276,6 +284,15 @@ func (c *Cluster) Name() string {
 // Handle returns configured handle.
 func (c *Cluster) Handle() interface{} {
 	return c.opts.Handle
+}
+
+// SetLatencyOrientedRR changes "latency awareness" on the fly.
+func (c *Cluster) SetLatencyOrientedRR(v bool) {
+	if v {
+		atomic.StoreUint32(&c.latencyAwareness, 1)
+	} else {
+		atomic.StoreUint32(&c.latencyAwareness, 0)
+	}
 }
 
 func (c *Cluster) control() {

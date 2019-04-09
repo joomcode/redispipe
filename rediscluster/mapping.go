@@ -194,15 +194,13 @@ func (cfg *clusterConfig) slot2shard(slot uint16) *shard {
 }
 
 var rr, rs = func() ([]uint32, []uint32) {
-	rr := make([]uint32, 32)
-	rs := make([]uint32, 32)
+	rr := make([]uint32, 32) // {1, 1, 1, ...}
+	rs := make([]uint32, 32) // {1, 3, 3, ...}
 	for i := range rr {
-		rr[i] = 3
+		rr[i] = 1
 		rs[i] = 3
-		if i == 0 {
-			rs[i] = 1
-		}
 	}
+	rs[0] = 1
 	return rr, rs
 }()
 
@@ -228,7 +226,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 		conn = node.getConn(c.opts.ConnHostPolicy, preferConnected, seen)
 	case MasterAndSlaves, PreferSlaves:
 		weights := shard.weights
-		if !c.opts.LatencyOrientedRR {
+		if atomic.LoadUint32(&c.latencyAwareness) == 0 {
 			weights = rr
 			if policy == PreferSlaves {
 				weights = rs
@@ -242,10 +240,11 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 			// a bit of quadratic algorithms
 			for mask != 0 && conn == nil {
 				sumWeight := uint32(0)
-				for k, mm := uint32(0), mask; mm != 0; k, mm = k+1, mm&^(1<<k) {
+				for k, mm := uint32(0), mask; mm != 0; k++ {
 					if mm&(1<<k) == 0 {
 						continue
 					}
+					mm &^= 1 << k
 					sumWeight += atomic.LoadUint32(&weights[k])
 				}
 

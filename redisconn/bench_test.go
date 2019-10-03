@@ -32,7 +32,7 @@ func BenchmarkSerialGetSet(b *B) {
 
 	b.Run("pascal", func(b *B) {
 		client := pascal.NewClient("127.0.0.1:45678", 0, 0)
-		defer client.Terminate()
+		defer client.Close()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			if err := client.SETString("foo", "bar"); err != nil {
@@ -133,7 +133,7 @@ func BenchmarkParallelGetSet(b *B) {
 
 	b.Run("pascal", func(b *B) {
 		client := pascal.NewClient("127.0.0.1:45678", 0, 0)
-		defer client.Terminate()
+		defer client.Close()
 		b.ResetTimer()
 		do(b, func() {
 			if err := client.SETString("foo", "bar"); err != nil {

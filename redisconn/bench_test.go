@@ -5,6 +5,8 @@ import (
 	"runtime"
 	. "testing"
 
+	pascal "github.com/pascaldekloe/redis"
+
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/testbed"
 
@@ -27,6 +29,21 @@ func benchServer(port int) func() {
 
 func BenchmarkSerialGetSet(b *B) {
 	defer benchServer(45678)()
+
+	b.Run("pascal", func(b *B) {
+		client := pascal.NewClient("127.0.0.1:45678", 0, 0)
+		defer client.Terminate()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if err := client.SETString("foo", "bar"); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := client.GET("foo"); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
 	b.Run("radixv2", func(b *B) {
 		rdxv2, err := radixv2.Dial("tcp", "127.0.0.1:45678")
 		if err != nil {
@@ -113,6 +130,20 @@ func BenchmarkParallelGetSet(b *B) {
 			}
 		})
 	}
+
+	b.Run("pascal", func(b *B) {
+		client := pascal.NewClient("127.0.0.1:45678", 0, 0)
+		defer client.Terminate()
+		b.ResetTimer()
+		do(b, func() {
+			if err := client.SETString("foo", "bar"); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := client.GET("foo"); err != nil {
+				b.Fatal(err)
+			}
+		})
+	})
 
 	b.Run("radixv2", func(b *B) {
 		rdx2, err := radixv2pool.New("tcp", "127.0.0.1:45678", parallel)

@@ -84,10 +84,12 @@ type Connection struct {
 	c     net.Conn
 	mutex sync.Mutex
 
-	futures   []future
-	futsignal chan struct{}
-	futtimer  *time.Timer
-	futmtx    sync.Mutex
+	futmtx              sync.Mutex
+	futures             []future
+	futsignal           chan struct{}
+	futtimer            *time.Timer
+	effectiveWritePause int64
+	contention          int
 
 	firstConn chan struct{}
 	opts      Opts
@@ -150,6 +152,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 			conn.opts.WritePause = defaultWritePause
 		}
 	}
+	conn.effectiveWritePause = int64(conn.opts.WritePause)
 
 	if conn.opts.Logger == nil {
 		conn.opts.Logger = DefaultLogger{}
@@ -329,14 +332,17 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *e
 	// should notify writer about this shard having queries.
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
 	if len(conn.futures) == 0 {
-		if conn.opts.WritePause > 0 {
-			conn.futtimer.Reset(conn.opts.WritePause)
+		writePause := time.Duration(atomic.LoadInt64(&conn.effectiveWritePause))
+		if writePause > 0 {
+			conn.futtimer.Reset(writePause)
 		} else {
 			select {
 			case conn.futsignal <- struct{}{}:
 			default:
 			}
 		}
+	} else {
+		conn.contention++
 	}
 	conn.futures = futures
 	return nil
@@ -455,14 +461,17 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	// should notify writer about this shard having queries
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
 	if len(conn.futures) == 0 {
-		if conn.opts.WritePause > 0 {
-			conn.futtimer.Reset(conn.opts.WritePause)
+		writePause := time.Duration(atomic.LoadInt64(&conn.effectiveWritePause))
+		if writePause > 0 {
+			conn.futtimer.Reset(writePause)
 		} else {
 			select {
 			case conn.futsignal <- struct{}{}:
 			default:
 			}
 		}
+	} else {
+		conn.contention++
 	}
 	conn.futures = futures
 	return nil
@@ -796,7 +805,11 @@ func (conn *Connection) writer(one *oneconn) {
 		close(one.futures)
 	}()
 
-	round := 1023
+	epoch := time.Now()
+	var last time.Duration
+	const rounds = 1023
+	round := rounds
+	contention := 0
 	for {
 		// wait for dirtyShard or close of our reader-writer pair.
 		select {
@@ -804,6 +817,14 @@ func (conn *Connection) writer(one *oneconn) {
 			if !ok {
 				// user closed connection
 				return
+			}
+			if conn.opts.WritePause > 0 {
+				current := time.Since(epoch)
+				if current-last < conn.opts.WritePause {
+					contention++
+				} else {
+					last = current
+				}
 			}
 		case <-conn.futtimer.C:
 		case <-one.control:
@@ -814,6 +835,8 @@ func (conn *Connection) writer(one *oneconn) {
 		conn.futmtx.Lock()
 		// fetch requests from shard, and replace it with empty buffer with non-zero capacity
 		futures, conn.futures = conn.futures, futures
+		contention += conn.contention
+		conn.contention = 0
 		conn.futmtx.Unlock()
 
 		if len(futures) == 0 {
@@ -837,15 +860,24 @@ func (conn *Connection) writer(one *oneconn) {
 			return
 		}
 
-		// every 1023 writes check our buffer.
-		// If it is too large, then lets GC to free it.
 		if round--; round == 0 {
-			round = 1023
+			// every 1023 writes check our buffer.
+			// If it is too large, then lets GC to free it.
 			if cap(packet) > 128*1024 {
 				packet = nil
 			}
+			// try to heuristically disable/enable write pause
+			if conn.opts.WritePause > 0 {
+				writePause := conn.opts.WritePause
+				if contention < rounds/3 {
+					writePause = -1
+				}
+				atomic.StoreInt64(&conn.effectiveWritePause, int64(writePause))
+			}
+			round = rounds
+			contention = 0
 		}
-		// otherwise, reuse buffer
+		// reuse buffer
 		packet = packet[:0]
 
 		one.futures <- futures

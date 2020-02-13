@@ -101,6 +101,8 @@ type InstanceInfo struct {
 	Port2  int
 	Fail   bool
 	MySelf bool
+	Master bool
+	Slave  bool
 	// NoAddr means that node were missed due to misconfiguration.
 	// More probably, redis instance with other UUID were started on the same port.
 	NoAddr    bool
@@ -127,7 +129,11 @@ func (ii *InstanceInfo) HasAddr() bool {
 
 // IsMaster returns if this instance is master
 func (ii *InstanceInfo) IsMaster() bool {
-	return ii.SlaveOf == ""
+	return ii.Master && !ii.Slave
+}
+// IsSlave returns if this instance is slave
+func (ii *InstanceInfo) IsSlave() bool {
+	return !ii.Master && ii.Slave
 }
 
 // HashSum calculates signature of cluster configuration.
@@ -161,15 +167,17 @@ func (iis InstanceInfos) CollectAddressesAndMigrations(addrs map[string]struct{}
 
 // SlotsRanges returns sorted SlotsRange-s made from slots information of cluster configuration.
 func (iis InstanceInfos) SlotsRanges() []SlotsRange {
+	ranges := make([]SlotsRange, 0, 16)
 	uuid2addrs := make(map[string][]string)
 	for _, ii := range iis {
 		if ii.IsMaster() {
 			uuid2addrs[ii.Uuid] = append([]string{ii.Addr}, uuid2addrs[ii.Uuid]...)
-		} else {
+		} else if ii.IsSlave() {
 			uuid2addrs[ii.SlaveOf] = append(uuid2addrs[ii.SlaveOf], ii.Addr)
+		} else {
+			return ranges
 		}
 	}
-	ranges := make([]SlotsRange, 0, 16)
 	for _, ii := range iis {
 		if !ii.IsMaster() || len(ii.Slots) == 0 {
 			continue
@@ -293,9 +301,22 @@ func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 		node.Port2, _ = strconv.Atoi(ipp[1])
 
 		node.Fail = strings.Contains(parts[2], "fail")
+
+		if strings.Contains(parts[2], "master") {
+			node.Master = true
+			node.Slave = false
+		} else if strings.Contains(parts[2], "slave") {
+			node.Master = false
+			node.Slave = true
+		} else {
+			node.Master = false
+			node.Slave = false
+		}
+
 		if strings.Contains(parts[2], "slave") {
 			node.SlaveOf = parts[3]
 		}
+
 		node.NoAddr = strings.Contains(parts[2], "noaddr")
 		node.MySelf = strings.Contains(parts[2], "myself")
 

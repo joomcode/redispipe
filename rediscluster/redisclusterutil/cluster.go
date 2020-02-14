@@ -284,6 +284,10 @@ func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 		if len(ipp) != 2 || len(addrparts) != 2 {
 			return errf("ip-port is not in 'ip:port@port2' format, but %q", line)
 		}
+		if len(addrparts[0]) == 0 || strings.Contains(parts[2], "handshake") {
+			// skip unconfigurred hosts
+			continue
+		}
 		node := InstanceInfo{
 			Uuid: parts[0],
 			Addr: ipp[0],

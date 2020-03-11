@@ -125,6 +125,12 @@ func (ii *InstanceInfo) HasAddr() bool {
 	return !ii.NoAddr && ii.Port != 0
 }
 
+// AddrValid returns true if instance is successfully configure.
+// Note that it could differ from HasAddr in some corner cases.
+func (ii *InstanceInfo) AddrValid() bool {
+	return ii.IP != "" && ii.Port != 0
+}
+
 // IsMaster returns if this instance is master
 func (ii *InstanceInfo) IsMaster() bool {
 	return ii.SlaveOf == ""
@@ -148,7 +154,7 @@ func (iis InstanceInfos) HashSum() uint64 {
 // CollectAddressesAndMigrations collects all node's addresses and all slot migrations.
 func (iis InstanceInfos) CollectAddressesAndMigrations(addrs map[string]struct{}, migrating map[uint16]struct{}) {
 	for _, ii := range iis {
-		if ii.IP > "" && ii.Port != 0 {
+		if ii.AddrValid() {
 			addrs[ii.Addr] = struct{}{}
 		}
 		if migrating != nil {
@@ -163,6 +169,9 @@ func (iis InstanceInfos) CollectAddressesAndMigrations(addrs map[string]struct{}
 func (iis InstanceInfos) SlotsRanges() []SlotsRange {
 	uuid2addrs := make(map[string][]string)
 	for _, ii := range iis {
+		if !ii.AddrValid() {
+			continue
+		}
 		if ii.IsMaster() {
 			uuid2addrs[ii.Uuid] = append([]string{ii.Addr}, uuid2addrs[ii.Uuid]...)
 		} else {
@@ -171,7 +180,7 @@ func (iis InstanceInfos) SlotsRanges() []SlotsRange {
 	}
 	ranges := make([]SlotsRange, 0, 16)
 	for _, ii := range iis {
-		if !ii.IsMaster() || len(ii.Slots) == 0 {
+		if !ii.AddrValid() || !ii.IsMaster() || len(ii.Slots) == 0 {
 			continue
 		}
 		for _, slots := range ii.Slots {
@@ -247,9 +256,11 @@ RealMerge:
 
 // Hosts returns set of instance addresses.
 func (iis InstanceInfos) Hosts() []string {
-	res := make([]string, len(iis))
+	res := make([]string, 0, len(iis))
 	for i := range iis {
-		res[i] = iis[i].Addr
+		if iis[i].AddrValid() {
+			res = append(res, iis[i].Addr)
+		}
 	}
 	return res
 }
@@ -283,10 +294,6 @@ func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 		addrparts := strings.Split(ipp[0], ":")
 		if len(ipp) != 2 || len(addrparts) != 2 {
 			return errf("ip-port is not in 'ip:port@port2' format, but %q", line)
-		}
-		if len(addrparts[0]) == 0 || strings.Contains(parts[2], "handshake") {
-			// skip unconfigurred hosts
-			continue
 		}
 		node := InstanceInfo{
 			Uuid: parts[0],

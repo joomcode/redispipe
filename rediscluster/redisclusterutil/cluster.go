@@ -142,6 +142,9 @@ func (ii *InstanceInfo) IsMaster() bool {
 func (iis InstanceInfos) HashSum() uint64 {
 	hsh := fnv.New64a()
 	for _, ii := range iis {
+		if !ii.AddrValid() && len(ii.Slots) == 0 { // looks like redis-cli also ignores hosts without slots
+			continue
+		}
 		fmt.Fprintf(hsh, "%s\t%s\t%d\t%v\t%s", ii.Uuid, ii.Addr, ii.Port2, ii.Fail, ii.SlaveOf)
 		for _, slots := range ii.Slots {
 			fmt.Fprintf(hsh, "\t%d-%d", slots[0], slots[1])

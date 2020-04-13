@@ -328,10 +328,8 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *e
 
 	// should notify writer about this shard having queries.
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
-	// Special case for PING since it is used for latency measurement.
-	hasPing := req.Cmd == "PING"
-	if len(conn.futures) == 0 || hasPing {
-		if !hasPing && conn.opts.WritePause > 0 {
+	if len(conn.futures) == 0 {
+		if conn.opts.WritePause > 0 {
 			conn.futtimer.Reset(conn.opts.WritePause)
 		} else {
 			select {

@@ -28,7 +28,11 @@ func nownano() int64 {
 
 func (c *Connection) resolve(f future, res interface{}) {
 	if f.start != 0 && f.req.Cmd != "" {
-		c.opts.Logger.ReqStat(c, f.req, res, nownano()-f.start)
+		delta := nownano() - f.start
+		c.opts.Logger.ReqStat(c, f.req, res, delta)
+		if f.req.Cmd == "PING" {
+			c.storePingLatency(time.Duration(delta))
+		}
 	}
 	f.Future.Resolve(res, f.N)
 }

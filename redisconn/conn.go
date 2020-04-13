@@ -735,12 +735,9 @@ func (conn *Connection) control() {
 			return
 		case <-t.C:
 		}
-		beforeWrite := time.Now()
 		// send PING at least 3 times per IO timeout, therefore read deadline will not be exceeded
 		if err := conn.Ping(); err != nil {
 			// I really don't know what to do here :-(
-		} else {
-			conn.storePingLatency(time.Now().Sub(beforeWrite))
 		}
 	}
 }

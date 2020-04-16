@@ -827,6 +827,9 @@ func (conn *Connection) writer(one *oneconn) {
 				// lets just panic and die.
 				panic(err)
 			}
+			if fut.req.Cmd == "PING" {
+				fut.start = nownano()
+			}
 		}
 
 		if _, err := one.c.Write(packet); err != nil {

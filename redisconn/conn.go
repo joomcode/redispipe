@@ -820,7 +820,7 @@ func (conn *Connection) writer(one *oneconn) {
 		}
 
 		// serialize requests
-		for _, fut := range futures {
+		for i, fut := range futures {
 			var err error
 			if packet, err = redis.AppendRequest(packet, fut.req); err != nil {
 				// since we checked arguments in doSend and doSendBatch, error here is a signal of programmer error.
@@ -828,7 +828,7 @@ func (conn *Connection) writer(one *oneconn) {
 				panic(err)
 			}
 			if fut.req.Cmd == "PING" {
-				fut.start = nownano()
+				futures[i].start = nownano()
 			}
 		}
 

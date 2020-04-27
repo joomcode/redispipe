@@ -155,7 +155,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 		conn.opts.Logger = DefaultLogger{}
 	}
 
-	conn.storePingLatency(PingMaxLatency)
+	conn.storePingLatency(0)
 
 	if !conn.opts.AsyncDial {
 		if err = conn.createConnection(false, nil); err != nil {
@@ -245,15 +245,24 @@ func (conn *Connection) Handle() interface{} {
 // PingLatency returns last known ping latency
 func (conn *Connection) PingLatency() time.Duration {
 	d := atomic.LoadUint32(&conn.pingLatency)
+	if d == 0 {
+		return PingMaxLatency
+	}
 	return time.Duration(d) * PingLatencyGranularity
 }
 
 func (conn *Connection) storePingLatency(t time.Duration) {
-	if t <= 0 {
-		if atomic.LoadUint32(&conn.pingLatency) > 0 {
-			return
-		}
-		t = PingMaxLatency
+	if t == 0 {
+		atomic.StoreUint32(&conn.pingLatency, 0)
+		return
+	}
+	if t < 0 {
+		// clock skew
+		return
+	}
+	previous := time.Duration(atomic.LoadUint32(&conn.pingLatency)) * PingLatencyGranularity
+	if previous != 0 {
+		t = (t + 3*previous) / 4
 	}
 	d := uint32((t + PingLatencyGranularity - 1) / PingLatencyGranularity)
 	atomic.StoreUint32(&conn.pingLatency, d)
@@ -689,7 +698,7 @@ func (conn *Connection) dropFutures(err error) {
 }
 
 func (conn *Connection) closeConnection(neterr *errorx.Error, forever bool) {
-	conn.storePingLatency(PingMaxLatency)
+	conn.storePingLatency(0)
 	if forever {
 		atomic.StoreUint32(&conn.state, connClosed)
 		conn.report(LogContextClosed{Error: neterr.Cause()})

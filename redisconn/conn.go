@@ -308,7 +308,7 @@ func (conn *Connection) SendAsk(req Request, cb Future, n uint64, asking bool) {
 
 func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *errorx.Error {
 	if err := cb.Cancelled(); err != nil {
-		return conn.err(redis.ErrRequestCancelled)
+		return conn.errWrap(redis.ErrRequestCancelled, err)
 	}
 
 	// Since we do not pack request here, we need to be sure it could be packed
@@ -417,7 +417,7 @@ func (conn *Connection) SendBatchFlags(requests []Request, cb Future, start uint
 
 func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64, flags int) *errorx.Error {
 	if err := cb.Cancelled(); err != nil {
-		return conn.err(redis.ErrRequestCancelled)
+		return conn.errWrap(redis.ErrRequestCancelled, err)
 	}
 
 	if len(requests) == 0 {

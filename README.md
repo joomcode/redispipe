@@ -24,12 +24,6 @@ RedisPipe – is a client for redis that uses "implicit pipelining" for highest 
 - hook for custom logging.
 - hook for request timing reporting.
 
-```
-BenchmarkParallelGetSet/radixv2-8        1000000     9245 ns/op   1268 B/op   32 allocs/op
-BenchmarkParallelGetSet/redigo-8         1000000     6886 ns/op    399 B/op   13 allocs/op
-BenchmarkParallelGetSet/redispipe-8      5000000     1636 ns/op    219 B/op   12 allocs/op
-```
-
 ## Introduction
 
 https://redis.io/topics/pipelining
@@ -56,8 +50,9 @@ pipelining has to be implicit.
 - Ruby's EventMachine related connectors,
 - etc
 
-But there was no such connector for Golang. All known Golang redis connectors use a
-connection-per-request model with a connection pool, and provide only explicit pipelining.
+At the moment this connector were created there was no such connector for Golang.
+All known Golang redis connectors use a connection-per-request model with a connection pool,
+and provide only explicit pipelining.
 
 This connector was created as implicitly pipelined from the ground up to achieve maximum performance
 in a highly concurrent environment. It writes all requests to single connection to redis, and
@@ -71,22 +66,20 @@ runtime latency for switching goroutines still remains, however, and could not b
 
 ## Performance
 
-Tests were performed on localhost Xeon(R) CPU E3-1245 v6 @ 3.70GHz (4 cores, 8 HT)
-
 ### Single redis
 
 ```
-go test -count 1 -run FooBar -bench . -benchmem -benchtime 5s ./redisconn
 goos: linux
 goarch: amd64
-pkg: github.com/joomcode/redispipe/redisconn
-BenchmarkSerialGetSet/radixv2-8             200000    32257 ns/op    256 B/op    11 allocs/op
-BenchmarkSerialGetSet/redigo-8              200000    31785 ns/op     86 B/op     5 allocs/op
-BenchmarkSerialGetSet/redispipe-8            30000   266490 ns/op    168 B/op     8 allocs/op
-BenchmarkSerialGetSet/redispipe_pause0-8    200000    44396 ns/op    168 B/op     8 allocs/op
-BenchmarkParallelGetSet/radixv2-8           500000    12756 ns/op    260 B/op    11 allocs/op
-BenchmarkParallelGetSet/redigo-8           1000000    12486 ns/op    123 B/op     6 allocs/op
-BenchmarkParallelGetSet/redispipe-8        5000000     1435 ns/op    168 B/op     8 allocs/op
+pkg: github.com/joomcode/redispipe/rediscluster
+cpu: Intel(R) Core(TM) i7-10750H CPU @ 2.60GHz
+BenchmarkSerialGetSet/radix_pause0-12              17691             63132 ns/op              68 B/op          4 allocs/op
+BenchmarkSerialGetSet/redigo-12            19519             60064 ns/op             239 B/op         13 allocs/op
+BenchmarkSerialGetSet/redispipe-12           504           2661790 ns/op             290 B/op         12 allocs/op
+BenchmarkSerialGetSet/redispipe_pause0-12                  13669             84925 ns/op             208 B/op         12 allocs/op
+BenchmarkParallelGetSet/radix-12                          621036              1817 ns/op              78 B/op          4 allocs/op
+BenchmarkParallelGetSet/redigo-12                           7466            153584 ns/op            4008 B/op         20 allocs/op
+BenchmarkParallelGetSet/redispipe-12                      665428              1599 ns/op             231 B/op         12 allocs/op
 ```
 
 You can see a couple of things:
@@ -103,10 +96,10 @@ performance, though there is still small overhead of internal design. But I woul
 disable batching (unless your use case is single threaded), because it increases CPU usage under
 highly concurrent load both on client and on redis-server.
 
-Parallel benchmark for single redis has Redis CPU usage as a bottleneck for both `radix.v2` and
-`redigo` (ie Redis eats whole CPU core). But with redispipe, Redis server consumes only 75% of
-a core despite the fact that it could serve 8 times more requests. It clearly shows how usage of
-implicitly pipelined connector helps to get much more RPS from single Redis server.
+To be honestly, github.com/mediocregopher/radix/v3 is also able to perform implicit pipelining
+and does it by default. Therefore it is almost as fast as redispipe in ParallelGetSet.
+SerialGetSet is tested with disabled pipelining, because otherwise it will be as slow as
+redispipe without pause0.
 
 ### Cluster
 

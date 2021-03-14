@@ -1,4 +1,4 @@
-package rediscluster_test
+package bench
 
 import (
 	"context"
@@ -11,13 +11,11 @@ import (
 
 	"github.com/joomcode/redispipe/rediscluster"
 	"github.com/joomcode/redispipe/testbed"
-
 	"github.com/joomcode/redispipe/redis"
-
-	redigo "github.com/chasex/redis-go-cluster"
 	"github.com/joomcode/redispipe/redisconn"
 
-	radixv2cluster "github.com/mediocregopher/radix.v2/cluster"
+	redigo "github.com/wuxibin89/redis-go-cluster"
+	radix "github.com/mediocregopher/radix/v3"
 )
 
 func benchCluster(port int) func() {
@@ -33,8 +31,14 @@ func benchCluster(port int) func() {
 func BenchmarkSerialGetSet(b *B) {
 	defer benchCluster(45000)()
 	rng := rand.New(rand.NewSource(1))
-	b.Run("radixv2", func(b *B) {
-		rdxv2, err := radixv2cluster.New("127.0.0.1:45000")
+	b.Run("radix_pause0", func(b *B) {
+		rdxv2, err := radix.NewCluster(
+			[]string{"127.0.0.1:45000"},
+			radix.ClusterPoolFunc(func(network, addr string) (radix.Client, error) {
+				return radix.NewPool(network, addr, 4,
+					radix.PoolPipelineWindow(0, 0))
+			}),
+		)
 		if err != nil {
 			b.Fatal(err)
 			return
@@ -43,10 +47,10 @@ func BenchmarkSerialGetSet(b *B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			key := "foo" + strconv.Itoa(rng.Intn(65536))
-			if err := rdxv2.Cmd("SET", key, "bar").Err; err != nil {
+			if err := rdxv2.Do(radix.Cmd(nil, "SET", key, "bar")); err != nil {
 				b.Fatal(err)
 			}
-			if err := rdxv2.Cmd("GET", key).Err; err != nil {
+			if err := rdxv2.Do(radix.Cmd(nil, "GET", key)); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -132,11 +136,8 @@ func BenchmarkParallelGetSet(b *B) {
 		})
 	}
 
-	b.Run("radixv2", func(b *B) {
-		rdx2, err := radixv2cluster.NewWithOpts(radixv2cluster.Opts{
-			Addr:     "127.0.0.1:45000",
-			PoolSize: 128,
-		})
+	b.Run("radix", func(b *B) {
+		rdx2, err := radix.NewCluster([]string{"127.0.0.1:45000"})
 		defer rdx2.Close()
 		if err != nil {
 			b.Fatal(err)
@@ -144,10 +145,10 @@ func BenchmarkParallelGetSet(b *B) {
 		b.ResetTimer()
 		do(b, func(rng *rand.Rand) {
 			key := "foo" + strconv.Itoa(rng.Intn(65536))
-			if err := rdx2.Cmd("SET", key, "bar").Err; err != nil {
+			if err := rdx2.Do(radix.Cmd(nil, "SET", key, "bar")); err != nil {
 				b.Fatal(err)
 			}
-			if err := rdx2.Cmd("GET", key).Err; err != nil {
+			if err := rdx2.Do(radix.Cmd(nil, "GET", key)); err != nil {
 				b.Fatal(err)
 			}
 		})

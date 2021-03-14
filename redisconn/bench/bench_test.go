@@ -1,4 +1,4 @@
-package redisconn_test
+package bench
 
 import (
 	"context"
@@ -8,11 +8,10 @@ import (
 	"github.com/joomcode/redispipe/redis"
 	"github.com/joomcode/redispipe/testbed"
 
-	redigo "github.com/garyburd/redigo/redis"
+	redigo "github.com/gomodule/redigo/redis"
 	"github.com/joomcode/redispipe/redisconn"
 
-	radixv2pool "github.com/mediocregopher/radix.v2/pool"
-	radixv2 "github.com/mediocregopher/radix.v2/redis"
+	radix "github.com/mediocregopher/radix/v3"
 )
 
 func benchServer(port int) func() {
@@ -27,8 +26,8 @@ func benchServer(port int) func() {
 
 func BenchmarkSerialGetSet(b *B) {
 	defer benchServer(45678)()
-	b.Run("radixv2", func(b *B) {
-		rdxv2, err := radixv2.Dial("tcp", "127.0.0.1:45678")
+	b.Run("radix", func(b *B) {
+		rdxv2, err := radix.Dial("tcp", "127.0.0.1:45678")
 		if err != nil {
 			b.Fatal(err)
 			return
@@ -36,10 +35,10 @@ func BenchmarkSerialGetSet(b *B) {
 		defer rdxv2.Close()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if err := rdxv2.Cmd("SET", "foo", "bar").Err; err != nil {
+			if err := rdxv2.Do(radix.Cmd(nil, "SET", "foo", "bar")); err != nil {
 				b.Fatal(err)
 			}
-			if err := rdxv2.Cmd("GET", "foo").Err; err != nil {
+			if err := rdxv2.Do(radix.Cmd(nil, "GET", "foo")); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -103,7 +102,7 @@ func BenchmarkSerialGetSet(b *B) {
 
 func BenchmarkParallelGetSet(b *B) {
 	defer benchServer(45678)()
-	parallel := runtime.GOMAXPROCS(0) * 8
+	parallel := runtime.GOMAXPROCS(0) * 2
 
 	do := func(b *B, fn func()) {
 		b.SetParallelism(parallel)
@@ -114,23 +113,18 @@ func BenchmarkParallelGetSet(b *B) {
 		})
 	}
 
-	b.Run("radixv2", func(b *B) {
-		rdx2, err := radixv2pool.New("tcp", "127.0.0.1:45678", parallel)
+	b.Run("radix", func(b *B) {
+		rdx2, err := radix.NewPool("tcp", "127.0.0.1:45678", parallel)
 		if err != nil {
 			b.Fatal(err)
 		}
-		defer rdx2.Empty()
+		defer rdx2.Close()
 		b.ResetTimer()
 		do(b, func() {
-			conn, err := rdx2.Get()
-			if err != nil {
+			if err := rdx2.Do(radix.Cmd(nil, "SET", "foo", "bar")); err != nil {
 				b.Fatal(err)
 			}
-			defer rdx2.Put(conn)
-			if conn.Cmd("SET", "foo", "bar").Err != nil {
-				b.Fatal(err)
-			}
-			if conn.Cmd("GET", "foo").Err != nil {
+			if err := rdx2.Do(radix.Cmd(nil, "GET", "foo")); err != nil {
 				b.Fatal(err)
 			}
 		})

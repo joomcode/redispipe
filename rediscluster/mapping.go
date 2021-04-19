@@ -375,7 +375,8 @@ func (n *node) updatePingLatency() {
 			latency = l
 		}
 	}
-	n.ping = uint32(latency / redisconn.PingLatencyGranularity)
+	ping := uint32(latency / redisconn.PingLatencyGranularity)
+	atomic.StoreUint32(&n.ping, ping)
 }
 
 func nextRng(state *uint32, mod uint32) uint32 {

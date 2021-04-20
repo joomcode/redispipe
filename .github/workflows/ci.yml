@@ -11,7 +11,8 @@ jobs:
       matrix:
 #        go: [1.11, 1.12, 1.13, 1.14, 1.15, 1.16]
         go: [1.13]
-        stage: [testredis, testconn, testcluser]
+#        stage: [testredis, testconn, testcluser]
+        stage: [testredis]
 
     steps:
 
@@ -23,8 +24,14 @@ jobs:
       with:
         go-version: ${{ matrix.go }}
 
+    - name: Pwd1
+      run: pwd
+
     - name: Install redis
       run: make /tmp/redis-server/redis-server
+
+    - name: Pwd2
+      run: pwd
 
     - name: Build
       run: make ${{ matrix.stage }}

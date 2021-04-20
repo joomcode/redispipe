@@ -10,7 +10,7 @@ jobs:
     strategy:
       matrix:
 #        go: [1.11, 1.12, 1.13, 1.14, 1.15, 1.16]
-        go: [1.13]
+        go: [1.11, 1.13, 1.16]
         stage: [testredis, testconn, testcluster]
 
     steps:
@@ -23,14 +23,16 @@ jobs:
       with:
         go-version: ${{ matrix.go }}
 
-    - name: Pwd1
-      run: pwd
+    - name: Cache redis build
+      uses: actions/cache@v2
+      with:
+        path: |
+          /tmp/redis-server
+        key: ${{ runner.os }}-redis-${{ hashFiles('Makefile') }}
 
     - name: Install redis
       run: make /tmp/redis-server/redis-server
 
-    - name: Pwd2
-      run: pwd
 
     - name: Build
       run: make ${{ matrix.stage }}

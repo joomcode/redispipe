@@ -1,0 +1,31 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+#        go: [1.11, 1.12, 1.13, 1.14, 1.15, 1.16]
+        go: [1.13]
+        stage: [testredis, testconn, testcluser]
+
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Set up Go ${{ matrix.go }}
+      uses: actions/setup-go@v1
+      with:
+        go-version: ${{ matrix.go }}
+
+    - name: Install redis
+      run: make /tmp/redis-server/redis-server
+
+    - name: Build
+      run: make ${{ matrix.stage }}
+

@@ -32,6 +32,30 @@ const (
 	PingLatencyGranularity = 10 * time.Microsecond
 )
 
+type DefaultReconnectPause struct {
+	reconnectPause time.Duration
+}
+
+func NewDefaultReconnectPause(dur time.Duration) *DefaultReconnectPause {
+	return &DefaultReconnectPause{
+		reconnectPause: dur,
+	}
+}
+
+func (r *DefaultReconnectPause) pause(_ *Connection, now time.Time) {
+	time.Sleep(now.Add(r.reconnectPause).Sub(time.Now()))
+}
+
+func (r *DefaultReconnectPause) GetPause() *func(_ *Connection, now time.Time) {
+	var f = r.pause
+	return &f
+}
+
+func reconnectNoPauseFunc(_ *Connection, _ time.Time) {}
+
+var reconnectNoPause = reconnectNoPauseFunc
+var ReconnectNoPause = &reconnectNoPause
+
 // Opts - options for Connection
 type Opts struct {
 	// DB - database number
@@ -46,10 +70,11 @@ type Opts struct {
 	// If it is <= 0 or >= IOTimeout, then IOTimeout
 	// If IOTimeout is disabled, then 5 seconds used (but without affect on ReconnectPause)
 	DialTimeout time.Duration
-	// ReconnectPause is a pause after failed connection attempt before next one.
-	// If ReconnectPause < 0, then no reconnection will be performed.
-	// If ReconnectPause == 0, then DialTimeout * 2 is used
-	ReconnectPause time.Duration
+	// ReconnectPauseFunc is function called after a failed connection attempt before next one.
+	// If ReconnectPauseFunc is nil, then DefaultReconnectPause is used with a wait of DialTimeout * 2.
+	// If ReconnectPauseFunc is not nil, then user supplied function is called with its own wait logic.
+	// If ReconnectPauseFunc is ReconnectNoPause, then no reconnection will be performed.
+	ReconnectPauseFunc *func(conn *Connection, now time.Time)
 	// TCPKeepAlive - KeepAlive parameter for net.Dialer
 	// default is IOTimeout / 3
 	TCPKeepAlive time.Duration
@@ -132,8 +157,8 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 		conn.opts.DialTimeout = conn.opts.IOTimeout
 	}
 
-	if conn.opts.ReconnectPause == 0 {
-		conn.opts.ReconnectPause = conn.opts.DialTimeout * 2
+	if conn.opts.ReconnectPauseFunc == nil {
+		conn.opts.ReconnectPauseFunc = NewDefaultReconnectPause(conn.opts.DialTimeout * 2).GetPause()
 	}
 
 	if conn.opts.TCPKeepAlive == 0 {
@@ -159,7 +184,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 
 	if !conn.opts.AsyncDial {
 		if err = conn.createConnection(false, nil); err != nil {
-			if opts.ReconnectPause < 0 {
+			if opts.ReconnectPauseFunc == ReconnectNoPause {
 				return nil, err
 			}
 			if cer, ok := err.(*errorx.Error); ok && cer.HasTrait(ErrTraitInitPermanent) {
@@ -665,7 +690,10 @@ func (conn *Connection) createConnection(reconnect bool, wg *sync.WaitGroup) err
 		}
 		conn.mutex.Unlock()
 		// do not spend CPU on useless attempts
-		time.Sleep(now.Add(conn.opts.ReconnectPause).Sub(time.Now()))
+		if conn.opts.ReconnectPauseFunc != nil {
+			var pause = *conn.opts.ReconnectPauseFunc
+			pause(conn, now)
+		}
 		conn.mutex.Lock()
 	}
 	if wg != nil {
@@ -774,7 +802,7 @@ func (conn *Connection) reconnect(neterr *errorx.Error, c net.Conn) {
 	if atomic.LoadUint32(&conn.state) == connClosed {
 		return
 	}
-	if conn.opts.ReconnectPause < 0 {
+	if conn.opts.ReconnectPauseFunc == ReconnectNoPause {
 		conn.Close()
 		return
 	}

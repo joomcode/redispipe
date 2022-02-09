@@ -226,10 +226,10 @@ func (s *Suite) TestSendMany_FailedWholeBatchBecauseOfOne() {
 	}
 }
 
-func (s *Suite) TestStopped_DoesntConnectWithNegativeReconnectPause() {
+func (s *Suite) TestStopped_DoesntConnectWithNoReconnectPauseFunc() {
 	s.s.Stop()
 	opts := defopts
-	opts.ReconnectPause = -1
+	opts.ReconnectPauseFunc = ReconnectNoPause
 	_, err := Connect(s.ctx, s.s.Addr(), opts)
 	s.r().NotNil(err)
 	rerr := s.AsError(err)

@@ -2,6 +2,7 @@ package redisconn_test
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"runtime"
 	"strconv"
@@ -29,6 +30,7 @@ type Suite struct {
 func (s *Suite) SetupSuite() {
 	testbed.InitDir(".")
 	s.s.Port = 45678
+	s.s.TlsPort = 55678
 	s.s.Start()
 }
 
@@ -107,6 +109,20 @@ func TestConn(t *testing.T) {
 
 func (s *Suite) TestConnects() {
 	conn, err := Connect(s.ctx, s.s.Addr(), defopts)
+	s.r().Nil(err)
+	defer conn.Close()
+	s.goodPing(conn, 0)
+}
+
+func (s *Suite) TestConnectsTls() {
+	tlsopts := Opts{
+		IOTimeout:  defopts.IOTimeout,
+		TLSEnabled: true,
+		TLSConfig: tls.Config{
+			InsecureSkipVerify: true,
+		},
+	}
+	conn, err := Connect(s.ctx, s.s.TlsAddr(), tlsopts)
 	s.r().Nil(err)
 	defer conn.Close()
 	s.goodPing(conn, 0)

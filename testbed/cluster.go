@@ -29,7 +29,7 @@ func NewCluster(startport uint16) *Cluster {
 		cl.Node[i].Port = startport + uint16(i)
 		cl.Node[i].Args = []string{
 			"--cluster-enabled", "yes",
-			"--cluster-config-file", "node-" + cl.Node[i].PortStr() + ".conf",
+			"--cluster-config-file", "node-" + cl.Node[i].PortStr(cl.Node[i].Port) + ".conf",
 			"--cluster-node-timeout", "200",
 			"--cluster-slave-validity-factor", "1000",
 			"--slave-serve-stale-data", "yes",
@@ -207,7 +207,7 @@ func (cl *Cluster) StartSeventhNode() {
 	cl.Node[6].Port = cl.Node[0].Port + 6
 	cl.Node[6].Args = []string{
 		"--cluster-enabled", "yes",
-		"--cluster-config-file", "node-" + cl.Node[6].PortStr() + ".conf",
+		"--cluster-config-file", "node-" + cl.Node[6].PortStr(cl.Node[6].Port) + ".conf",
 		"--cluster-node-timeout", "200",
 		"--cluster-slave-validity-factor", "1000",
 		"--slave-serve-stale-data", "yes",

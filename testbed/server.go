@@ -15,21 +15,26 @@ import (
 
 // Server is a handle for running redis-server.
 type Server struct {
-	Port   uint16
-	Args   []string
-	Cmd    *exec.Cmd
-	Paused bool
-	Conn   redisdumb.Conn
+	Port    uint16
+	TlsPort uint16
+	Args    []string
+	Cmd     *exec.Cmd
+	Paused  bool
+	Conn    redisdumb.Conn
 }
 
 // PortStr returns server's port as a string
-func (s *Server) PortStr() string {
-	return strconv.Itoa(int(s.Port))
+func (s *Server) PortStr(port uint16) string {
+	return strconv.Itoa(int(port))
 }
 
 // Addr - address + port
 func (s *Server) Addr() string {
-	return "127.0.0.1:" + s.PortStr()
+	return "127.0.0.1:" + s.PortStr(s.Port)
+}
+
+func (s *Server) TlsAddr() string {
+	return "127.0.0.1:" + s.PortStr(s.TlsPort)
 }
 
 // Start starts redis and waits for its initialization.
@@ -38,11 +43,17 @@ func (s *Server) Start() {
 		return
 	}
 	s.Paused = false
-	port := s.PortStr()
+	port := s.PortStr(s.Port)
+	tlsPort := s.PortStr(s.TlsPort)
 	args := append([]string{
 		"--bind", "127.0.0.1",
 		"--port", port,
 		"--dbfilename", "dump-" + port + ".rdb",
+		"--tls-port", tlsPort,
+		"--tls-cert-file", "../../testbed/test_certs/server.rsa.crt",
+		"--tls-key-file", "../../testbed/test_certs/server.rsa.key",
+		"--tls-ca-cert-file", "../../testbed/test_certs/server.rsa.crt",
+		"--tls-auth-clients", "no",
 	}, s.Args...)
 	var err error
 	s.Cmd = exec.Command(Binary, args...)

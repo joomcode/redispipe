@@ -24,6 +24,8 @@ testcluster: /tmp/redis-server/redis-server
 	killall redis-server || true
 	rm ./rediscluster/redis_test_* -r || true
 	PATH=/tmp/redis-server/:${PATH} go test -count 1 -tags debugredis ./rediscluster
+	rm ./rediscluster/redis_test_* -r || true
+	PATH=/tmp/redis-server/:${PATH} TLS_ENABLED=ENABLED go test -count 1 -tags debugredis ./rediscluster
 
 bench: benchconn benchcluster
 

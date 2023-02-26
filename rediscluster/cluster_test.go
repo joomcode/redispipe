@@ -2,8 +2,10 @@ package rediscluster_test
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log"
+	"os"
 	"runtime"
 	"sort"
 	"strconv"
@@ -84,16 +86,19 @@ var defopts = redisconn.Opts{
 }
 
 var clustopts = Opts{
-	HostOpts:      defopts,
-	Name:          "default",
-	CheckInterval: 400 * time.Millisecond,
-
+	HostOpts:       defopts,
+	Name:           "default",
+	CheckInterval:  400 * time.Millisecond,
+	TLSEnabled:     os.Getenv("TLS_ENABLED") == "ENABLED",
+	TLSConfig:      tls.Config{InsecureSkipVerify: true},
 	ConnHostPolicy: ConnHostRoundRobin,
 }
 
 var longcheckopts = Opts{
 	HostOpts:      defopts,
 	Name:          "default",
+	TLSEnabled:    os.Getenv("TLS_ENABLED") == "ENABLED",
+	TLSConfig:     tls.Config{InsecureSkipVerify: true},
 	CheckInterval: 1 * time.Second,
 }
 

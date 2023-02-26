@@ -3,14 +3,13 @@ package testbed
 import (
 	"bufio"
 	"bytes"
+	"github.com/joomcode/redispipe/redisdumb"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"syscall"
-
-	"github.com/joomcode/redispipe/redisdumb"
 )
 
 // Server is a handle for running redis-server.
@@ -45,11 +44,18 @@ func (s *Server) Start() {
 	s.Paused = false
 	port := s.PortStr(s.Port)
 	tlsPort := s.PortStr(s.TlsPort)
+	var effectivePort string
+	if tlsCluster {
+		effectivePort = tlsPort
+	} else {
+		effectivePort = port
+	}
 	args := append([]string{
 		"--bind", "127.0.0.1",
 		"--port", port,
-		"--dbfilename", "dump-" + port + ".rdb",
+		"--dbfilename", "dump-" + effectivePort + ".rdb",
 		"--tls-port", tlsPort,
+		"--cluster-allow-replica-migration", "no",
 		"--tls-cert-file", "../../testbed/test_certs/server.rsa.crt",
 		"--tls-key-file", "../../testbed/test_certs/server.rsa.key",
 		"--tls-ca-cert-file", "../../testbed/test_certs/server.rsa.crt",
@@ -60,7 +66,7 @@ func (s *Server) Start() {
 	s.Cmd.Dir = Dir
 
 	_stdout, _ := s.Cmd.StdoutPipe()
-	logfile, err := os.Create(filepath.Join(s.Cmd.Dir, "log-"+port+".log"))
+	logfile, err := os.Create(filepath.Join(s.Cmd.Dir, "log-"+effectivePort+".log"))
 	if err != nil {
 		panic(err)
 	}
@@ -93,6 +99,7 @@ func (s *Server) Start() {
 		}
 	}()
 	s.Conn.Addr = s.Addr()
+	s.Conn.TlsAddr = s.TlsAddr()
 }
 
 // Running returns true if server should be running at the moment.

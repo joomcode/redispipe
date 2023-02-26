@@ -2,6 +2,7 @@ package testbed
 
 import (
 	"bytes"
+	"crypto/tls"
 	"log"
 	"time"
 
@@ -25,15 +26,31 @@ type Cluster struct {
 func NewCluster(startport uint16) *Cluster {
 	cl := &Cluster{}
 	cl.Node = make([]Node, 6)
+
 	for i := range cl.Node {
-		cl.Node[i].Port = startport + uint16(i)
+		effectivePort := startport + uint16(i)
+		if tlsCluster {
+			cl.Node[i].Port = 0
+			cl.Node[i].TlsPort = effectivePort
+			cl.Node[i].Conn.TLSConfig = tls.Config{InsecureSkipVerify: true}
+			cl.Node[i].Conn.TLSEnabled = true
+		} else {
+			cl.Node[i].Port = effectivePort
+		}
+
 		cl.Node[i].Args = []string{
 			"--cluster-enabled", "yes",
-			"--cluster-config-file", "node-" + cl.Node[i].PortStr(cl.Node[i].Port) + ".conf",
+			"--cluster-config-file", "node-" + cl.Node[i].PortStr(effectivePort) + ".conf",
 			"--cluster-node-timeout", "200",
 			"--cluster-slave-validity-factor", "1000",
 			"--slave-serve-stale-data", "yes",
 			"--cluster-require-full-coverage", "no",
+		}
+		if tlsCluster {
+			cl.Node[i].Args = append([]string{
+				"--tls-cluster", "yes",
+				"--tls-replication", "yes",
+			}, cl.Node[i].Args...)
 		}
 		cl.Node[i].Start()
 		cl.Node[i].SetupNodeId()
@@ -41,7 +58,14 @@ func NewCluster(startport uint16) *Cluster {
 	}
 	for i := 0; i < 5; i++ {
 		for j := i + 1; j < 6; j++ {
-			cl.Node[i].DoSure("CLUSTER MEET", "127.0.0.1", cl.Node[j].Port)
+			var effectivePort uint16
+			if tlsCluster {
+				effectivePort = cl.Node[j].TlsPort
+
+			} else {
+				effectivePort = cl.Node[j].Port
+			}
+			cl.Node[i].DoSure("CLUSTER MEET", "127.0.0.1", effectivePort)
 		}
 	}
 	time.Sleep(1 * time.Second)
@@ -74,10 +98,14 @@ func (cl *Cluster) Start() {
 	cl.WaitClusterOk()
 }
 
+func RaiseClusterPanic() {
+	panic("cluster didn't stabilize")
+}
+
 // WaitClusterOk wait for cluster configuration to be stable.
 func (cl *Cluster) WaitClusterOk() {
 	i := 0
-	t := time.AfterFunc(10*time.Second, func() { panic("cluster didn't stabilize") })
+	t := time.AfterFunc(30*time.Second, RaiseClusterPanic)
 	defer t.Stop()
 	for !cl.ClusterOk() {
 		if i++; i == 10 {
@@ -139,6 +167,7 @@ func (cl *Cluster) ClusterOk() bool {
 		}
 		if masters != 3+(len(cl.Node)-6) {
 			return false
+
 		}
 		infos, _ := redisclusterutil.ParseClusterNodes(res)
 		hash := infos.HashSum()
@@ -155,8 +184,19 @@ func (cl *Cluster) ClusterOk() bool {
 func (cl *Cluster) AttemptFailover() {
 	for i := range cl.Node[:6] {
 		if !cl.Node[i].RunningNow() {
+			var effectivePortMaster, effectivePortSlave uint16
+			if tlsCluster {
+				effectivePortMaster = cl.Node[i].TlsPort
+			} else {
+				effectivePortMaster = cl.Node[i].Port
+			}
 			slave := (i + 3) % 6
-			log.Printf("FORCE FAILVER %d=>%d", cl.Node[i].Port, cl.Node[slave].Port)
+			if tlsCluster {
+				effectivePortSlave = cl.Node[slave].TlsPort
+			} else {
+				effectivePortSlave = cl.Node[slave].Port
+			}
+			log.Printf("FORCE FAILOVER %d=>%d", effectivePortMaster, effectivePortSlave)
 			cl.Node[slave].Do("CLUSTER FAILOVER", "FORCE")
 		}
 	}
@@ -192,7 +232,13 @@ func (cl *Cluster) MoveSlot(slot, from, to int) {
 		if len(keys) == 0 {
 			break
 		}
-		args := []interface{}{"127.0.0.1", cl.Node[to].Port, nil, 0, 5000, "REPLACE", "KEYS"}
+		var effectivePort uint16
+		if tlsCluster {
+			effectivePort = cl.Node[to].TlsPort
+		} else {
+			effectivePort = cl.Node[to].Port
+		}
+		args := []interface{}{"127.0.0.1", effectivePort, nil, 0, 5000, "REPLACE", "KEYS"}
 		args = append(args, keys...)
 		cl.Node[from].DoSure("MIGRATE", args...)
 	}
@@ -203,23 +249,40 @@ func (cl *Cluster) MoveSlot(slot, from, to int) {
 
 // StartSeventhNode start additional node
 func (cl *Cluster) StartSeventhNode() {
+	var effectivePort uint16
 	cl.Node = append(cl.Node, Node{})
-	cl.Node[6].Port = cl.Node[0].Port + 6
+	if tlsCluster {
+		effectivePort = cl.Node[0].TlsPort + 6
+		cl.Node[6].Port = 0
+		cl.Node[6].TlsPort = effectivePort
+	} else {
+		effectivePort = cl.Node[0].Port + 6
+		cl.Node[6].Port = effectivePort
+	}
 	cl.Node[6].Args = []string{
 		"--cluster-enabled", "yes",
-		"--cluster-config-file", "node-" + cl.Node[6].PortStr(cl.Node[6].Port) + ".conf",
+		"--cluster-config-file", "node-" + cl.Node[6].PortStr(effectivePort) + ".conf",
 		"--cluster-node-timeout", "200",
 		"--cluster-slave-validity-factor", "1000",
 		"--slave-serve-stale-data", "yes",
 		"--cluster-require-full-coverage", "no",
 	}
+	if tlsCluster {
+		cl.Node[6].Args = append([]string{
+			"--tls-cluster", "yes",
+			"--tls-replication", "yes",
+		}, cl.Node[6].Args...)
+		cl.Node[6].Conn.TLSEnabled = true
+		cl.Node[6].Conn.TLSConfig = tls.Config{InsecureSkipVerify: true}
+	}
+
 	cl.Node[6].Start()
 	cl.Node[6].SetupNodeId()
 	cl.Node[6].DoSure("CLUSTER SET-CONFIG-EPOCH", 0)
 	for i := 0; i < 6; i++ {
-		cl.Node[i].DoSure("CLUSTER MEET", "127.0.0.1", cl.Node[6].Port)
+		cl.Node[i].DoSure("CLUSTER MEET", "127.0.0.1", effectivePort)
 	}
-	time.Sleep(1 * time.Second)
+	time.Sleep(3 * time.Second)
 	cl.WaitClusterOk()
 }
 

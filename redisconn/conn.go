@@ -69,7 +69,7 @@ type Opts struct {
 	// where it is ok to use blocking commands and pipelining gives no gain.
 	ScriptMode bool
 	TLSEnabled bool
-	TLSConfig  tls.Config
+	TLSConfig  *tls.Config
 }
 
 // Connection is implementation of redis.Sender which represents single connection to single redis instance.
@@ -539,7 +539,7 @@ func (conn *Connection) dial() error {
 	if tlsEnabled {
 		tlsDialer := tls.Dialer{
 			NetDialer: &dialer,
-			Config:    &tlsConfig,
+			Config:    tlsConfig,
 		}
 		connection, err = tlsDialer.DialContext(conn.ctx, network, address)
 	} else {

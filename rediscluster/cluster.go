@@ -96,7 +96,7 @@ type Opts struct {
 	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency
 	LatencyOrientedRR bool
 	TLSEnabled        bool
-	TLSConfig         tls.Config
+	TLSConfig         *tls.Config
 }
 
 // Cluster is implementation of redis.Sender which represents connection to redis-cluster.

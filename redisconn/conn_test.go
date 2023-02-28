@@ -118,7 +118,7 @@ func (s *Suite) TestConnectsTls() {
 	tlsopts := Opts{
 		IOTimeout:  defopts.IOTimeout,
 		TLSEnabled: true,
-		TLSConfig: tls.Config{
+		TLSConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
 	}

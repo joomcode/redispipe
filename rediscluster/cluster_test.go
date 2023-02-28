@@ -90,7 +90,7 @@ var clustopts = Opts{
 	Name:           "default",
 	CheckInterval:  400 * time.Millisecond,
 	TLSEnabled:     os.Getenv("TLS_ENABLED") == "ENABLED",
-	TLSConfig:      tls.Config{InsecureSkipVerify: true},
+	TLSConfig:      &tls.Config{InsecureSkipVerify: true},
 	ConnHostPolicy: ConnHostRoundRobin,
 }
 
@@ -98,7 +98,7 @@ var longcheckopts = Opts{
 	HostOpts:      defopts,
 	Name:          "default",
 	TLSEnabled:    os.Getenv("TLS_ENABLED") == "ENABLED",
-	TLSConfig:     tls.Config{InsecureSkipVerify: true},
+	TLSConfig:     &tls.Config{InsecureSkipVerify: true},
 	CheckInterval: 1 * time.Second,
 }
 

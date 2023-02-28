@@ -34,7 +34,7 @@ type Conn struct {
 	Timeout    time.Duration
 	Type       ConnType
 	TLSEnabled bool
-	TLSConfig  tls.Config
+	TLSConfig  *tls.Config
 }
 
 // Do issues command to servers.
@@ -57,7 +57,7 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 				dialer := net.Dialer{
 					Timeout: timeout,
 				}
-				tlsDialer := tls.Dialer{NetDialer: &dialer, Config: &c.TLSConfig}
+				tlsDialer := tls.Dialer{NetDialer: &dialer, Config: c.TLSConfig}
 				c.C, err = tlsDialer.Dial("tcp", c.TlsAddr)
 			} else {
 				c.C, err = net.DialTimeout("tcp", c.Addr, timeout)

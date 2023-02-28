@@ -32,7 +32,7 @@ func NewCluster(startport uint16) *Cluster {
 		if tlsCluster {
 			cl.Node[i].Port = 0
 			cl.Node[i].TlsPort = effectivePort
-			cl.Node[i].Conn.TLSConfig = tls.Config{InsecureSkipVerify: true}
+			cl.Node[i].Conn.TLSConfig = &tls.Config{InsecureSkipVerify: true}
 			cl.Node[i].Conn.TLSEnabled = true
 		} else {
 			cl.Node[i].Port = effectivePort
@@ -273,7 +273,7 @@ func (cl *Cluster) StartSeventhNode() {
 			"--tls-replication", "yes",
 		}, cl.Node[6].Args...)
 		cl.Node[6].Conn.TLSEnabled = true
-		cl.Node[6].Conn.TLSConfig = tls.Config{InsecureSkipVerify: true}
+		cl.Node[6].Conn.TLSConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
 	cl.Node[6].Start()

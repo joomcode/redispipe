@@ -3,33 +3,37 @@ package testbed
 import (
 	"bufio"
 	"bytes"
+	"github.com/joomcode/redispipe/redisdumb"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"syscall"
-
-	"github.com/joomcode/redispipe/redisdumb"
 )
 
 // Server is a handle for running redis-server.
 type Server struct {
-	Port   uint16
-	Args   []string
-	Cmd    *exec.Cmd
-	Paused bool
-	Conn   redisdumb.Conn
+	Port    uint16
+	TlsPort uint16
+	Args    []string
+	Cmd     *exec.Cmd
+	Paused  bool
+	Conn    redisdumb.Conn
 }
 
 // PortStr returns server's port as a string
-func (s *Server) PortStr() string {
-	return strconv.Itoa(int(s.Port))
+func (s *Server) PortStr(port uint16) string {
+	return strconv.Itoa(int(port))
 }
 
 // Addr - address + port
 func (s *Server) Addr() string {
-	return "127.0.0.1:" + s.PortStr()
+	return "127.0.0.1:" + s.PortStr(s.Port)
+}
+
+func (s *Server) TlsAddr() string {
+	return "127.0.0.1:" + s.PortStr(s.TlsPort)
 }
 
 // Start starts redis and waits for its initialization.
@@ -38,18 +42,31 @@ func (s *Server) Start() {
 		return
 	}
 	s.Paused = false
-	port := s.PortStr()
+	port := s.PortStr(s.Port)
+	tlsPort := s.PortStr(s.TlsPort)
+	var effectivePort string
+	if tlsCluster {
+		effectivePort = tlsPort
+	} else {
+		effectivePort = port
+	}
 	args := append([]string{
 		"--bind", "127.0.0.1",
 		"--port", port,
-		"--dbfilename", "dump-" + port + ".rdb",
+		"--dbfilename", "dump-" + effectivePort + ".rdb",
+		"--tls-port", tlsPort,
+		"--cluster-allow-replica-migration", "no",
+		"--tls-cert-file", "../../testbed/test_certs/server.rsa.crt",
+		"--tls-key-file", "../../testbed/test_certs/server.rsa.key",
+		"--tls-ca-cert-file", "../../testbed/test_certs/server.rsa.crt",
+		"--tls-auth-clients", "no",
 	}, s.Args...)
 	var err error
 	s.Cmd = exec.Command(Binary, args...)
 	s.Cmd.Dir = Dir
 
 	_stdout, _ := s.Cmd.StdoutPipe()
-	logfile, err := os.Create(filepath.Join(s.Cmd.Dir, "log-"+port+".log"))
+	logfile, err := os.Create(filepath.Join(s.Cmd.Dir, "log-"+effectivePort+".log"))
 	if err != nil {
 		panic(err)
 	}
@@ -82,6 +99,7 @@ func (s *Server) Start() {
 		}
 	}()
 	s.Conn.Addr = s.Addr()
+	s.Conn.TlsAddr = s.TlsAddr()
 }
 
 // Running returns true if server should be running at the moment.

@@ -2,6 +2,7 @@ package rediscluster
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -94,6 +95,8 @@ type Opts struct {
 	RoundRobinSeed RoundRobinSeed
 	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency
 	LatencyOrientedRR bool
+	TLSEnabled        bool
+	TLSConfig         *tls.Config
 }
 
 // Cluster is implementation of redis.Sender which represents connection to redis-cluster.
@@ -222,6 +225,8 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 	if cluster.opts.LatencyOrientedRR {
 		cluster.latencyAwareness = 1
 	}
+	cluster.opts.HostOpts.TLSEnabled = opts.TLSEnabled
+	cluster.opts.HostOpts.TLSConfig = opts.TLSConfig
 
 	config := &clusterConfig{
 		nodes:   make(nodeMap),

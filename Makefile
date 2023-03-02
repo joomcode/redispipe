@@ -1,12 +1,13 @@
-REDIS_ARCHIVE ?= https://github.com/joomcode/redis/archive
-REDIS_VERSION ?= debian-5.0.7-fixes
+REDIS_ARCHIVE ?= https://github.com/redis/redis/archive
+REDIS_VERSION ?= 6.2.10
 
 test: testcluster testconn testredis
 
 /tmp/redis-server/redis-server:
 	@echo "Building redis-$(REDIS_VERSION)..."
+	sudo apt-get install -y libssl-dev
 	wget -nv -c $(REDIS_ARCHIVE)/$(REDIS_VERSION).tar.gz -O - | tar -xzC .
-	cd redis-$(REDIS_VERSION) && make -j 4 USE_JEMALLOC=no
+	cd redis-$(REDIS_VERSION) && make -j 4 USE_JEMALLOC=no BUILD_TLS=yes
 	if [ ! -e /tmp/redis-server ] ; then mkdir /tmp/redis-server ; fi
 	mv redis-$(REDIS_VERSION)/src/redis-server /tmp/redis-server
 	rm redis-$(REDIS_VERSION) -rf
@@ -23,6 +24,8 @@ testcluster: /tmp/redis-server/redis-server
 	killall redis-server || true
 	rm ./rediscluster/redis_test_* -r || true
 	PATH=/tmp/redis-server/:${PATH} go test -count 1 -tags debugredis ./rediscluster
+	rm ./rediscluster/redis_test_* -r || true
+	PATH=/tmp/redis-server/:${PATH} TLS_ENABLED=ENABLED go test -count 1 -tags debugredis ./rediscluster
 
 bench: benchconn benchcluster
 

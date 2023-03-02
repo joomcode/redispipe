@@ -3,6 +3,7 @@ package redisconn
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"sync"
@@ -67,6 +68,8 @@ type Opts struct {
 	// It will allow to use this connector in script like (ie single threaded) environment
 	// where it is ok to use blocking commands and pipelining gives no gain.
 	ScriptMode bool
+	TLSEnabled bool
+	TLSConfig  *tls.Config
 }
 
 // Connection is implementation of redis.Sender which represents single connection to single redis instance.
@@ -511,6 +514,8 @@ func (conn *Connection) dial() error {
 	network := "tcp"
 	address := conn.addr
 	timeout := conn.opts.DialTimeout
+	tlsEnabled := conn.opts.TLSEnabled
+	tlsConfig := conn.opts.TLSConfig
 	if timeout <= 0 || timeout > 5*time.Second {
 		timeout = 5 * time.Second
 	}
@@ -523,7 +528,6 @@ func (conn *Connection) dial() error {
 		network = "tcp"
 		address = address[6:]
 	}
-
 	// dial to redis
 	dialer := net.Dialer{
 		Timeout:       timeout,
@@ -531,7 +535,16 @@ func (conn *Connection) dial() error {
 		FallbackDelay: timeout / 2,
 		KeepAlive:     conn.opts.TCPKeepAlive,
 	}
-	connection, err = dialer.DialContext(conn.ctx, network, address)
+
+	if tlsEnabled {
+		tlsDialer := tls.Dialer{
+			NetDialer: &dialer,
+			Config:    tlsConfig,
+		}
+		connection, err = tlsDialer.DialContext(conn.ctx, network, address)
+	} else {
+		connection, err = dialer.DialContext(conn.ctx, network, address)
+	}
 	if err != nil {
 		return conn.errWrap(ErrDial, err)
 	}

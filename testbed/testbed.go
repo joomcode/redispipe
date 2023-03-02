@@ -12,6 +12,7 @@ var Binary = func() string { p, _ := exec.LookPath("redis-server"); return p }()
 
 // Dir is temporary directory where redis will run.
 var Dir = ""
+var tlsCluster = os.Getenv("TLS_ENABLED") == "ENABLED"
 
 // InitDir initiates Dir with temporary directory in base.
 func InitDir(base string) {

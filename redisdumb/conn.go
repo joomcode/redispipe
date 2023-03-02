@@ -3,6 +3,7 @@ package redisdumb
 
 import (
 	"bufio"
+	"crypto/tls"
 	"net"
 	"time"
 
@@ -26,11 +27,14 @@ var DefaultTimeout time.Duration = 5 * time.Second
 
 // Conn is a simplest blocking implementation of redis.Sender.
 type Conn struct {
-	Addr    string
-	C       net.Conn
-	R       *bufio.Reader
-	Timeout time.Duration
-	Type    ConnType
+	Addr       string
+	TlsAddr    string
+	C          net.Conn
+	R          *bufio.Reader
+	Timeout    time.Duration
+	Type       ConnType
+	TLSEnabled bool
+	TLSConfig  *tls.Config
 }
 
 // Do issues command to servers.
@@ -49,7 +53,15 @@ func (c *Conn) Do(cmd string, args ...interface{}) interface{} {
 	var asking bool
 	for i := 0; i < try; i++ {
 		if c.C == nil {
-			c.C, err = net.DialTimeout("tcp", c.Addr, timeout)
+			if c.TLSEnabled {
+				dialer := net.Dialer{
+					Timeout: timeout,
+				}
+				tlsDialer := tls.Dialer{NetDialer: &dialer, Config: c.TLSConfig}
+				c.C, err = tlsDialer.Dial("tcp", c.TlsAddr)
+			} else {
+				c.C, err = net.DialTimeout("tcp", c.Addr, timeout)
+			}
 			if err != nil {
 				return redisconn.ErrDial.WrapWithNoMessage(err)
 			}

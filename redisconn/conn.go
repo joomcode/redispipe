@@ -68,8 +68,10 @@ type Opts struct {
 	// It will allow to use this connector in script like (ie single threaded) environment
 	// where it is ok to use blocking commands and pipelining gives no gain.
 	ScriptMode bool
+	// Enable connection with TLS
 	TLSEnabled bool
-	TLSConfig  *tls.Config
+	// Config for TLS connection
+	TLSConfig *tls.Config
 }
 
 // Connection is implementation of redis.Sender which represents single connection to single redis instance.

@@ -59,7 +59,7 @@ const (
 	preferConnected
 )
 
-// Opts is a options for Cluster
+// Opts is an options for Cluster
 type Opts struct {
 	// HostOpts - per host options
 	// Note that HostOpts.Handle will be overwritten to ClusterHandle{ cluster.opts.Handle, conn.address}
@@ -68,7 +68,7 @@ type Opts struct {
 	// if ConnsPerHost < 1 then ConnsPerHost = 2
 	ConnsPerHost int
 	// ConnHostPolicy - either prefer to send to first connection until it is disconnected, or
-	//					send to all connections in round robin maner.
+	//					send to all connections in round-robin manner.
 	// default: ConnHostPreferFirst
 	ConnHostPolicy ConnHostPolicyEnum
 	// Handle is returned with Cluster.Handle()
@@ -79,7 +79,7 @@ type Opts struct {
 	// Check interval - default cluster configuration reloading interval
 	// default: 5 seconds, min: 100 millisecond, max: 10 minutes
 	// Note, that MOVE and ASK redis errors will force configuration reloading,
-	// therefore there is not need to make it very frequent.
+	// therefore there is no need to make it very frequent.
 	CheckInterval time.Duration
 	// MovedRetries - follow MOVED|ASK redirections this number of times
 	// default: 3, min: 1, max: 10
@@ -95,8 +95,12 @@ type Opts struct {
 	RoundRobinSeed RoundRobinSeed
 	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency
 	LatencyOrientedRR bool
-	TLSEnabled        bool
-	TLSConfig         *tls.Config
+	// Enable connection with TLS
+	TLSEnabled bool
+	// Config for TLS connection
+	TLSConfig *tls.Config
+	// Do not resolve host address to ip
+	SkipHostResolving bool
 }
 
 // Cluster is implementation of redis.Sender which represents connection to redis-cluster.
@@ -105,7 +109,7 @@ type Opts struct {
 // There could be several connections to single redis server, it is controlled by Opts.ConnsPerHost,
 // and Opts.ConnHostPolicy specifies how to use them.
 //
-// By default requests are always sent to known master of replica-set. But you could override it with
+// By default, requests are always sent to known master of replica-set. But you could override it with
 // Cluster.WithPolicy. Write commands still will be sent to master, unless you specify ForceMasterAndSlaves
 // or ForcePreferSlaves policy. Note: read-only commands are hard-coded in UPCASE format, therefore command
 // will not be recognized as read-only if it is Camel-case or low-case.
@@ -239,15 +243,17 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 
 	var err error
 	for _, addr := range initAddrs {
-		// If redis hosts are mentioned by names, couple of connections will be established and closed shortly.
-		// Lets resolve them to ip addresses.
-		addr, err = redisclusterutil.Resolve(addr)
-		if err != nil {
-			return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
+		if !opts.SkipHostResolving {
+			// If redis hosts are mentioned by names, a couple of connections will be established and closed shortly.
+			// Let's resolve them to ip addresses.
+			addr, err = redisclusterutil.Resolve(addr)
+			if err != nil {
+				return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
+			}
 		}
 		if _, ok := config.masters[addr]; !ok {
 			config.nodes[addr], err = cluster.newNode(addr, true)
-			// since we connecting asynchronously, it can be only configuration error
+			// since we're connecting asynchronously, it can be only configuration error
 			if err != nil {
 				cluster.cancel()
 				return nil, err

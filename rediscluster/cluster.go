@@ -243,14 +243,6 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 
 	var err error
 	for _, addr := range initAddrs {
-		if !opts.SkipHostResolving {
-			// If redis hosts are mentioned by names, a couple of connections will be established and closed shortly.
-			// Let's resolve them to ip addresses.
-			addr, err = redisclusterutil.Resolve(addr)
-			if err != nil {
-				return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
-			}
-		}
 		if _, ok := config.masters[addr]; !ok {
 			config.nodes[addr], err = cluster.newNode(addr, true)
 			// since we're connecting asynchronously, it can be only configuration error

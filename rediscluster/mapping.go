@@ -1,6 +1,7 @@
 package rediscluster
 
 import (
+	"crypto/tls"
 	"fmt"
 	"sync/atomic"
 	"unsafe"
@@ -8,6 +9,7 @@ import (
 	"github.com/joomcode/errorx"
 
 	"github.com/joomcode/redispipe/redis"
+	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 	"github.com/joomcode/redispipe/redisconn"
 )
 
@@ -33,8 +35,29 @@ type ClusterHandle struct {
 
 // newNode creates handle for a connection, that will be established in a future.
 func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
+	var err error
+	connectionAddr := addr
+	nodeOpts := c.opts.HostOpts
+
+	if !c.opts.SkipHostResolving {
+		// If redis hosts are mentioned by names, a couple of connections will be established and closed shortly.
+		// Let's resolve them to ip addresses.
+		connectionAddr, err = redisclusterutil.Resolve(connectionAddr)
+		if err != nil {
+			return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
+		}
+	}
+
+	if nodeOpts.TLSEnabled && !redisclusterutil.IsIPAddress(addr) {
+		// preserve original hostname for TLS verification
+		if nodeOpts.TLSConfig != nil {
+			nodeOpts.TLSConfig = &tls.Config{}
+		}
+		nodeOpts.TLSConfig.ServerName = addr
+	}
+
 	node := &node{
-		opts:   c.opts.HostOpts,
+		opts:   nodeOpts,
 		addr:   addr,
 		refcnt: 1,
 	}
@@ -42,8 +65,7 @@ func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 	node.conns = make([]*redisconn.Connection, c.opts.ConnsPerHost)
 	for i := range node.conns {
 		node.opts.Handle = ClusterHandle{c.opts.Handle, addr, i}
-		var err error
-		node.conns[i], err = redisconn.Connect(c.ctx, addr, node.opts)
+		node.conns[i], err = redisconn.Connect(c.ctx, connectionAddr, node.opts)
 		if err != nil {
 			if initial {
 				return nil, err

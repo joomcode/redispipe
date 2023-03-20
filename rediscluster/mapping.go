@@ -55,9 +55,13 @@ func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 		if nodeOpts.TLSEnabled && !redisclusterutil.IsIPAddress(originalHost) {
 			// preserve original hostname for TLS verification
 			if nodeOpts.TLSConfig != nil {
-				nodeOpts.TLSConfig = &tls.Config{}
+				nodeOpts.TLSConfig = nodeOpts.TLSConfig.Clone()
+				nodeOpts.TLSConfig.ServerName = originalHost
+			} else {
+				nodeOpts.TLSConfig = &tls.Config{
+					ServerName: originalHost,
+				}
 			}
-			nodeOpts.TLSConfig.ServerName = originalHost
 		}
 	}
 

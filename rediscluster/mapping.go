@@ -42,10 +42,14 @@ func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 	if !c.opts.SkipHostResolving {
 		// If redis hosts are mentioned by names, a couple of connections will be established and closed shortly.
 		// Let's resolve them to ip addresses.
-		var originalHost string
-		connectionAddr, originalHost, err = redisclusterutil.Resolve(connectionAddr)
+		connectionAddr, err = redisclusterutil.Resolve(connectionAddr)
 		if err != nil {
 			return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
+		}
+
+		originalHost, err := redisclusterutil.GetHost(addr)
+		if err != nil {
+			return nil, err
 		}
 
 		if nodeOpts.TLSEnabled && !redisclusterutil.IsIPAddress(originalHost) {

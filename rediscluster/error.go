@@ -13,6 +13,8 @@ var (
 	// ErrAddressNotResolved - address could not be resolved
 	// Cluster resolves named hosts specified as start points. If this resolution fails, this error returned.
 	ErrAddressNotResolved = ErrCluster.NewType("resolve_address")
+	// ErrAddressHostname - hostname could not be extracted from address
+	ErrAddressHostname = ErrCluster.NewType("address_hostname")
 	// ErrClusterConfigEmpty - no addresses found in config.
 	ErrClusterConfigEmpty = ErrCluster.NewType("config_empty")
 	// ErrNoAliveConnection - no alive connection to shard

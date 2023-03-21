@@ -1,6 +1,7 @@
 package rediscluster
 
 import (
+	"crypto/tls"
 	"fmt"
 	"sync/atomic"
 	"unsafe"
@@ -8,6 +9,7 @@ import (
 	"github.com/joomcode/errorx"
 
 	"github.com/joomcode/redispipe/redis"
+	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
 	"github.com/joomcode/redispipe/redisconn"
 )
 
@@ -33,8 +35,23 @@ type ClusterHandle struct {
 
 // newNode creates handle for a connection, that will be established in a future.
 func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
+	var err error
+	connectionAddr := addr
+
+	// If redis hosts are mentioned by names, a couple of connections will be established and closed shortly.
+	// Let's resolve them to ip addresses.
+	connectionAddr, err = redisclusterutil.Resolve(connectionAddr)
+	if err != nil {
+		return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
+	}
+
+	nodeOpts, err := c.nodeOpts(addr)
+	if err != nil {
+		return nil, err
+	}
+
 	node := &node{
-		opts:   c.opts.HostOpts,
+		opts:   *nodeOpts,
 		addr:   addr,
 		refcnt: 1,
 	}
@@ -42,8 +59,7 @@ func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 	node.conns = make([]*redisconn.Connection, c.opts.ConnsPerHost)
 	for i := range node.conns {
 		node.opts.Handle = ClusterHandle{c.opts.Handle, addr, i}
-		var err error
-		node.conns[i], err = redisconn.Connect(c.ctx, addr, node.opts)
+		node.conns[i], err = redisconn.Connect(c.ctx, connectionAddr, node.opts)
 		if err != nil {
 			if initial {
 				return nil, err
@@ -55,6 +71,31 @@ func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 		}
 	}
 	return node, nil
+}
+
+func (c *Cluster) nodeOpts(addr string) (*redisconn.Opts, error) {
+	nodeOpts := c.opts.HostOpts
+
+	if !nodeOpts.TLSEnabled {
+		return &nodeOpts, nil
+	}
+
+	originalHost, err := redisclusterutil.GetHost(addr)
+	if err != nil {
+		return nil, ErrAddressHostname.WrapWithNoMessage(err)
+	}
+
+	if !redisclusterutil.IsIPAddress(originalHost) {
+		// preserve original hostname for TLS verification
+		if nodeOpts.TLSConfig != nil {
+			nodeOpts.TLSConfig = nodeOpts.TLSConfig.Clone()
+		} else {
+			nodeOpts.TLSConfig = &tls.Config{}
+		}
+		nodeOpts.TLSConfig.ServerName = originalHost
+	}
+
+	return &nodeOpts, nil
 }
 
 type connThen func(conn *redisconn.Connection, err error)

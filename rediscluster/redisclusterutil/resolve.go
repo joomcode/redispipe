@@ -14,3 +14,16 @@ func Resolve(addr string) (string, error) {
 	}
 	return net.JoinHostPort(ips[0], port), nil
 }
+
+func GetHost(addr string) (string, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", err
+	}
+
+	return host, nil
+}
+
+func IsIPAddress(addr string) bool {
+	return net.ParseIP(addr) != nil
+}

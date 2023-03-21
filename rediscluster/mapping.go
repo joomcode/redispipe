@@ -82,19 +82,17 @@ func (c *Cluster) nodeOpts(addr string) (*redisconn.Opts, error) {
 
 	originalHost, err := redisclusterutil.GetHost(addr)
 	if err != nil {
-		return nil, err
+		return nil, ErrAddressHostname.WrapWithNoMessage(err)
 	}
 
 	if !redisclusterutil.IsIPAddress(originalHost) {
 		// preserve original hostname for TLS verification
 		if nodeOpts.TLSConfig != nil {
 			nodeOpts.TLSConfig = nodeOpts.TLSConfig.Clone()
-			nodeOpts.TLSConfig.ServerName = originalHost
 		} else {
-			nodeOpts.TLSConfig = &tls.Config{
-				ServerName: originalHost,
-			}
+			nodeOpts.TLSConfig = &tls.Config{}
 		}
+		nodeOpts.TLSConfig.ServerName = originalHost
 	}
 
 	return &nodeOpts, nil

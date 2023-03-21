@@ -59,7 +59,7 @@ const (
 	preferConnected
 )
 
-// Opts is an options for Cluster
+// Opts holds the options for Cluster
 type Opts struct {
 	// HostOpts - per host options
 	// Note that HostOpts.Handle will be overwritten to ClusterHandle{ cluster.opts.Handle, conn.address}
@@ -99,8 +99,6 @@ type Opts struct {
 	TLSEnabled bool
 	// Config for TLS connection
 	TLSConfig *tls.Config
-	// Do not resolve host address to ip
-	SkipHostResolving bool
 }
 
 // Cluster is implementation of redis.Sender which represents connection to redis-cluster.

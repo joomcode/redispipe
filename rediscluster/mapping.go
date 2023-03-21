@@ -37,36 +37,21 @@ type ClusterHandle struct {
 func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 	var err error
 	connectionAddr := addr
-	nodeOpts := c.opts.HostOpts
 
-	if !c.opts.SkipHostResolving {
-		// If redis hosts are mentioned by names, a couple of connections will be established and closed shortly.
-		// Let's resolve them to ip addresses.
-		connectionAddr, err = redisclusterutil.Resolve(connectionAddr)
-		if err != nil {
-			return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
-		}
+	// If redis hosts are mentioned by names, a couple of connections will be established and closed shortly.
+	// Let's resolve them to ip addresses.
+	connectionAddr, err = redisclusterutil.Resolve(connectionAddr)
+	if err != nil {
+		return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
+	}
 
-		originalHost, err := redisclusterutil.GetHost(addr)
-		if err != nil {
-			return nil, err
-		}
-
-		if nodeOpts.TLSEnabled && !redisclusterutil.IsIPAddress(originalHost) {
-			// preserve original hostname for TLS verification
-			if nodeOpts.TLSConfig != nil {
-				nodeOpts.TLSConfig = nodeOpts.TLSConfig.Clone()
-				nodeOpts.TLSConfig.ServerName = originalHost
-			} else {
-				nodeOpts.TLSConfig = &tls.Config{
-					ServerName: originalHost,
-				}
-			}
-		}
+	nodeOpts, err := c.nodeOpts(addr)
+	if err != nil {
+		return nil, err
 	}
 
 	node := &node{
-		opts:   nodeOpts,
+		opts:   *nodeOpts,
 		addr:   addr,
 		refcnt: 1,
 	}
@@ -86,6 +71,33 @@ func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
 		}
 	}
 	return node, nil
+}
+
+func (c *Cluster) nodeOpts(addr string) (*redisconn.Opts, error) {
+	nodeOpts := c.opts.HostOpts
+
+	if !nodeOpts.TLSEnabled {
+		return &nodeOpts, nil
+	}
+
+	originalHost, err := redisclusterutil.GetHost(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	if !redisclusterutil.IsIPAddress(originalHost) {
+		// preserve original hostname for TLS verification
+		if nodeOpts.TLSConfig != nil {
+			nodeOpts.TLSConfig = nodeOpts.TLSConfig.Clone()
+			nodeOpts.TLSConfig.ServerName = originalHost
+		} else {
+			nodeOpts.TLSConfig = &tls.Config{
+				ServerName: originalHost,
+			}
+		}
+	}
+
+	return &nodeOpts, nil
 }
 
 type connThen func(conn *redisconn.Connection, err error)

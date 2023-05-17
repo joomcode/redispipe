@@ -339,7 +339,7 @@ func (c *Cluster) connForPolicySlaves(policy ReplicaPolicyEnum, seen []*rediscon
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {
 	var ws [32]uint32
-	if atomic.LoadUint32(&c.latencyAwareness) == 0 {
+	if atomic.LoadUint32(&c.latencyAwareness) == disabled {
 		ws = rr
 		if policy == PreferSlaves {
 			ws = rs

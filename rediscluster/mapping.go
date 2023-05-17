@@ -259,12 +259,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 	var addr string
 	switch policy {
 	case MasterOnly:
-		addr = shard.addr[0]
-		node := nodes[addr]
-		if node == nil {
-			break /*switch*/
-		}
-		conn = node.getConn(c.opts.ConnHostPolicy, preferConnected, seen)
+		conn = c.connForSlotForMaster(seen, shard, cfg)
 	case MasterAndSlaves, PreferSlaves:
 		var ws [32]uint32
 		if atomic.LoadUint32(&c.latencyAwareness) == 0 {
@@ -331,6 +326,17 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 		return nil, c.err(ErrNoAliveConnection).WithProperty(redis.EKSlot, slot).WithProperty(EKPolicy, policy)
 	}
 	return conn, nil
+}
+
+func (c *Cluster) connForSlotForMaster(seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) *redisconn.Connection {
+	nodes := cfg.nodes
+
+	addr := shard.addr[0]
+	node := nodes[addr]
+	if node == nil {
+		return nil
+	}
+	return node.getConn(c.opts.ConnHostPolicy, preferConnected, seen)
 }
 
 func (c *Cluster) connForAddress(addr string) *redisconn.Connection {

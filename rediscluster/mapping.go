@@ -247,7 +247,6 @@ var rr, rs = func() ([32]uint32, [32]uint32) {
 
 // connForSlot returns established connection for slot, if it exists.
 func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*redisconn.Connection) (*redisconn.Connection, *errorx.Error) {
-	var conn *redisconn.Connection
 	cfg := c.getConfig()
 	shard := cfg.slot2shard(slot)
 
@@ -255,14 +254,7 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 		return nil, c.err(ErrClusterConfigEmpty).WithProperty(redis.EKSlot, slot)
 	}
 
-	switch policy {
-	case MasterOnly:
-		conn = c.connForSlotForMaster(seen, shard, cfg)
-	case MasterAndSlaves, PreferSlaves:
-		conn = c.connForSlotForSlaves(policy, seen, shard, cfg)
-	default:
-		panic("unknown policy")
-	}
+	conn := c.connForPolicy(policy, seen, shard, cfg)
 	if conn == nil {
 		c.ForceReloading()
 		return nil, c.err(ErrNoAliveConnection).WithProperty(redis.EKSlot, slot).WithProperty(EKPolicy, policy)
@@ -270,7 +262,18 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 	return conn, nil
 }
 
-func (c *Cluster) connForSlotForMaster(seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) *redisconn.Connection {
+func (c *Cluster) connForPolicy(policy ReplicaPolicyEnum, seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) *redisconn.Connection {
+	switch policy {
+	case MasterOnly:
+		return c.connForPolicyMaster(seen, shard, cfg)
+	case MasterAndSlaves, PreferSlaves:
+		return c.connForPolicySlaves(policy, seen, shard, cfg)
+	default:
+		panic("unknown policy")
+	}
+}
+
+func (c *Cluster) connForPolicyMaster(seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) *redisconn.Connection {
 	nodes := cfg.nodes
 
 	addr := shard.addr[0]
@@ -281,7 +284,7 @@ func (c *Cluster) connForSlotForMaster(seen []*redisconn.Connection, shard *shar
 	return node.getConn(c.opts.ConnHostPolicy, preferConnected, seen)
 }
 
-func (c *Cluster) connForSlotForSlaves(policy ReplicaPolicyEnum, seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) (*redisconn.Connection) {
+func (c *Cluster) connForPolicySlaves(policy ReplicaPolicyEnum, seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) *redisconn.Connection {
 	var ws [32]uint32
 	if atomic.LoadUint32(&c.latencyAwareness) == 0 {
 		ws = rr

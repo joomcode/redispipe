@@ -250,74 +250,16 @@ func (c *Cluster) connForSlot(slot uint16, policy ReplicaPolicyEnum, seen []*red
 	var conn *redisconn.Connection
 	cfg := c.getConfig()
 	shard := cfg.slot2shard(slot)
-	nodes := cfg.nodes
 
 	if shard == nil {
 		return nil, c.err(ErrClusterConfigEmpty).WithProperty(redis.EKSlot, slot)
 	}
 
-	var addr string
 	switch policy {
 	case MasterOnly:
 		conn = c.connForSlotForMaster(seen, shard, cfg)
 	case MasterAndSlaves, PreferSlaves:
-		var ws [32]uint32
-		if atomic.LoadUint32(&c.latencyAwareness) == 0 {
-			ws = rr
-			if policy == PreferSlaves {
-				ws = rs
-			}
-		} else {
-			for i := range shard.weights {
-				ws[i] = atomic.LoadUint32(&shard.weights[i])
-			}
-		}
-		weights := ws[:len(shard.weights)]
-
-		health := atomic.LoadUint32(&shard.good) // load health information
-		healthWeight := uint32(0)
-		for i, w := range weights {
-			if health&(1<<uint(i)) == 0 {
-				continue
-			}
-			healthWeight += w
-		}
-
-		off := c.opts.RoundRobinSeed.Current()
-
-		// First, we try already established connections.
-		// If no one found, then connections thar are connecting at the moment are tried.
-		for _, needState := range []int{needConnected, mayBeConnected} {
-			mask, maskWeight := health, healthWeight
-			// a bit of quadratic algorithms
-			for mask != 0 && conn == nil {
-				r := nextRng(&off, maskWeight)
-				k := uint(0)
-				for i, w := range weights {
-					if mask&(1<<uint(i)) == 0 {
-						continue
-					}
-					if r < w {
-						k = uint(i)
-						break
-					}
-					r -= w
-				}
-
-				mask &^= 1 << k
-				maskWeight -= weights[k]
-				addr = shard.addr[k]
-				node := nodes[addr]
-				if node == nil {
-					// it is strange a bit, but lets ignore
-					continue
-				}
-				conn = node.getConn(c.opts.ConnHostPolicy, needState, seen)
-			}
-			if conn != nil {
-				break
-			}
-		}
+		conn = c.connForSlotForSlaves(policy, seen, shard, cfg)
 	default:
 		panic("unknown policy")
 	}
@@ -337,6 +279,70 @@ func (c *Cluster) connForSlotForMaster(seen []*redisconn.Connection, shard *shar
 		return nil
 	}
 	return node.getConn(c.opts.ConnHostPolicy, preferConnected, seen)
+}
+
+func (c *Cluster) connForSlotForSlaves(policy ReplicaPolicyEnum, seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) (*redisconn.Connection) {
+	var ws [32]uint32
+	if atomic.LoadUint32(&c.latencyAwareness) == 0 {
+		ws = rr
+		if policy == PreferSlaves {
+			ws = rs
+		}
+	} else {
+		for i := range shard.weights {
+			ws[i] = atomic.LoadUint32(&shard.weights[i])
+		}
+	}
+	weights := ws[:len(shard.weights)]
+
+	health := atomic.LoadUint32(&shard.good) // load health information
+	healthWeight := uint32(0)
+	for i, w := range weights {
+		if health&(1<<uint(i)) == 0 {
+			continue
+		}
+		healthWeight += w
+	}
+
+	off := c.opts.RoundRobinSeed.Current()
+
+	// First, we try already established connections.
+	// If no one found, then connections thar are connecting at the moment are tried.
+	var conn *redisconn.Connection
+	for _, needState := range []int{needConnected, mayBeConnected} {
+		mask, maskWeight := health, healthWeight
+		// a bit of quadratic algorithms
+		for mask != 0 && conn == nil {
+			r := nextRng(&off, maskWeight)
+			k := uint(0)
+			for i, w := range weights {
+				if mask&(1<<uint(i)) == 0 {
+					continue
+				}
+				if r < w {
+					k = uint(i)
+					break
+				}
+				r -= w
+			}
+
+			mask &^= 1 << k
+			maskWeight -= weights[k]
+			addr := shard.addr[k]
+			nodes := cfg.nodes
+			node := nodes[addr]
+			if node == nil {
+				// it is strange a bit, but lets ignore
+				continue
+			}
+			conn = node.getConn(c.opts.ConnHostPolicy, needState, seen)
+		}
+		if conn != nil {
+			break
+		}
+	}
+
+	return conn
 }
 
 func (c *Cluster) connForAddress(addr string) *redisconn.Connection {

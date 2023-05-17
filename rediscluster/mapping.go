@@ -345,11 +345,11 @@ func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard)
 			ws = rs
 		}
 	} else {
-		for i := range shard.weights {
-			ws[i] = atomic.LoadUint32(&shard.weights[i])
+		for i := range shard.pingWeights {
+			ws[i] = atomic.LoadUint32(&shard.pingWeights[i])
 		}
 	}
-	return ws[:len(shard.weights)]
+	return ws[:len(shard.addr)]
 }
 
 func (c *Cluster) connForAddress(addr string) *redisconn.Connection {

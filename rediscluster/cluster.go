@@ -149,10 +149,10 @@ type clusterConfig struct {
 }
 
 type shard struct {
-	rr      uint32
-	good    uint32
-	addr    []string
-	weights []uint32
+	rr          uint32
+	good        uint32
+	addr        []string
+	pingWeights []uint32
 }
 type shardMap map[uint16]*shard
 type masterMap map[string]uint16

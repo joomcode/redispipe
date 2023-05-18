@@ -288,6 +288,21 @@ func (c *Cluster) connForPolicySlaves(policy ReplicaPolicyEnum, seen []*rediscon
 	weights := c.weightsForPolicySlaves(policy, shard)
 
 	health := atomic.LoadUint32(&shard.good) // load health information
+	healthWeight := c.getHealthWeight(weights, health)
+	off := c.opts.RoundRobinSeed.Current()
+
+	// First, we try already established connections.
+	// If no one found, then connections thar are connecting at the moment are tried.
+	for _, needState := range []int{needConnected, mayBeConnected} {
+		if conn := c.connForPolicySlavesByWeights(health, healthWeight, weights, &off, needState, seen, shard, cfg); conn != nil { // off can be modified from inside the function
+			return conn
+		}
+	}
+
+	return nil
+}
+
+func (*Cluster) getHealthWeight(weights []uint32, health uint32) uint32 {
 	healthWeight := uint32(0)
 	for i, w := range weights {
 		if health&(1<<uint(i)) == 0 {
@@ -295,46 +310,44 @@ func (c *Cluster) connForPolicySlaves(policy ReplicaPolicyEnum, seen []*rediscon
 		}
 		healthWeight += w
 	}
+	return healthWeight
+}
 
-	off := c.opts.RoundRobinSeed.Current()
+func (c *Cluster) connForPolicySlavesByWeights(health, healthWeight uint32, weights []uint32, state *uint32, needState int,
+	seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) *redisconn.Connection {
 
-	// First, we try already established connections.
-	// If no one found, then connections thar are connecting at the moment are tried.
-	var conn *redisconn.Connection
-	for _, needState := range []int{needConnected, mayBeConnected} {
-		mask, maskWeight := health, healthWeight
-		// a bit of quadratic algorithms
-		for mask != 0 && conn == nil {
-			r := nextRng(&off, maskWeight)
-			k := uint(0)
-			for i, w := range weights {
-				if mask&(1<<uint(i)) == 0 {
-					continue
-				}
-				if r < w {
-					k = uint(i)
-					break
-				}
-				r -= w
-			}
+	mask, maskWeight := health, healthWeight
 
-			mask &^= 1 << k
-			maskWeight -= weights[k]
-			addr := shard.addr[k]
-			nodes := cfg.nodes
-			node := nodes[addr]
-			if node == nil {
-				// it is strange a bit, but lets ignore
+	for mask != 0 {
+		r := nextRng(state, maskWeight)
+		k := uint(0)
+		for i, w := range weights {
+			if mask&(1<<uint(i)) == 0 { // not healthy
 				continue
 			}
-			conn = node.getConn(c.opts.ConnHostPolicy, needState, seen)
+			if r < w {
+				k = uint(i)
+				break
+			}
+			r -= w
 		}
-		if conn != nil {
-			break
+
+		mask &^= 1 << k
+		maskWeight -= weights[k]
+		addr := shard.addr[k]
+		nodes := cfg.nodes
+		node := nodes[addr]
+		if node == nil {
+			// it is strange a bit, but lets ignore
+			continue
+		}
+
+		if conn := node.getConn(c.opts.ConnHostPolicy, needState, seen); conn != nil {
+			return conn
 		}
 	}
 
-	return conn
+	return nil
 }
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {

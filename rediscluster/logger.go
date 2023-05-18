@@ -14,7 +14,7 @@ type Logger interface {
 	// ReqStat is called after request receives it's answer with request/result information
 	// and time spend to fulfill request.
 	// Default implementation is no-op.
-	ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64)
+	ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos, bytesIn, bytesOut int64)
 }
 
 func (c *Cluster) report(event LogEvent) {
@@ -87,7 +87,7 @@ func (d DefaultLogger) Report(cluster *Cluster, event LogEvent) {
 }
 
 // ReqStat implements Logger.ReqStat as no-op.
-func (d DefaultLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
+func (d DefaultLogger) ReqStat(_ *Cluster, _ *redisconn.Connection, _ Request, _ interface{}, _, _, _ int64) {
 	// noop
 }
 
@@ -102,8 +102,8 @@ func (d defaultConnLogger) Report(conn *redisconn.Connection, event redisconn.Lo
 }
 
 // Report implements redisconn.Logger.ReqStat
-func (d defaultConnLogger) ReqStat(conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
-	d.Cluster.opts.Logger.ReqStat(d.Cluster, conn, req, res, nanos)
+func (d defaultConnLogger) ReqStat(conn *redisconn.Connection, req Request, res interface{}, nanos, bytesIn, bytesOut int64) {
+	d.Cluster.opts.Logger.ReqStat(d.Cluster, conn, req, res, nanos, bytesIn, bytesOut)
 }
 
 // NoopLogger implements Logger with no logging at all.
@@ -113,5 +113,5 @@ type NoopLogger struct{}
 func (d NoopLogger) Report(conn *Cluster, event LogEvent) {}
 
 // ReqStat implements Logger.ReqStat
-func (d NoopLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos int64) {
+func (d NoopLogger) ReqStat(c *Cluster, conn *redisconn.Connection, req Request, res interface{}, nanos, bytesIn, bytesOut int64) {
 }

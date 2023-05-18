@@ -336,9 +336,9 @@ func (conn *Connection) doSend(req Request, cb Future, n uint64, asking bool) *e
 	futures := conn.futures
 	if asking {
 		// send ASKING request before actual
-		futures = append(futures, future{&dumb, 0, 0, Request{"ASKING", nil}})
+		futures = append(futures, future{&dumb, 0, 0, 0, 0, Request{"ASKING", nil}})
 	}
-	futures = append(futures, future{cb, n, nownano(), req})
+	futures = append(futures, future{cb, n, nownano(), 0, 0, req})
 
 	// should notify writer about this shard having queries.
 	// Since we are under shard lock, it is safe to send notification before assigning futures.
@@ -448,22 +448,22 @@ func (conn *Connection) doSendBatch(requests []Request, cb Future, start uint64,
 	futures := conn.futures
 	if flags&DoAsking != 0 {
 		// send ASKING request before actual
-		futures = append(futures, future{&dumb, 0, 0, Request{"ASKING", nil}})
+		futures = append(futures, future{&dumb, 0, 0, 0, 0, Request{"ASKING", nil}})
 	}
 	if flags&DoTransaction != 0 {
 		// send MULTI request for transaction start
-		futures = append(futures, future{&dumb, 0, 0, Request{"MULTI", nil}})
+		futures = append(futures, future{&dumb, 0, 0, 0, 0, Request{"MULTI", nil}})
 	}
 
 	now := nownano()
 
 	for i, req := range requests {
-		futures = append(futures, future{cb, start + uint64(i), now, req})
+		futures = append(futures, future{cb, start + uint64(i), now, 0, 0, req})
 	}
 
 	if flags&DoTransaction != 0 {
 		// send EXEC request for transaction end
-		futures = append(futures, future{cb, start + uint64(len(requests)), now, Request{"EXEC", nil}})
+		futures = append(futures, future{cb, start + uint64(len(requests)), now, 0, 0, Request{"EXEC", nil}})
 	}
 
 	// should notify writer about this shard having queries
@@ -581,7 +581,7 @@ func (conn *Connection) dial() error {
 	var res interface{}
 	// Password response
 	if conn.opts.Password != "" {
-		res = redis.ReadResponse(r)
+		res, _ = redis.ReadResponse(r)
 		if err := redis.AsErrorx(res); err != nil {
 			connection.Close()
 			if !err.IsOfType(redis.ErrIO) {
@@ -591,7 +591,7 @@ func (conn *Connection) dial() error {
 		}
 	}
 	// PING Response
-	res = redis.ReadResponse(r)
+	res, _ = redis.ReadResponse(r)
 	if err := redis.AsErrorx(res); err != nil {
 		connection.Close()
 		if !err.IsOfType(redis.ErrIO) {
@@ -607,7 +607,7 @@ func (conn *Connection) dial() error {
 	}
 	// SELECT DB Response
 	if conn.opts.DB != 0 {
-		res = redis.ReadResponse(r)
+		res, _ = redis.ReadResponse(r)
 		if err := redis.AsErrorx(res); err != nil {
 			connection.Close()
 			if !err.IsOfType(redis.ErrIO) {
@@ -845,12 +845,16 @@ func (conn *Connection) writer(one *oneconn) {
 
 		// serialize requests
 		for i, fut := range futures {
+			bytesBefore := len(packet)
+
 			var err error
 			if packet, err = redis.AppendRequest(packet, fut.req); err != nil {
 				// since we checked arguments in doSend and doSendBatch, error here is a signal of programmer error.
 				// lets just panic and die.
 				panic(err)
 			}
+
+			futures[i].bytesOut = int64(len(packet) - bytesBefore)
 			if fut.req.Cmd == "PING" {
 				futures[i].start = nownano()
 			}
@@ -893,7 +897,8 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 	for {
 		// try to read response from buffered socket.
 		// Here is IOTimeout handled as well (through deadlineIO wrapper around socket).
-		res = redis.ReadResponse(r)
+		resBytes := 0
+		res, resBytes = redis.ReadResponse(r)
 		if rerr := redis.AsErrorx(res); rerr != nil {
 			if !rerr.IsOfType(redis.ErrResult) {
 				// it is not redis-sended error, then close connection
@@ -924,6 +929,7 @@ func (conn *Connection) reader(r *bufio.Reader, one *oneconn) {
 		if rerr := redis.AsErrorx(res); rerr != nil {
 			res = conn.addProps(rerr).WithProperty(redis.EKRequest, fut.req)
 		}
+		fut.bytesIn = int64(resBytes)
 		conn.resolve(fut, res)
 	}
 

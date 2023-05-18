@@ -18,3 +18,6 @@
 
 #our version with redis with patched cluster
 redis-server
+
+# temporary test files
+rediscluster/redis_test_*

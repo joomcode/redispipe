@@ -10,7 +10,7 @@ type Logger interface {
 	// ReqStat is called after request receives it's answer with request/result information
 	// and time spend to fulfill request.
 	// Default implementation is no-op.
-	ReqStat(conn *Connection, req Request, res interface{}, nanos int64)
+	ReqStat(conn *Connection, req Request, res interface{}, nanos, bytesIn, bytesOut int64)
 }
 
 // LogEvent is a sum-type for events to be logged.
@@ -79,7 +79,7 @@ func (d DefaultLogger) Report(conn *Connection, event LogEvent) {
 }
 
 // ReqStat implements Logger.ReqStat
-func (d DefaultLogger) ReqStat(conn *Connection, req Request, res interface{}, nanos int64) {
+func (d DefaultLogger) ReqStat(_ *Connection, _ Request, _ interface{}, _, _, _ int64) {
 	// noop
 }
 
@@ -91,4 +91,4 @@ type NoopLogger struct{}
 func (d NoopLogger) Report(*Connection, LogEvent) {}
 
 // ReqStat implements Logger.ReqStat
-func (d NoopLogger) ReqStat(conn *Connection, req Request, res interface{}, nanos int64) {}
+func (d NoopLogger) ReqStat(_ *Connection, _ Request, _ interface{}, _, _, _ int64) {}

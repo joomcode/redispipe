@@ -16,8 +16,10 @@ type future struct {
 	Future
 	N uint64
 
-	start int64
-	req   Request
+	start    int64
+	bytesIn  int64
+	bytesOut int64
+	req      Request
 }
 
 var epoch = time.Now()
@@ -29,7 +31,7 @@ func nownano() int64 {
 func (c *Connection) resolve(f future, res interface{}) {
 	if f.start != 0 && f.req.Cmd != "" {
 		delta := nownano() - f.start
-		c.opts.Logger.ReqStat(c, f.req, res, delta)
+		c.opts.Logger.ReqStat(c, f.req, res, delta, f.bytesIn, f.bytesOut)
 		if f.req.Cmd == "PING" {
 			c.storePingLatency(time.Duration(delta))
 		}

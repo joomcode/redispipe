@@ -98,12 +98,48 @@ type Opts struct {
 
 	// RoundRobinSeed - used to choose between master and replica.
 	RoundRobinSeed RoundRobinSeed
-	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency
+	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency (can not be set with non-empty WeightsByAddress)
 	LatencyOrientedRR bool
+	// WeightsByAddress - enables to explicitly set weights of replicas in all the shards; must include weights for all the replicas of all the shards (can not be set with LatencyOrientedRR)
+	WeightsByAddress map[string]uint32
 	// Enable connection with TLS
 	TLSEnabled bool
 	// Config for TLS connection
 	TLSConfig *tls.Config
+}
+
+func (opts Opts) validate() error {
+	if opts.LatencyOrientedRR && len(opts.WeightsByAddress) > 0 {
+		return errorx.IllegalArgument.New("can not simultaneously set LatencyOrientedRR and WeightsByAddress")
+	}
+
+	return nil
+}
+
+func (opts Opts) checkWeightsByAddressCompleteness(slotRanges []redisclusterutil.SlotsRange) error {
+	if len(opts.WeightsByAddress) == 0 {
+		return nil
+	}
+
+	addressesWithoutWeightsSet := make(map[string]struct{})
+	for _, r := range slotRanges {
+		for _, addr := range r.Addrs {
+			if _, ok := opts.WeightsByAddress[addr]; !ok {
+				addressesWithoutWeightsSet[addr] = struct{}{}
+			}
+		}
+	}
+
+	if len(addressesWithoutWeightsSet) == 0 {
+		return nil
+	}
+
+	addressesWithoutWeights := make([]string, 0, len(addressesWithoutWeightsSet))
+	for addr := range addressesWithoutWeightsSet {
+		addressesWithoutWeights = append(addressesWithoutWeights, addr)
+	}
+
+	return errorx.IllegalArgument.New("addresses %v do not have corresponding weights in WeightsByAddress option (%v)", addressesWithoutWeights, opts.WeightsByAddress)
 }
 
 // Cluster is implementation of redis.Sender which represents connection to redis-cluster.
@@ -183,6 +219,9 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 	}
 	if len(initAddrs) == 0 {
 		return nil, redis.ErrNoAddressProvided.New("addresses are not specified")
+	}
+	if err := opts.validate(); err != nil {
+		return nil, err
 	}
 	cluster := &Cluster{
 		opts: opts,
@@ -338,10 +377,16 @@ func (c *Cluster) control() {
 
 func (c *Cluster) reloadMapping() error {
 	nodes, err := c.slotRangesAndInternalMasterOnly()
-	if err == nil {
-		c.updateMappings(nodes)
+	if err != nil {
+		return err
 	}
-	return err
+
+	if err := c.opts.checkWeightsByAddressCompleteness(nodes); err != nil {
+		return err
+	}
+
+	c.updateMappings(nodes)
+	return nil
 }
 
 // addWaitToMigrate schedules some actions to be executed after WaitToMigrate interval.

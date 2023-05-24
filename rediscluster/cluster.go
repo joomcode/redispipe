@@ -65,7 +65,7 @@ const (
 )
 
 type WeightProvider interface {
-	GetWeightByHost(host string) (uint32, bool)
+	GetWeightsByHost(hosts []string) ([]uint32, []bool)
 }
 
 // Opts holds the options for Cluster

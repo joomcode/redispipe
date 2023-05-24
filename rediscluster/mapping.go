@@ -294,8 +294,35 @@ func (c *Cluster) connForPolicySlaves(policy ReplicaPolicyEnum, seen []*rediscon
 	// First, we try already established connections.
 	// If no one found, then connections thar are connecting at the moment are tried.
 	for _, needState := range []int{needConnected, mayBeConnected} {
-		if conn := c.connForPolicySlavesByWeights(health, healthWeight, weights, &off, needState, seen, shard, cfg); conn != nil { // off can be modified from inside the function
-			return conn
+		mask, maskWeight := health, healthWeight
+
+		for mask != 0 {
+			r := nextRng(&off, maskWeight)
+			k := uint(0)
+			for i, w := range weights {
+				if mask&(1<<uint(i)) == 0 { // not healthy
+					continue
+				}
+				if r < w {
+					k = uint(i)
+					break
+				}
+				r -= w
+			}
+
+			mask &^= 1 << k
+			maskWeight -= weights[k]
+			addr := shard.addr[k]
+			nodes := cfg.nodes
+			node := nodes[addr]
+			if node == nil {
+				// it is strange a bit, but lets ignore
+				continue
+			}
+
+			if conn := node.getConn(c.opts.ConnHostPolicy, needState, seen); conn != nil {
+				return conn
+			}
 		}
 	}
 
@@ -311,43 +338,6 @@ func (*Cluster) getHealthWeight(weights []uint32, health uint32) uint32 {
 		healthWeight += w
 	}
 	return healthWeight
-}
-
-func (c *Cluster) connForPolicySlavesByWeights(health, healthWeight uint32, weights []uint32, state *uint32, needState int,
-	seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) *redisconn.Connection {
-
-	mask, maskWeight := health, healthWeight
-
-	for mask != 0 {
-		r := nextRng(state, maskWeight)
-		k := uint(0)
-		for i, w := range weights {
-			if mask&(1<<uint(i)) == 0 { // not healthy
-				continue
-			}
-			if r < w {
-				k = uint(i)
-				break
-			}
-			r -= w
-		}
-
-		mask &^= 1 << k
-		maskWeight -= weights[k]
-		addr := shard.addr[k]
-		nodes := cfg.nodes
-		node := nodes[addr]
-		if node == nil {
-			// it is strange a bit, but lets ignore
-			continue
-		}
-
-		if conn := node.getConn(c.opts.ConnHostPolicy, needState, seen); conn != nil {
-			return conn
-		}
-	}
-
-	return nil
 }
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {

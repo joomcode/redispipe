@@ -341,31 +341,29 @@ func (*Cluster) getHealthWeight(weights []uint32, health uint32) uint32 {
 }
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {
-	trimWeights := func(weights []uint32) []uint32 { return weights[:len(shard.addr)] }
-
 	switch {
 	case atomic.LoadUint32(&c.latencyAwareness) == enabled:
-		var ws [32]uint32
+		ws := make([]uint32, len(shard.pingWeights))
 		for i := range shard.pingWeights {
 			ws[i] = atomic.LoadUint32(&shard.pingWeights[i])
 		}
 
-		return trimWeights(ws[:])
+		return ws
 
 	case len(c.opts.WeightsByAddress) > 0:
-		var ws [32]uint32
+		ws := make([]uint32, len(shard.addr))
 		for i, addr := range shard.addr {
 			ws[i] = c.opts.WeightsByAddress[addr]
 		}
 
-		return trimWeights(ws[:])
+		return ws
 
 	default:
 		if policy == PreferSlaves {
-			return trimWeights(rs[:])
+			return rs[:len(shard.pingWeights)]
 		}
 
-		return trimWeights(rr[:])
+		return rr[:len(shard.pingWeights)]
 	}
 }
 

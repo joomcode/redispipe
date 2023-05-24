@@ -358,8 +358,9 @@ func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard)
 			ws = rs[:]
 		}
 	} else {
+		ws = make([]uint32, len(shard.pingWeights))
 		for i := range shard.pingWeights {
-			ws = append(ws, atomic.LoadUint32(&shard.pingWeights[i]))
+			ws[i] = atomic.LoadUint32(&shard.pingWeights[i])
 		}
 	}
 	return ws[:len(shard.pingWeights)]

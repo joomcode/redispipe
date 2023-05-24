@@ -341,22 +341,22 @@ func (*Cluster) getHealthWeight(weights []uint32, health uint32) uint32 {
 }
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {
-	if c.opts.WeightProvider != nil {
-		ws := make([]uint32, len(shard.addr))
-		for i, addr := range shard.addr {
-			weight, found := c.opts.WeightProvider.GetWeightByHost(addr)
-			if !found {
-				// there was some reconfiguration, so we fallback to default weights
-				return c.weightsForPolicySlavesDefault(policy, shard)
-			}
-
-			ws[i] = weight
-		}
-
-		return ws
+	if c.opts.WeightProvider == nil {
+		return c.weightsForPolicySlavesDefault(policy, shard)
 	}
 
-	return c.weightsForPolicySlavesDefault(policy, shard)
+	ws := make([]uint32, len(shard.addr))
+	for i, addr := range shard.addr {
+		weight, found := c.opts.WeightProvider.GetWeightByHost(addr)
+		if !found {
+			// there was some reconfiguration, so we fallback to default weights
+			return c.weightsForPolicySlavesDefault(policy, shard)
+		}
+
+		ws[i] = weight
+	}
+
+	return ws
 }
 
 func (c *Cluster) weightsForPolicySlavesDefault(policy ReplicaPolicyEnum, shard *shard) []uint32 {

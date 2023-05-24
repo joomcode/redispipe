@@ -59,6 +59,11 @@ const (
 	preferConnected
 )
 
+const (
+	disabled = 0
+	enabled  = 1
+)
+
 // Opts holds the options for Cluster
 type Opts struct {
 	// HostOpts - per host options
@@ -144,10 +149,10 @@ type clusterConfig struct {
 }
 
 type shard struct {
-	rr      uint32
-	good    uint32
-	addr    []string
-	weights []uint32
+	rr          uint32
+	good        uint32
+	addr        []string
+	pingWeights []uint32
 }
 type shardMap map[uint16]*shard
 type masterMap map[string]uint16
@@ -223,9 +228,9 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 		cluster.opts.WaitToMigrate = 100 * time.Millisecond
 	}
 
-	cluster.latencyAwareness = 0
+	cluster.latencyAwareness = disabled
 	if cluster.opts.LatencyOrientedRR {
-		cluster.latencyAwareness = 1
+		cluster.latencyAwareness = enabled
 	}
 	cluster.opts.HostOpts.TLSEnabled = opts.TLSEnabled
 	cluster.opts.HostOpts.TLSConfig = opts.TLSConfig
@@ -290,9 +295,9 @@ func (c *Cluster) Handle() interface{} {
 // SetLatencyOrientedRR changes "latency awareness" on the fly.
 func (c *Cluster) SetLatencyOrientedRR(v bool) {
 	if v {
-		atomic.StoreUint32(&c.latencyAwareness, 1)
+		atomic.StoreUint32(&c.latencyAwareness, enabled)
 	} else {
-		atomic.StoreUint32(&c.latencyAwareness, 0)
+		atomic.StoreUint32(&c.latencyAwareness, disabled)
 	}
 }
 

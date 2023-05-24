@@ -344,12 +344,10 @@ func (c *Cluster) control() {
 
 func (c *Cluster) reloadMapping() error {
 	nodes, err := c.slotRangesAndInternalMasterOnly()
-	if err != nil {
-		return err
+	if err == nil {
+		c.updateMappings(nodes)
 	}
-
-	c.updateMappings(nodes)
-	return nil
+	return err
 }
 
 // addWaitToMigrate schedules some actions to be executed after WaitToMigrate interval.

@@ -98,9 +98,9 @@ type Opts struct {
 
 	// RoundRobinSeed - used to choose between master and replica.
 	RoundRobinSeed RoundRobinSeed
-	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency (can not be set with non-empty WeightsByAddress)
+	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency (mutually exclusive with WeightsByAddress)
 	LatencyOrientedRR bool
-	// WeightsByAddress - enables to explicitly set weights of replicas in all the shards; must include weights for all the replicas of all the shards (can not be set with LatencyOrientedRR)
+	// WeightsByAddress - enables to explicitly set weights of replicas in all the shards; must include weights for all the replicas of all the shards (mutually exclusive with LatencyOrientedRR)
 	WeightsByAddress map[string]uint32
 	// Enable connection with TLS
 	TLSEnabled bool

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -98,22 +99,14 @@ type Opts struct {
 
 	// RoundRobinSeed - used to choose between master and replica.
 	RoundRobinSeed RoundRobinSeed
-	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency (mutually exclusive with WeightsByAddress)
+	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency (has lower priority than WeightsByAddress)
 	LatencyOrientedRR bool
-	// WeightsByAddress - enables to explicitly set weights of replicas in all the shards; must include weights for all the replicas of all the shards (mutually exclusive with LatencyOrientedRR)
+	// WeightsByAddress - enables to explicitly set weights of replicas in all the shards; must include weights for all the replicas of all the shards (has higher priority than LatencyOrientedRR)
 	WeightsByAddress map[string]uint32
 	// Enable connection with TLS
 	TLSEnabled bool
 	// Config for TLS connection
 	TLSConfig *tls.Config
-}
-
-func (opts Opts) validate() error {
-	if opts.LatencyOrientedRR && len(opts.WeightsByAddress) > 0 {
-		return errorx.IllegalArgument.New("can not simultaneously set LatencyOrientedRR and WeightsByAddress")
-	}
-
-	return nil
 }
 
 func (opts Opts) checkWeightsByAddressCompleteness(slotRanges []redisclusterutil.SlotsRange) error {
@@ -220,9 +213,6 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 	if len(initAddrs) == 0 {
 		return nil, redis.ErrNoAddressProvided.New("addresses are not specified")
 	}
-	if err := opts.validate(); err != nil {
-		return nil, err
-	}
 	cluster := &Cluster{
 		opts: opts,
 
@@ -296,7 +286,7 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 	}
 
 	// case if no nodes are accessible is handled here
-	if err := cluster.reloadMapping(); err != nil {
+	if err := cluster.reloadMapping(true); err != nil {
 		cluster.cancel()
 		return nil, err
 	}
@@ -363,26 +353,30 @@ func (c *Cluster) control() {
 			// forced mapping reload
 			forceReload = nil
 			ft.Reset(forceInterval)
-			c.reloadMapping()
+			c.reloadMapping(false)
 		case <-ft.C:
 			// allow force reloading again
 			forceReload = c.forceReload
 			continue
 		case <-t.C:
 			// regular mapping reload
-			c.reloadMapping()
+			c.reloadMapping(false)
 		}
 	}
 }
 
-func (c *Cluster) reloadMapping() error {
+func (c *Cluster) reloadMapping(failOnIncompleteWeightsByAddress bool) error {
 	nodes, err := c.slotRangesAndInternalMasterOnly()
 	if err != nil {
 		return err
 	}
 
 	if err := c.opts.checkWeightsByAddressCompleteness(nodes); err != nil {
-		return err
+		if failOnIncompleteWeightsByAddress {
+			return err
+		} else {
+			log.Println("weights by address are incomplete: ", err.Error())
+		}
 	}
 
 	c.updateMappings(nodes)

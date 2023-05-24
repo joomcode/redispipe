@@ -341,30 +341,38 @@ func (*Cluster) getHealthWeight(weights []uint32, health uint32) uint32 {
 }
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {
-	switch {
-	case atomic.LoadUint32(&c.latencyAwareness) == enabled:
-		ws := make([]uint32, len(shard.pingWeights))
+	if len(c.opts.WeightsByAddress) > 0 {
+		ws := make([]uint32, len(shard.addr))
+		for i, addr := range shard.addr {
+			weight, found := c.opts.WeightsByAddress[addr]
+			if !found {
+				// there was some reconfiguration, so we fallback to default weights
+				return c.weightsForPolicySlavesDefault(policy, shard)
+			}
+
+			ws[i] = weight
+		}
+
+		return ws
+	}
+
+	return c.weightsForPolicySlavesDefault(policy, shard)
+}
+
+func (c *Cluster) weightsForPolicySlavesDefault(policy ReplicaPolicyEnum, shard *shard) []uint32 {
+	var ws []uint32
+	if atomic.LoadUint32(&c.latencyAwareness) == disabled {
+		ws = rr[:]
+		if policy == PreferSlaves {
+			ws = rs[:]
+		}
+	} else {
+		ws = make([]uint32, len(shard.pingWeights))
 		for i := range shard.pingWeights {
 			ws[i] = atomic.LoadUint32(&shard.pingWeights[i])
 		}
-
-		return ws
-
-	case len(c.opts.WeightsByAddress) > 0:
-		ws := make([]uint32, len(shard.addr))
-		for i, addr := range shard.addr {
-			ws[i] = c.opts.WeightsByAddress[addr]
-		}
-
-		return ws
-
-	default:
-		if policy == PreferSlaves {
-			return rs[:len(shard.pingWeights)]
-		}
-
-		return rr[:len(shard.pingWeights)]
 	}
+	return ws[:len(shard.pingWeights)]
 }
 
 func (c *Cluster) connForAddress(addr string) *redisconn.Connection {

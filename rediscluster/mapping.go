@@ -351,18 +351,18 @@ func (c *Cluster) connForPolicySlavesByWeights(health, healthWeight uint32, weig
 }
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {
-	var ws [32]uint32
+	var ws []uint32
 	if atomic.LoadUint32(&c.latencyAwareness) == disabled {
-		ws = rr
+		ws = rr[:len(shard.addr)]
 		if policy == PreferSlaves {
-			ws = rs
+			ws = rs[:len(shard.addr)]
 		}
 	} else {
 		for i := range shard.pingWeights {
 			ws[i] = atomic.LoadUint32(&shard.pingWeights[i])
 		}
 	}
-	return ws[:len(shard.addr)]
+	return ws
 }
 
 func (c *Cluster) connForAddress(addr string) *redisconn.Connection {

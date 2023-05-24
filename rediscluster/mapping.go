@@ -353,9 +353,9 @@ func (c *Cluster) connForPolicySlavesByWeights(health, healthWeight uint32, weig
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {
 	var ws []uint32
 	if atomic.LoadUint32(&c.latencyAwareness) == disabled {
-		ws = rr[:len(shard.addr)]
+		ws = rr[:len(shard.pingWeights)]
 		if policy == PreferSlaves {
-			ws = rs[:len(shard.addr)]
+			ws = rs[:len(shard.pingWeights)]
 		}
 	} else {
 		for i := range shard.pingWeights {

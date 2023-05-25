@@ -345,12 +345,15 @@ func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard)
 		return c.weightsForPolicySlavesDefault(policy, shard)
 	}
 
-	weights, founds := c.opts.WeightProvider.GetWeightsByHost(shard.addr)
-	for _, found := range founds {
+	weights := make([]uint32, 0, len(shard.addr))
+	for _, addr := range shard.addr {
+		weight, found := c.opts.WeightProvider.GetWeightByHost(addr)
 		if !found {
 			// there was some reconfiguration, so we fallback to default weights
 			return c.weightsForPolicySlavesDefault(policy, shard)
 		}
+
+		weights = append(weights, weight)
 	}
 
 	return weights

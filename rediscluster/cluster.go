@@ -64,7 +64,11 @@ const (
 	enabled  = 1
 )
 
+// WeightProvider explicitly provides weights for redis replicas
 type WeightProvider interface {
+	// GetWeightByHost provides weight by given name. If implementation does not have weight for a given host
+	// it must return `false` as the second return value. In this case scheduler will fallback to default
+	// scheduling strategy (either constant weights random or ping latency based random)
 	GetWeightByHost(host string) (uint32, bool)
 }
 

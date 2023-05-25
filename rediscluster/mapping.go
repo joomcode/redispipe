@@ -341,6 +341,25 @@ func (*Cluster) getHealthWeight(weights []uint32, health uint32) uint32 {
 }
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {
+	if c.opts.WeightProvider == nil {
+		return c.weightsForPolicySlavesDefault(policy, shard)
+	}
+
+	weights := make([]uint32, 0, len(shard.addr))
+	for _, addr := range shard.addr {
+		weight, found := c.opts.WeightProvider.GetWeightByHost(addr)
+		if !found {
+			// there was some reconfiguration, so we fallback to default weights
+			return c.weightsForPolicySlavesDefault(policy, shard)
+		}
+
+		weights = append(weights, weight)
+	}
+
+	return weights
+}
+
+func (c *Cluster) weightsForPolicySlavesDefault(policy ReplicaPolicyEnum, shard *shard) []uint32 {
 	var ws []uint32
 	if atomic.LoadUint32(&c.latencyAwareness) == disabled {
 		ws = rr[:]

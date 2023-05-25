@@ -64,6 +64,14 @@ const (
 	enabled  = 1
 )
 
+// WeightProvider explicitly provides weights for redis replicas
+type WeightProvider interface {
+	// GetWeightByHost provides weight by given name. If implementation does not have weight for a given host
+	// it must return `false` as the second return value. In this case scheduler will fallback to default
+	// scheduling strategy (either constant weights random or ping latency based random)
+	GetWeightByHost(host string) (uint32, bool)
+}
+
 // Opts holds the options for Cluster
 type Opts struct {
 	// HostOpts - per host options
@@ -98,8 +106,10 @@ type Opts struct {
 
 	// RoundRobinSeed - used to choose between master and replica.
 	RoundRobinSeed RoundRobinSeed
-	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency
+	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency (has lower priority than WeightProvider)
 	LatencyOrientedRR bool
+	// WeightProvider - enables to explicitly set weights of replicas (has higher priority than LatencyOrientedRR)
+	WeightProvider WeightProvider
 	// Enable connection with TLS
 	TLSEnabled bool
 	// Config for TLS connection

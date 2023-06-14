@@ -191,7 +191,7 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 				node := newConfig.nodes[addr]
 
 				weight := sumLatency / atomic.LoadUint32(&node.ping)
-				if c.forceMinLatencyReplica == enabled && i == minLatencyID {
+				if atomic.LoadUint32(&c.forceMinLatencyReplica) == enabled && i == minLatencyID {
 					const alwaysPrefer = 1_000_000
 					weight = alwaysPrefer
 				}

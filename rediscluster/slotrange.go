@@ -2,6 +2,7 @@ package rediscluster
 
 import (
 	"bytes"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -173,13 +174,28 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 		}
 		for _, shard := range newConfig.shards {
 			sumLatency := uint32(0)
-			for _, addr := range shard.addr {
+			minLatencyID := 0
+			minLatency := uint32(math.MaxUint32)
+
+			for i, addr := range shard.addr {
 				node := newConfig.nodes[addr]
-				sumLatency += atomic.LoadUint32(&node.ping)
+				pingLatency := atomic.LoadUint32(&node.ping)
+				if pingLatency < minLatency {
+					minLatency = pingLatency
+					minLatencyID = i
+				}
+
+				sumLatency += pingLatency
 			}
 			for i, addr := range shard.addr {
 				node := newConfig.nodes[addr]
+
 				weight := sumLatency / atomic.LoadUint32(&node.ping)
+				if atomic.LoadUint32(&c.forceMinLatencyReplica) == enabled && i == minLatencyID {
+					const alwaysPrefer = 1_000_000
+					weight = alwaysPrefer
+				}
+
 				atomic.StoreUint32(&shard.pingWeights[i], weight)
 			}
 		}

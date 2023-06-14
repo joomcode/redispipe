@@ -108,6 +108,8 @@ type Opts struct {
 	RoundRobinSeed RoundRobinSeed
 	// LatencyOrientedRR - when MasterAndSlaves is used, prefer hosts with lower latency (has lower priority than WeightProvider)
 	LatencyOrientedRR bool
+	// ForceMinLatencyReplica - when LatencyOrientedRR is used forces min latency replica instead of using `weight[i] = sum(ping_latency[i]) / ping_latency[i]` algorithm
+	ForceMinLatencyReplica bool
 	// WeightProvider - enables to explicitly set weights of replicas (has higher priority than LatencyOrientedRR)
 	WeightProvider WeightProvider
 	// Enable connection with TLS
@@ -132,7 +134,8 @@ type Cluster struct {
 
 	opts Opts
 
-	latencyAwareness uint32
+	latencyAwareness       uint32
+	forceMinLatencyReplica uint32
 
 	m sync.Mutex
 
@@ -242,6 +245,10 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 	if cluster.opts.LatencyOrientedRR {
 		cluster.latencyAwareness = enabled
 	}
+	cluster.forceMinLatencyReplica = disabled
+	if cluster.opts.ForceMinLatencyReplica {
+		cluster.forceMinLatencyReplica = enabled
+	}
 	cluster.opts.HostOpts.TLSEnabled = opts.TLSEnabled
 	cluster.opts.HostOpts.TLSConfig = opts.TLSConfig
 
@@ -308,6 +315,15 @@ func (c *Cluster) SetLatencyOrientedRR(v bool) {
 		atomic.StoreUint32(&c.latencyAwareness, enabled)
 	} else {
 		atomic.StoreUint32(&c.latencyAwareness, disabled)
+	}
+}
+
+// SetForceMinLatencyReplica changes "min latency replica forcing" on the fly
+func (c *Cluster) SetForceMinLatencyReplica(v bool) {
+	if v {
+		atomic.StoreUint32(&c.forceMinLatencyReplica, enabled)
+	} else {
+		atomic.StoreUint32(&c.forceMinLatencyReplica, disabled)
 	}
 }
 

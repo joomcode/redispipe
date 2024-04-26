@@ -105,6 +105,7 @@ type InstanceInfo struct {
 	// More probably, redis instance with other UUID were started on the same port.
 	NoAddr    bool
 	SlaveOf   string
+	Connected bool
 	Slots     [][2]uint16
 	Migrating []SlotMigration
 }
@@ -312,6 +313,7 @@ func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 		}
 		node.NoAddr = strings.Contains(parts[2], "noaddr")
 		node.MySelf = strings.Contains(parts[2], "myself")
+		node.Connected = parts[7] == "connected"
 
 		for _, slot := range parts[8:] {
 			if slot[0] == '[' {

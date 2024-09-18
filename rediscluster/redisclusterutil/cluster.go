@@ -72,12 +72,19 @@ func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 		for j := 2; j < len(rawrange); j++ {
 			rawaddr, ok := rawrange[j].([]interface{})
 			if !ok || len(rawaddr) < 2 {
-				return errf("address format mismatch: res[%d][%d] = %+v",
+				return errf("address format mismatch: res[%d][%d] = %+v, missing lines",
 					i, j, rawrange[j])
 			}
-			host, ok := rawaddr[0].([]byte)
-			port, ok2 := rawaddr[1].(int64)
-			if !ok || !ok2 || port <= 0 || port+10000 > 65535 {
+			host, hasHost := rawaddr[0].([]byte)
+			port, hasPort := rawaddr[1].(int64)
+			if !hasHost && hasPort && port == 0 {
+				// fallback to skip zero address
+				arr, isArray := rawaddr[0].([]interface{})
+				if isArray && len(arr) == 0 {
+					continue
+				}
+			}
+			if !hasHost || !hasPort || port <= 0 || port+10000 > 65535 {
 				return errf("address format mismatch: res[%d][%d] = %+v",
 					i, j, rawaddr)
 			}

@@ -78,7 +78,9 @@ func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 			host, hasHost := rawaddr[0].([]byte)
 			port, hasPort := rawaddr[1].(int64)
 			if !hasHost && hasPort && port == 0 {
-				// fallback to skip zero address
+				// Due to possible Redis cluster misconfiguration we can receive zero address
+				// for one of the replicas. It is totally fine to skip the misconfigured replica
+				// and go with the remaining ones without inducing denial of service.
 				arr, isArray := rawaddr[0].([]interface{})
 				if isArray && len(arr) == 0 {
 					continue

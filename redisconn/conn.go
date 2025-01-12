@@ -39,6 +39,8 @@ type Opts struct {
 	DB int
 	// Password for AUTH
 	Password string
+	// Password for AUTH
+	Username string
 	// IOTimeout - timeout on read/write to socket.
 	// If IOTimeout == 0, then it is set to 1 second
 	// If IOTimeout < 0, then timeout is disabled
@@ -556,7 +558,9 @@ func (conn *Connection) dial() error {
 
 	// Password request
 	var req []byte
-	if conn.opts.Password != "" {
+	if conn.opts.Password != "" && conn.opts.Username != "" {
+		req, _ = redis.AppendRequest(req, redis.Req("AUTH", conn.opts.Username, conn.opts.Password))
+	} else if conn.opts.Password != "" {
 		req, _ = redis.AppendRequest(req, redis.Req("AUTH", conn.opts.Password))
 	}
 	const pingReq = "*1\r\n$4\r\nPING\r\n"

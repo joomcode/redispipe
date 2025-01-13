@@ -39,7 +39,7 @@ type Opts struct {
 	DB int
 	// Password for AUTH
 	Password string
-	// Password for AUTH
+	// Username for AUTH
 	Username string
 	// IOTimeout - timeout on read/write to socket.
 	// If IOTimeout == 0, then it is set to 1 second

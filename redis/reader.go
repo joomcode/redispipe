@@ -48,6 +48,9 @@ func ReadResponse(b *bufio.Reader) (interface{}, int) {
 			}
 			return kind.New(txt).WithProperty(EKMovedTo, string(parts[2])).WithProperty(EKSlot, slot), len(line)
 		}
+		if strings.HasPrefix(txt, "CLUSTERDOWN") {
+			return ErrClusterDown.New(txt), len(line)
+		}
 		if strings.HasPrefix(txt, "LOADING") {
 			return ErrLoading.New(txt), len(line)
 		}

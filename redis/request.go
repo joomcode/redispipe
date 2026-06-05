@@ -1,6 +1,9 @@
 package redis
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Req - convenient wrapper to create Request.
 func Req(cmd string, args ...interface{}) Request {
@@ -34,10 +37,23 @@ func (r Request) String() string {
 	return fmt.Sprintf("Req(%q, %q)", r.Cmd, argss)
 }
 
+// CommandName returns primary redis command name.
+// Cmd could contain single space (see Request.Cmd); only part before space is returned.
+func (r Request) CommandName() string {
+	if i := strings.IndexByte(r.Cmd, ' '); i >= 0 {
+		return r.Cmd[:i]
+	}
+	return r.Cmd
+}
+
 // Key returns first field of request that should be used as a key for redis cluster.
 func (r Request) Key() (string, bool) {
 	if r.Cmd == "RANDOMKEY" {
 		return "RANDOMKEY", false
+	}
+	switch r.CommandName() {
+	case "XREAD", "XREADGROUP":
+		return xreadKey(r.Args)
 	}
 	var n int
 	switch r.Cmd {
@@ -52,6 +68,20 @@ func (r Request) Key() (string, bool) {
 		return "", false
 	}
 	return ArgToString(r.Args[n])
+}
+
+func xreadKey(args []interface{}) (string, bool) {
+	for i, arg := range args {
+		s, ok := ArgToString(arg)
+		if !ok || !strings.EqualFold(s, "STREAMS") {
+			continue
+		}
+		if i+1 >= len(args) {
+			return "", false
+		}
+		return ArgToString(args[i+1])
+	}
+	return "", false
 }
 
 // Future is interface accepted by Sender to signal request completion.

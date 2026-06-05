@@ -218,7 +218,7 @@ func ArgToString(arg interface{}) (string, bool) {
 
 // CheckRequest checks requests command and arguments to be compatible with connector.
 func CheckRequest(req Request, singleThreaded bool) error {
-	if err := ForbiddenCommand(req.Cmd, singleThreaded); err != nil {
+	if err := ForbiddenCommand(req.CommandName(), singleThreaded); err != nil {
 		return err.(*errorx.Error).WithProperty(EKRequest, req)
 	}
 	for i, arg := range req.Args {

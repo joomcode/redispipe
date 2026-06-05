@@ -32,6 +32,11 @@ func TestCommandType(t *testing.T) {
 	assert.False(t, redis.Dangerous("publish"))
 }
 
+func TestCheckRequestXreadBlock(t *testing.T) {
+	assert.NotNil(t, redis.CheckRequest(redis.Req("XREAD BLOCK", 1000, "STREAMS", "mystream", ">"), false))
+	assert.Nil(t, redis.CheckRequest(redis.Req("XREAD BLOCK", 1000, "STREAMS", "mystream", ">"), true))
+}
+
 var sum int
 
 func BenchmarkCommandType(b *testing.B) {

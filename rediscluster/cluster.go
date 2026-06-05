@@ -459,7 +459,7 @@ func (c *Cluster) fixPolicy(slot uint16, req Request, policy ReplicaPolicyEnum) 
 	case ForcePreferSlaves:
 		return PreferSlaves
 	}
-	if redis.ReplicaSafe(req.Cmd) {
+	if redis.ReplicaSafe(req.CommandName()) {
 		return policy
 	}
 	return MasterOnly
@@ -519,7 +519,7 @@ func (c *Cluster) SendWithPolicy(policy ReplicaPolicyEnum, req Request, cb Futur
 		// can retry if it is readonly command or if user forced to use slaves
 		// (and then user is sure that command is readonly, for example, complex
 		// readonly lua script.)
-		mayRetry: policy != MasterOnly || redis.ReplicaSafe(req.Cmd),
+		mayRetry: policy != MasterOnly || redis.ReplicaSafe(req.CommandName()),
 
 		lastconn: conn,
 	}

@@ -37,6 +37,32 @@ func TestRequestKey(t *testing.T) {
 	k, ok = Req("BITOP", "AND", 1, 2).Key()
 	assert.Equal(t, "1", k)
 	assert.True(t, ok)
+
+	k, ok = Req("XREAD", "STREAMS", "mystream", ">").Key()
+	assert.Equal(t, "mystream", k)
+	assert.True(t, ok)
+
+	k, ok = Req("XREAD", "BLOCK", 1000, "STREAMS", "mystream", ">").Key()
+	assert.Equal(t, "mystream", k)
+	assert.True(t, ok)
+
+	k, ok = Req("XREAD", "COUNT", 10, "BLOCK", 1000, "STREAMS", "mystream", ">").Key()
+	assert.Equal(t, "mystream", k)
+	assert.True(t, ok)
+
+	k, ok = Req("XREAD BLOCK", 1000, "STREAMS", "mystream", ">").Key()
+	assert.Equal(t, "mystream", k)
+	assert.True(t, ok)
+
+	k, ok = Req("XREADGROUP", "GROUP", "g", "c", "BLOCK", 1000, "STREAMS", "mystream", ">").Key()
+	assert.Equal(t, "mystream", k)
+	assert.True(t, ok)
+
+	_, ok = Req("XREAD", "BLOCK", 1000).Key()
+	assert.False(t, ok)
+
+	assert.Equal(t, "XREAD", Req("XREAD BLOCK", 1000).CommandName())
+	assert.Equal(t, "GET", Req("GET").CommandName())
 }
 
 func TestArgToString(t *testing.T) {
@@ -342,5 +368,8 @@ func TestAppendRequestCmdAndArgcount(t *testing.T) {
 
 	k, err = AppendRequest(nil, Req("CMD ONE TWO", "hi", "ho", "hu"))
 	assert.Equal(t, []byte("*5\r\n$3\r\nCMD\r\n$7\r\nONE TWO\r\n$2\r\nhi\r\n$2\r\nho\r\n$2\r\nhu\r\n"), k)
+
+	k, err = AppendRequest(nil, Req("XREAD BLOCK", 1000, "STREAMS", "mystream", ">"))
+	assert.Equal(t, []byte("*6\r\n$5\r\nXREAD\r\n$5\r\nBLOCK\r\n$4\r\n1000\r\n$7\r\nSTREAMS\r\n$8\r\nmystream\r\n$1\r\n>\r\n"), k)
 	assert.Nil(t, err)
 }

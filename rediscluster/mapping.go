@@ -34,17 +34,7 @@ type ClusterHandle struct {
 }
 
 // newNode creates handle for a connection, that will be established in a future.
-func (c *Cluster) newNode(addr string, initial bool) (*node, error) {
-	var err error
-	connectionAddr := addr
-
-	// If redis hosts are mentioned by names, a couple of connections will be established and closed shortly.
-	// Let's resolve them to ip addresses.
-	connectionAddr, err = redisclusterutil.Resolve(connectionAddr)
-	if err != nil {
-		return nil, ErrAddressNotResolved.WrapWithNoMessage(err)
-	}
-
+func (c *Cluster) newNode(addr string, connectionAddr string, initial bool) (*node, error) {
 	nodeOpts, err := c.nodeOpts(addr)
 	if err != nil {
 		return nil, err
@@ -180,7 +170,7 @@ func (c *Cluster) addNode(addr string) *node {
 	if node, ok = c.prevNodes[addr]; ok {
 		atomic.AddUint32(&node.refcnt, 1)
 	} else {
-		node, _ = c.newNode(addr, false)
+		node, _ = c.newNode(addr, addr, false)
 	}
 	newConf.nodes[addr] = node
 

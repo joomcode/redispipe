@@ -3,6 +3,7 @@ package redisclusterutil
 import (
 	"fmt"
 	"hash/fnv"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,9 +23,14 @@ const (
 
 // SlotsRange represents slice of slots
 type SlotsRange struct {
-	From  int
-	To    int
-	Addrs []string // addresses of hosts hosting this range of slots. First address is a master, and other are slaves.
+	From int
+	To   int
+
+	// Addrs contains IP:port of hosts hosting this range of slots. First address is a master, and other are slaves.
+	Addrs []string
+	// AddrHostnames maps an item from Addrs to hostname:port for nodes that include hostname metadata in
+	// the CLUSTER SLOTS response. This is optional.
+	AddrHostnames map[string]string
 }
 
 // ParseSlotsInfo parses result of CLUSTER SLOTS command
@@ -90,7 +96,20 @@ func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 				return errf("address format mismatch: res[%d][%d] = %+v",
 					i, j, rawaddr)
 			}
-			r.Addrs = append(r.Addrs, string(host)+":"+strconv.Itoa(int(port)))
+			portStr := strconv.Itoa(int(port))
+			addrStr := net.JoinHostPort(string(host), portStr)
+			r.Addrs = append(r.Addrs, addrStr)
+			if len(rawaddr) >= 4 {
+				if metadata, hasMetadata := rawaddr[3].([]interface{}); hasMetadata {
+					hostname := parseHostname(metadata)
+					if len(hostname) > 0 {
+						if r.AddrHostnames == nil {
+							r.AddrHostnames = make(map[string]string)
+						}
+						r.AddrHostnames[addrStr] = net.JoinHostPort(hostname, portStr)
+					}
+				}
+			}
 		}
 		sort.Strings(r.Addrs[1:])
 		ranges[i] = r
@@ -99,6 +118,17 @@ func ParseSlotsInfo(res interface{}) ([]SlotsRange, error) {
 		return ranges[i].From < ranges[j].From
 	})
 	return ranges, nil
+}
+
+func parseHostname(metadata []interface{}) string {
+	for i := 0; i < len(metadata)-1; i += 2 {
+		key, hasKey := metadata[i].([]byte)
+		value, hasValue := metadata[i+1].([]byte)
+		if hasKey && hasValue && string(key) == "hostname" {
+			return string(value)
+		}
+	}
+	return ""
 }
 
 // InstanceInfo represents line of CLUSTER NODES result.

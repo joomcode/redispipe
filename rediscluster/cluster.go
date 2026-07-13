@@ -261,16 +261,29 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 
 	cluster.nodeWait.promises = make(map[string]*[]connThen, 1)
 
-	var err error
 	for _, addr := range initAddrs {
-		if _, ok := config.masters[addr]; !ok {
-			config.nodes[addr], err = cluster.newNode(addr, true)
-			// since we're connecting asynchronously, it can be only configuration error
-			if err != nil {
-				cluster.cancel()
-				return nil, err
-			}
+		connectionAddr, err := redisclusterutil.Resolve(addr)
+		if err != nil {
+			// skip unresolved node during startup, hoping for future availability
+			cluster.report(LogInitialNodeSkipped{Address: addr, Error: err})
+			continue
 		}
+		if _, ok := config.nodes[connectionAddr]; ok {
+			continue
+		}
+		node, err := cluster.newNode(addr, connectionAddr, true)
+		if err != nil {
+			// since we're connecting asynchronously, it can be only configuration error
+			cluster.cancel()
+			return nil, err
+		}
+		config.nodes[connectionAddr] = node
+	}
+
+	// case if all nodes are not resolved
+	if len(config.nodes) == 0 {
+		cluster.cancel()
+		return nil, ErrAddressNotResolved.New("for all of: %v", initAddrs)
 	}
 
 	// case if no nodes are accessible is handled here
@@ -364,10 +377,11 @@ func (c *Cluster) control() {
 
 func (c *Cluster) reloadMapping() error {
 	nodes, err := c.slotRangesAndInternalMasterOnly()
-	if err == nil {
-		c.updateMappings(nodes)
+	if err != nil {
+		return err
 	}
-	return err
+	c.updateMappings(nodes)
+	return nil
 }
 
 // addWaitToMigrate schedules some actions to be executed after WaitToMigrate interval.

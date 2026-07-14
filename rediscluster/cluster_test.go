@@ -921,3 +921,34 @@ Loop:
 	}
 	s.Equal(N, cnt, "Not all goroutines finished")
 }
+
+func (s *Suite) TestConnectWithDeadAddresses() {
+	addrs := []string{
+		"127.0.0.1:43200", // dead
+		"127.0.0.1:43210", // live
+		"127.0.0.1:43201", // dead
+	}
+	cl, err := NewCluster(s.ctx, addrs, clustopts)
+	s.Nil(err)
+	defer cl.Close()
+
+	scl := redis.SyncCtx{cl}
+	key := slotkey("deadaddr", s.keys[0])
+	s.Equal("OK", scl.Do(s.ctx, "SET", key, "val"))
+	s.Equal([]byte("val"), scl.Do(s.ctx, "GET", key))
+}
+
+func (s *Suite) TestConnectWithUnresolvableAddresses() {
+	addrs := []string{
+		"no-such-host-xyzzy.invalid:6379", // guaranteed NXDOMAIN
+		"127.0.0.1:43210",                 // live
+	}
+	cl, err := NewCluster(s.ctx, addrs, clustopts)
+	s.Nil(err)
+	defer cl.Close()
+
+	scl := redis.SyncCtx{cl}
+	key := slotkey("unresolvable", s.keys[0])
+	s.Equal("OK", scl.Do(s.ctx, "SET", key, "val"))
+	s.Equal([]byte("val"), scl.Do(s.ctx, "GET", key))
+}

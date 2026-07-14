@@ -52,9 +52,13 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 	}
 
 	addrs := make(map[string]struct{})
+	addrHostnames := make(map[string]string)
 	for _, rng := range slotRanges {
 		for _, addr := range rng.Addrs {
 			addrs[addr] = struct{}{}
+		}
+		for addr, hostname := range rng.AddrHostnames {
+			addrHostnames[addr] = hostname
 		}
 	}
 
@@ -76,7 +80,14 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 			atomic.AddUint32(&node.refcnt, 1)
 			newConfig.nodes[addr] = node
 		} else {
-			node, _ = c.newNode(addr, false)
+			// For new nodes, addr is exposed with IP.
+			// To make TLS work, try to get the hostname from addrHostnames.
+			// This way, adding a discovered node behaves the same as in NewCluster.
+			hostname := addr
+			if h, ok := addrHostnames[addr]; ok {
+				hostname = h
+			}
+			node, _ = c.newNode(hostname, addr, false)
 			newConfig.nodes[addr] = node
 		}
 	}

@@ -41,13 +41,20 @@ type LogClusterSlotsError struct {
 // LogSlotRangeError is logged when no host were able to respond to CLUSTER SLOTS.
 type LogSlotRangeError struct{}
 
+// LogInitialNodeSkipped is logged when a bootstrap address is skipped because its hostname could not be resolved.
+type LogInitialNodeSkipped struct {
+	Address string
+	Error   error
+}
+
 // LogContextClosed is logged when cluster's context is closed.
 type LogContextClosed struct{ Error error }
 
-func (LogHostEvent) logEvent()         {}
-func (LogClusterSlotsError) logEvent() {}
-func (LogSlotRangeError) logEvent()    {}
-func (LogContextClosed) logEvent()     {}
+func (LogHostEvent) logEvent()          {}
+func (LogClusterSlotsError) logEvent()  {}
+func (LogSlotRangeError) logEvent()     {}
+func (LogContextClosed) logEvent()      {}
+func (LogInitialNodeSkipped) logEvent() {}
 
 // DefaultLogger is a default Logger implementation
 type DefaultLogger struct{}
@@ -81,6 +88,9 @@ func (d DefaultLogger) Report(cluster *Cluster, event LogEvent) {
 	case LogSlotRangeError:
 		log.Printf("rediscluster %s: no alive nodes to request 'CLUSTER SLOTS'",
 			cluster.Name())
+	case LogInitialNodeSkipped:
+		log.Printf("rediscluster %s: skipping unresolvable bootstrap address %s: %s",
+			cluster.Name(), ev.Address, ev.Error.Error())
 	case LogContextClosed:
 		log.Printf("rediscluster %s: shutting down (%s)", cluster.Name(), ev.Error)
 	}

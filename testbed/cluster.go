@@ -3,10 +3,13 @@ package testbed
 import (
 	"bytes"
 	"crypto/tls"
+	"fmt"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
+	"github.com/joomcode/redispipe/redisdumb"
 )
 
 // Node is wrapper for Server with its NodeId
@@ -18,6 +21,8 @@ type Node struct {
 // Cluster is a tool for starting/stopping redis cluster for tests.
 type Cluster struct {
 	Node []Node
+
+	lastNotOk atomic.Value
 }
 
 // NewCluster instantiate cluster of 6 nodes (3 masters and 3 slaves).
@@ -41,7 +46,7 @@ func NewCluster(startport uint16) *Cluster {
 		cl.Node[i].Args = []string{
 			"--cluster-enabled", "yes",
 			"--cluster-config-file", "node-" + cl.Node[i].PortStr(effectivePort) + ".conf",
-			"--cluster-node-timeout", "200",
+			"--cluster-node-timeout", "1000",
 			"--cluster-slave-validity-factor", "1000",
 			"--slave-serve-stale-data", "yes",
 			"--cluster-require-full-coverage", "no",
@@ -102,10 +107,42 @@ func RaiseClusterPanic() {
 	panic("cluster didn't stabilize")
 }
 
+func dumpResult(res interface{}) string {
+	if buf, ok := res.([]byte); ok {
+		return string(buf)
+	}
+	return fmt.Sprintf("%v", res)
+}
+
+// DumpState reports what every node thinks about the cluster.
+func (cl *Cluster) DumpState() {
+	if reason, ok := cl.lastNotOk.Load().(string); ok {
+		log.Printf("cluster is not ok: %s", reason)
+	}
+	for i := range cl.Node {
+		n := &cl.Node[i]
+		if !n.RunningNow() {
+			log.Printf("node %d (%s): not running", i, n.Addr())
+			continue
+		}
+		// The node's own connection belongs to the goroutine that polls it.
+		conn := redisdumb.Conn{
+			Addr:       n.Conn.Addr,
+			TlsAddr:    n.Conn.TlsAddr,
+			TLSEnabled: n.Conn.TLSEnabled,
+			TLSConfig:  n.Conn.TLSConfig,
+		}
+		log.Printf("node %d (%s): %s\n%s", i, n.Addr(), dumpResult(conn.Do("CLUSTER INFO")), dumpResult(conn.Do("CLUSTER NODES")))
+	}
+}
+
 // WaitClusterOk wait for cluster configuration to be stable.
 func (cl *Cluster) WaitClusterOk() {
 	i := 0
-	t := time.AfterFunc(30*time.Second, RaiseClusterPanic)
+	t := time.AfterFunc(60*time.Second, func() {
+		cl.DumpState()
+		RaiseClusterPanic()
+	})
 	defer t.Stop()
 	for !cl.ClusterOk() {
 		if i++; i == 10 {
@@ -117,6 +154,14 @@ func (cl *Cluster) WaitClusterOk() {
 
 // ClusterOk checks cluster configuration.
 func (cl *Cluster) ClusterOk() bool {
+	reason := cl.clusterNotOkReason()
+	cl.lastNotOk.Store(reason)
+	return reason == ""
+}
+
+// clusterNotOkReason returns an empty string when the cluster configuration is stable,
+// and what stands in the way otherwise.
+func (cl *Cluster) clusterNotOkReason() string {
 	stopped := []int{}
 	for i := range cl.Node {
 		if !cl.Node[i].RunningNow() {
@@ -124,6 +169,7 @@ func (cl *Cluster) ClusterOk() bool {
 		}
 	}
 	var hashsum uint64
+	var hashnode int
 	for i := range cl.Node {
 		if !cl.Node[i].RunningNow() {
 			continue
@@ -131,24 +177,24 @@ func (cl *Cluster) ClusterOk() bool {
 		res := cl.Node[i].Do("CLUSTER INFO")
 		buf, ok := res.([]byte)
 		if !ok {
-			return false
+			return fmt.Sprintf("node %d: CLUSTER INFO: %v", i, res)
 		}
 		if !bytes.Contains(buf, []byte("cluster_state:ok")) {
-			return false
+			return fmt.Sprintf("node %d: cluster state is not ok", i)
 		}
 		res = cl.Node[i].Do("INFO REPLICATION")
 		buf, ok = res.([]byte)
 		if !ok {
-			return false
+			return fmt.Sprintf("node %d: INFO REPLICATION: %v", i, res)
 		}
 		if !bytes.Contains(buf, []byte("role:master")) &&
 			!bytes.Contains(buf, []byte("master_link_status:up")) {
-			return false
+			return fmt.Sprintf("node %d: replica is not in sync with its master", i)
 		}
 		res = cl.Node[i].Do("CLUSTER NODES")
 		buf, ok = res.([]byte)
 		if !ok {
-			return false
+			return fmt.Sprintf("node %d: CLUSTER NODES: %v", i, res)
 		}
 		masters := 0
 		for _, line := range bytes.Split(buf, []byte("\n")) {
@@ -156,7 +202,7 @@ func (cl *Cluster) ClusterOk() bool {
 			for _, j := range stopped {
 				if bytes.HasPrefix(line, cl.Node[j].NodeId) {
 					if !bytes.Contains(line, []byte("fail ")) {
-						return false
+						return fmt.Sprintf("node %d: stopped node %d is not marked as failed", i, j)
 					}
 					hasStopped = true
 				}
@@ -165,18 +211,21 @@ func (cl *Cluster) ClusterOk() bool {
 				masters++
 			}
 		}
-		if masters != 3+(len(cl.Node)-6) {
-			return false
-
+		if want := 3 + (len(cl.Node) - 6); masters != want {
+			return fmt.Sprintf("node %d: sees %d masters instead of %d", i, masters, want)
 		}
-		infos, _ := redisclusterutil.ParseClusterNodes(res)
+		infos, err := redisclusterutil.ParseClusterNodes(res)
+		if err != nil {
+			return fmt.Sprintf("node %d: unparsable CLUSTER NODES: %v", i, err)
+		}
 		hash := infos.HashSum()
 		if hash != hashsum && hashsum != 0 {
-			return false
+			return fmt.Sprintf("node %d: sees a configuration different from node %d", i, hashnode)
 		}
 		hashsum = hash
+		hashnode = i
 	}
-	return true
+	return ""
 }
 
 // AttemptFailover tries to issue CLUSTER FAILOVER FORCE to slaves of falled masters.
@@ -217,8 +266,18 @@ func (cl *Cluster) CancelMoveSlot(slot int) {
 
 // FinishMoveSlot finalizes slot migration
 func (cl *Cluster) FinishMoveSlot(slot, from, to int) {
-	cl.Node[to].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
-	cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	cl.Node[to].DoSure("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	cl.Node[from].DoSure("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	// The rest of the masters would learn the new owner from the epoch bump below,
+	// but a next migration of the same slot may outrun it, and then neither the old
+	// nor the new owner claims the slot and the cluster never agrees again.
+	// Replicas answer with an error, which is why these are not DoSure.
+	for i := range cl.Node {
+		if i == to || i == from || !cl.Node[i].RunningNow() {
+			continue
+		}
+		cl.Node[i].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	}
 	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST") // proprietary extension
 	cl.Node[to].Do("CLUSTER BUMPEPOCH")
 }
@@ -262,7 +321,7 @@ func (cl *Cluster) StartSeventhNode() {
 	cl.Node[6].Args = []string{
 		"--cluster-enabled", "yes",
 		"--cluster-config-file", "node-" + cl.Node[6].PortStr(effectivePort) + ".conf",
-		"--cluster-node-timeout", "200",
+		"--cluster-node-timeout", "1000",
 		"--cluster-slave-validity-factor", "1000",
 		"--slave-serve-stale-data", "yes",
 		"--cluster-require-full-coverage", "no",

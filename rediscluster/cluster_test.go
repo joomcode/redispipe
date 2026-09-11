@@ -39,7 +39,7 @@ type Suite struct {
 
 func (s *Suite) SetupSuite() {
 	testbed.InitDir(".")
-	s.cl = testbed.NewCluster(43210)
+	s.cl = testbed.NewCluster(21100)
 	s.keys = make([]string, NumSlots)
 	cnt := 0
 	for i := 0; cnt < NumSlots; i++ {
@@ -81,6 +81,70 @@ func (s *Suite) AsError(v interface{}) *errorx.Error {
 	return v.(*errorx.Error)
 }
 
+func containsEvent(events []string, event string) bool {
+	for _, ev := range events {
+		if ev == event {
+			return true
+		}
+	}
+	return false
+}
+
+// waitDebugEvent waits for event to be emitted by cluster's background control loop.
+func (s *Suite) waitDebugEvent(event string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for !containsEvent(DebugEvents(), event) {
+		if time.Now().After(deadline) {
+			s.r().Contains(DebugEvents(), event)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// waitNoDebugEvent waits for a window of quiet duration without event being emitted.
+// Control loop iteration started before the state change under test may still emit
+// the event, so a single window is retried until timeout.
+func (s *Suite) waitNoDebugEvent(event string, quiet, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for {
+		DebugEventsReset()
+		time.Sleep(quiet)
+		events := DebugEvents()
+		if !containsEvent(events, event) {
+			return
+		}
+		if time.Now().After(deadline) {
+			s.r().NotContains(events, event)
+		}
+	}
+}
+
+// waitReplicated waits until a replica acknowledges writes to the shard serving slot.
+// Node roles are not stable across tests, so the master is the node that accepts a write.
+func (s *Suite) waitReplicated(slot int, timeout time.Duration) {
+	// WAIT only accounts for writes issued by the calling connection, hence the probe.
+	probe := slotkey("replprobe", s.keys[slot])
+	deadline := time.Now().Add(timeout)
+	for {
+		for i := range s.cl.Node {
+			node := &s.cl.Node[i]
+			if !node.RunningNow() {
+				continue
+			}
+			if redis.AsError(node.Do("SET", probe, "1")) != nil {
+				continue
+			}
+			if n, ok := node.Do("WAIT", 1, 100).(int64); ok && n >= 1 {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			s.r().Fail("no replica caught up with master of slot " + strconv.Itoa(slot))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 var defopts = redisconn.Opts{
 	IOTimeout: 200 * time.Millisecond,
 }
@@ -109,8 +173,43 @@ func TestCluster(t *testing.T) {
 func (s *Suite) TestConnectDisconnected() {
 	s.cl.Stop()
 
-	_, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	_, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().NotNil(err)
+}
+
+func isConnectivityError(res interface{}) bool {
+	rerr := redis.AsErrorx(res)
+	return rerr != nil && rerr.HasTrait(redis.ErrTraitConnectivity)
+}
+
+// doRetrying repeats a request while it fails with a connectivity error, which a
+// shard is allowed to answer with while slots migrate between nodes.
+func (s *Suite) doRetrying(sconn redis.SyncCtx, ctx context.Context, cmd string, args ...interface{}) interface{} {
+	var res interface{}
+	for i := 0; i < 20; i++ {
+		if res = sconn.Do(ctx, cmd, args...); !isConnectivityError(res) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return res
+}
+
+// sendManyRetrying is doRetrying for a batch of requests.
+func (s *Suite) sendManyRetrying(sconn redis.SyncCtx, ctx context.Context, reqs []redis.Request) []interface{} {
+	var ress []interface{}
+	for i := 0; i < 20; i++ {
+		ress = sconn.SendMany(ctx, reqs)
+		retry := false
+		for _, res := range ress {
+			retry = retry || isConnectivityError(res)
+		}
+		if !retry {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return ress
 }
 
 func slotkey(prefix, slot string, suffix ...string) string {
@@ -137,7 +236,7 @@ func (s *Suite) slotnode(slot int) *testbed.Node {
 }
 
 func (s *Suite) TestBasicOps() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 	scl := redis.SyncCtx{cl}
@@ -167,21 +266,21 @@ func (s *Suite) Test_justToCover() {
 	opts.CheckInterval = 0
 	opts.MovedRetries = 11
 	opts.WaitToMigrate = time.Microsecond
-	cl, err = NewCluster(s.ctx, []string{"never-known-lost-my-host.badubadu.duba:43210"}, opts)
+	cl, err = NewCluster(s.ctx, []string{"no-such-host-xyzzy.invalid:21100"}, opts)
 	s.r().Nil(cl)
 	s.r().Error(err)
 
 	opts.CheckInterval = 11 * time.Minute
 	opts.MovedRetries = 1
 	opts.WaitToMigrate = time.Second
-	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:43200"}, opts)
+	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:21090"}, opts)
 	s.r().Nil(cl)
 	s.r().Error(err)
 
 	opts = clustopts
 	opts.ConnsPerHost = 1
 	opts.Handle = new(struct{})
-	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -237,7 +336,7 @@ func (c *cancelledFuture) Resolve(res interface{}, n uint64) {
 }
 
 func (s *Suite) TestSendMany() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 	scl := redis.SyncCtx{cl}
@@ -267,7 +366,7 @@ func (s *Suite) TestSendMany() {
 
 func (s *Suite) TestTransactionNormal() {
 	// copy fo connection test
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -318,7 +417,7 @@ func (s *Suite) TestScan() {
 	opts := clustopts
 	opts.HostOpts.IOTimeout = time.Second
 
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -358,14 +457,15 @@ func (a alwaysZero) Current() uint32 {
 func (s *Suite) TestFallbackToSlaveStop() {
 	opts := longcheckopts
 	opts.RoundRobinSeed = alwaysZero{}
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
 	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
 
 	key := slotkey("toslave", s.keys[1], "stop")
-	sconn.Do(s.ctx, "SET", key, "1")
+	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
+	s.waitReplicated(1, 30*time.Second)
 
 	s.cl.Node[0].Stop()
 	// test read from replica
@@ -388,14 +488,15 @@ func (s *Suite) TestFallbackToSlaveStop() {
 func (s *Suite) TestFallbackToSlaveTimeout() {
 	opts := longcheckopts
 	opts.RoundRobinSeed = alwaysZero{}
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
 	sconn := redis.SyncCtx{cl.WithPolicy(PreferSlaves)}
 
 	key := slotkey("toslave", s.keys[1], "timeout")
-	sconn.Do(s.ctx, "SET", key, "1")
+	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
+	s.waitReplicated(1, 30*time.Second)
 
 	s.cl.Node[0].Pause()
 	// test read from replica
@@ -418,7 +519,7 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 }
 
 func (s *Suite) TestGetMoved() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -436,7 +537,7 @@ func (s *Suite) TestGetMoved() {
 }
 
 func (s *Suite) TestSetMoved() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -456,7 +557,7 @@ func (s *Suite) TestSetMoved() {
 }
 
 func (s *Suite) TestMasterOnly() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -466,20 +567,17 @@ func (s *Suite) TestMasterOnly() {
 
 			err = redisclusterutil.SetMasterOnly(cl, "", []uint16{1, 2})
 			s.r().Nil(err)
-			time.Sleep(clustopts.CheckInterval * 2)
-			s.Contains(DebugEvents(), "automatic masteronly")
+			s.waitDebugEvent("automatic masteronly", 10*time.Second)
 
 			err = redisclusterutil.UnsetMasterOnly(cl, "", []uint16{1, 2})
 			s.r().Nil(err)
-			DebugEventsReset()
-			time.Sleep(clustopts.CheckInterval * 2)
-			s.NotContains(DebugEvents(), "automatic masteronly")
+			s.waitNoDebugEvent("automatic masteronly", clustopts.CheckInterval*2, 10*time.Second)
 		}()
 	}
 }
 
 func (s *Suite) TestAsk() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -508,7 +606,7 @@ func (s *Suite) TestAskTransaction() {
 	opts := longcheckopts
 	opts.MovedRetries = 4
 
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -575,7 +673,7 @@ func (s *Suite) TestMovedTransaction() {
 	opts := longcheckopts
 	opts.MovedRetries = 4
 
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -609,11 +707,18 @@ func (s *Suite) fillMany(sconn redis.SyncCtx, prefix string) {
 	for _, res := range ress {
 		s.r().Equal("OK", res)
 	}
-	time.Sleep(10 * time.Millisecond)
+	// Tests read filled keys with MasterAndSlaves policy.
+	for _, slot := range []int{0, 5500, 11000} {
+		s.waitReplicated(slot, 30*time.Second)
+	}
 }
 
 func (s *Suite) TestAllReturns_Good() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	opts := clustopts
+	opts.HostOpts.IOTimeout = 2 * time.Second
+	// ReconnectPause defaults to DialTimeout*2, which follows IOTimeout.
+	opts.HostOpts.ReconnectPause = 100 * time.Millisecond
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -627,6 +732,7 @@ func (s *Suite) TestAllReturns_Good() {
 
 	for i := 0; i < N; i++ {
 		go func(i int) {
+			defer func() { ch <- struct{}{} }()
 			for j := 0; j < K; j++ {
 				skey := s.keys[(i*N+j)*127%NumSlots]
 				key := slotkey("allgood", skey)
@@ -657,7 +763,6 @@ func (s *Suite) TestAllReturns_Good() {
 					return
 				}
 			}
-			ch <- struct{}{}
 		}(i)
 	}
 
@@ -678,7 +783,12 @@ Loop:
 func (s *Suite) TestAllReturns_GoodMoving() {
 	opts := clustopts
 	opts.CheckInterval = 4 * time.Second
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	// MIGRATE blocks both source and destination server, and this test runs it
+	// in a loop against a cluster loaded with N goroutines.
+	opts.HostOpts.IOTimeout = 2 * time.Second
+	// ReconnectPause defaults to DialTimeout*2, which follows IOTimeout.
+	opts.HostOpts.ReconnectPause = 100 * time.Millisecond
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -703,7 +813,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 			for j := 0; atomic.LoadUint32(&stop) == 0; j++ {
 				skey := s.keys[(i*N+j)*127%NumSlots]
 				key := slotkey("allgoodmove", skey)
-				res := sconn.Do(ctx, "GET", key)
+				res := s.doRetrying(sconn, ctx, "GET", key)
 				if !s.Equal([]byte(skey), res) {
 					log.Println("Res ", res)
 					atomic.AddUint32(&bad, 1)
@@ -722,7 +832,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 					redis.Req("SET", keya, keyb),
 					redis.Req("GET", keyb),
 				}
-				ress := sconn.SendMany(ctx, reqs)
+				ress := s.sendManyRetrying(sconn, ctx, reqs)
 
 				if !s.Equal("OK", ress[0]) {
 					log.Println("Ress[0] ", ress[0])
@@ -768,7 +878,7 @@ func (s *Suite) TestAllReturns_Bad() {
 	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 10*time.Minute)
 	DebugDisable = true
 
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -924,9 +1034,9 @@ Loop:
 
 func (s *Suite) TestConnectWithDeadAddresses() {
 	addrs := []string{
-		"127.0.0.1:43200", // dead
-		"127.0.0.1:43210", // live
-		"127.0.0.1:43201", // dead
+		"127.0.0.1:21090", // dead
+		"127.0.0.1:21100", // live
+		"127.0.0.1:21091", // dead
 	}
 	cl, err := NewCluster(s.ctx, addrs, clustopts)
 	s.Nil(err)
@@ -941,7 +1051,7 @@ func (s *Suite) TestConnectWithDeadAddresses() {
 func (s *Suite) TestConnectWithUnresolvableAddresses() {
 	addrs := []string{
 		"no-such-host-xyzzy.invalid:6379", // guaranteed NXDOMAIN
-		"127.0.0.1:43210",                 // live
+		"127.0.0.1:21100",                 // live
 	}
 	cl, err := NewCluster(s.ctx, addrs, clustopts)
 	s.Nil(err)

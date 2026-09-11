@@ -29,11 +29,11 @@ func benchCluster(port int) func() {
 }
 
 func BenchmarkSerialGetSet(b *B) {
-	defer benchCluster(45000)()
+	defer benchCluster(21080)()
 	rng := rand.New(rand.NewSource(1))
 	b.Run("radix_pause0", func(b *B) {
 		rdxv2, err := radix.NewCluster(
-			[]string{"127.0.0.1:45000"},
+			[]string{"127.0.0.1:21080"},
 			radix.ClusterPoolFunc(func(network, addr string) (radix.Client, error) {
 				return radix.NewPool(network, addr, 4,
 					radix.PoolPipelineWindow(0, 0))
@@ -72,7 +72,7 @@ func BenchmarkSerialGetSet(b *B) {
 	})
 
 	b.Run("redispipe", func(b *B) {
-		pipe, err := rediscluster.NewCluster(context.Background(), []string{"127.0.0.1:45000"}, rediscluster.Opts{
+		pipe, err := rediscluster.NewCluster(context.Background(), []string{"127.0.0.1:21080"}, rediscluster.Opts{
 			Logger: rediscluster.NoopLogger{},
 			HostOpts: redisconn.Opts{
 				Logger: redisconn.NoopLogger{},
@@ -96,7 +96,7 @@ func BenchmarkSerialGetSet(b *B) {
 	})
 
 	b.Run("redispipe_pause0", func(b *B) {
-		pipe, err := rediscluster.NewCluster(context.Background(), []string{"127.0.0.1:45000"}, rediscluster.Opts{
+		pipe, err := rediscluster.NewCluster(context.Background(), []string{"127.0.0.1:21080"}, rediscluster.Opts{
 			Logger: rediscluster.NoopLogger{},
 			HostOpts: redisconn.Opts{
 				Logger:     redisconn.NoopLogger{},
@@ -122,7 +122,7 @@ func BenchmarkSerialGetSet(b *B) {
 }
 
 func BenchmarkParallelGetSet(b *B) {
-	defer benchCluster(45000)()
+	defer benchCluster(21080)()
 	parallel := runtime.GOMAXPROCS(0) * 8
 	i := uint32(1)
 
@@ -137,7 +137,7 @@ func BenchmarkParallelGetSet(b *B) {
 	}
 
 	b.Run("radix", func(b *B) {
-		rdx2, err := radix.NewCluster([]string{"127.0.0.1:45000"})
+		rdx2, err := radix.NewCluster([]string{"127.0.0.1:21080"})
 		defer rdx2.Close()
 		if err != nil {
 			b.Fatal(err)
@@ -170,7 +170,7 @@ func BenchmarkParallelGetSet(b *B) {
 	})
 
 	b.Run("redispipe", func(b *B) {
-		pipe, err := rediscluster.NewCluster(context.Background(), []string{"127.0.0.1:45000"}, rediscluster.Opts{
+		pipe, err := rediscluster.NewCluster(context.Background(), []string{"127.0.0.1:21080"}, rediscluster.Opts{
 			Logger: rediscluster.NoopLogger{},
 			HostOpts: redisconn.Opts{
 				Logger: redisconn.NoopLogger{},
@@ -196,7 +196,7 @@ func BenchmarkParallelGetSet(b *B) {
 
 func newRedigo() *redigo.Cluster {
 	c, err := redigo.NewCluster(&redigo.Options{
-		StartNodes:  []string{"127.0.0.1:45000"},
+		StartNodes:  []string{"127.0.0.1:21080"},
 		ConnTimeout: time.Minute,
 		KeepAlive:   128,
 		AliveTime:   time.Minute,

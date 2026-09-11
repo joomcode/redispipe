@@ -29,8 +29,8 @@ type Suite struct {
 
 func (s *Suite) SetupSuite() {
 	testbed.InitDir(".")
-	s.s.Port = 45678
-	s.s.TlsPort = 55678
+	s.s.Port = 21060
+	s.s.TlsPort = 21061
 	s.s.Start()
 }
 
@@ -115,8 +115,10 @@ func (s *Suite) TestConnects() {
 }
 
 func (s *Suite) TestConnectsTls() {
+	// A TLS handshake does not fit into the IO timeout the other tests use.
+	const tlsTimeout = time.Second
 	tlsopts := Opts{
-		IOTimeout:  defopts.IOTimeout,
+		IOTimeout:  tlsTimeout,
 		TLSEnabled: true,
 		TLSConfig: &tls.Config{
 			InsecureSkipVerify: true,
@@ -125,7 +127,7 @@ func (s *Suite) TestConnectsTls() {
 	conn, err := Connect(s.ctx, s.s.TlsAddr(), tlsopts)
 	s.r().Nil(err)
 	defer conn.Close()
-	s.goodPing(conn, 0)
+	s.goodPing(conn, tlsTimeout)
 }
 
 func (s *Suite) TestConnectsDb() {

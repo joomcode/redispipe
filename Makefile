@@ -13,7 +13,7 @@ test: testcluster testconn testredis
 	rm redis-$(REDIS_VERSION) -rf
 
 testredis: /tmp/redis-server/redis-server
-	PATH=/tmp/redis-server/:${PATH} go test ./redis
+	PATH=/tmp/redis-server/:${PATH} go test -count 1 ./redis
 
 testconn: /tmp/redis-server/redis-server
 	killall redis-server || true

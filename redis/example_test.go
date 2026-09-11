@@ -51,9 +51,9 @@ func ExampleAsError() {
 }
 
 func ExampleScanner() {
-	defer runServer(46231)()
+	defer runServer(21050)()
 	ctx := context.Background()
-	conn, _ := redisconn.Connect(ctx, "127.0.0.1:46231", redisconn.Opts{
+	conn, _ := redisconn.Connect(ctx, "127.0.0.1:21050", redisconn.Opts{
 		Logger: redisconn.NoopLogger{},
 	})
 	sync := redis.Sync{conn}
@@ -79,9 +79,9 @@ func ExampleScanner() {
 }
 
 func ExampleSync() {
-	defer runServer(46231)()
+	defer runServer(21050)()
 	ctx := context.Background()
-	conn, _ := redisconn.Connect(ctx, "127.0.0.1:46231", redisconn.Opts{
+	conn, _ := redisconn.Connect(ctx, "127.0.0.1:21050", redisconn.Opts{
 		Logger: redisconn.NoopLogger{},
 	})
 	sync := redis.Sync{conn}
@@ -114,7 +114,7 @@ func ExampleSync() {
 	// OK
 	// OK
 	// ["1" "2"]
-	// redispipe.result: WRONGTYPE Operation against a key holding the wrong kind of value {request: Req("HSET", ["key1" "field1" "val1"]), address: 127.0.0.1:46231}
+	// redispipe.result: WRONGTYPE Operation against a key holding the wrong kind of value {request: Req("HSET", ["key1" "field1" "val1"]), address: 127.0.0.1:21050}
 	// <nil>
 	// ['\x02' '\x01' "2" "1"]
 }

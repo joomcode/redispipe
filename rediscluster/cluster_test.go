@@ -800,9 +800,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 	log.Println("Started seventh")
 	defer s.cl.StopSeventhNode()
 
-	// Migrations need the cluster to converge between the moves, which it does not
-	// do while every core is busy serving the load this test generates.
-	const N = 100
+	const N = 400
 	ch := make(chan struct{}, N)
 	var good uint32
 	var bad uint32

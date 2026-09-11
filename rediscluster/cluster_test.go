@@ -81,6 +81,59 @@ func (s *Suite) AsError(v interface{}) *errorx.Error {
 	return v.(*errorx.Error)
 }
 
+func containsEvent(events []string, event string) bool {
+	for _, ev := range events {
+		if ev == event {
+			return true
+		}
+	}
+	return false
+}
+
+// waitDebugEvent waits for event to be emitted by cluster's background control loop.
+func (s *Suite) waitDebugEvent(event string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for !containsEvent(DebugEvents(), event) {
+		if time.Now().After(deadline) {
+			s.r().Contains(DebugEvents(), event)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// waitNoDebugEvent waits for a window of quiet duration without event being emitted.
+// Control loop iteration started before the state change under test may still emit
+// the event, so a single window is retried until timeout.
+func (s *Suite) waitNoDebugEvent(event string, quiet, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for {
+		DebugEventsReset()
+		time.Sleep(quiet)
+		events := DebugEvents()
+		if !containsEvent(events, event) {
+			return
+		}
+		if time.Now().After(deadline) {
+			s.r().NotContains(events, event)
+		}
+	}
+}
+
+// waitReplicated waits until master acknowledges that a replica caught up with it.
+func (s *Suite) waitReplicated(master int, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for {
+		res := s.cl.Node[master].Do("WAIT", 1, 100)
+		if n, ok := res.(int64); ok && n >= 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			s.r().Failf("replica didn't catch up", "node %d: WAIT returned %v", master, res)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 var defopts = redisconn.Opts{
 	IOTimeout: 200 * time.Millisecond,
 }
@@ -167,7 +220,7 @@ func (s *Suite) Test_justToCover() {
 	opts.CheckInterval = 0
 	opts.MovedRetries = 11
 	opts.WaitToMigrate = time.Microsecond
-	cl, err = NewCluster(s.ctx, []string{"never-known-lost-my-host.badubadu.duba:43210"}, opts)
+	cl, err = NewCluster(s.ctx, []string{"no-such-host-xyzzy.invalid:43210"}, opts)
 	s.r().Nil(cl)
 	s.r().Error(err)
 
@@ -365,7 +418,8 @@ func (s *Suite) TestFallbackToSlaveStop() {
 	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
 
 	key := slotkey("toslave", s.keys[1], "stop")
-	sconn.Do(s.ctx, "SET", key, "1")
+	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
+	s.waitReplicated(0, 5*time.Second)
 
 	s.cl.Node[0].Stop()
 	// test read from replica
@@ -395,7 +449,8 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 	sconn := redis.SyncCtx{cl.WithPolicy(PreferSlaves)}
 
 	key := slotkey("toslave", s.keys[1], "timeout")
-	sconn.Do(s.ctx, "SET", key, "1")
+	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
+	s.waitReplicated(0, 5*time.Second)
 
 	s.cl.Node[0].Pause()
 	// test read from replica
@@ -466,14 +521,11 @@ func (s *Suite) TestMasterOnly() {
 
 			err = redisclusterutil.SetMasterOnly(cl, "", []uint16{1, 2})
 			s.r().Nil(err)
-			time.Sleep(clustopts.CheckInterval * 2)
-			s.Contains(DebugEvents(), "automatic masteronly")
+			s.waitDebugEvent("automatic masteronly", 10*time.Second)
 
 			err = redisclusterutil.UnsetMasterOnly(cl, "", []uint16{1, 2})
 			s.r().Nil(err)
-			DebugEventsReset()
-			time.Sleep(clustopts.CheckInterval * 2)
-			s.NotContains(DebugEvents(), "automatic masteronly")
+			s.waitNoDebugEvent("automatic masteronly", clustopts.CheckInterval*2, 10*time.Second)
 		}()
 	}
 }
@@ -678,6 +730,9 @@ Loop:
 func (s *Suite) TestAllReturns_GoodMoving() {
 	opts := clustopts
 	opts.CheckInterval = 4 * time.Second
+	// MIGRATE blocks both source and destination server, and this test runs it
+	// in a loop against a cluster loaded with N goroutines.
+	opts.HostOpts.IOTimeout = 2 * time.Second
 	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()

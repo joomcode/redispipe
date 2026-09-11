@@ -25,9 +25,9 @@ func benchServer(port int) func() {
 }
 
 func BenchmarkSerialGetSet(b *B) {
-	defer benchServer(45678)()
+	defer benchServer(21070)()
 	b.Run("radix", func(b *B) {
-		rdxv2, err := radix.Dial("tcp", "127.0.0.1:45678")
+		rdxv2, err := radix.Dial("tcp", "127.0.0.1:21070")
 		if err != nil {
 			b.Fatal(err)
 			return
@@ -59,7 +59,7 @@ func BenchmarkSerialGetSet(b *B) {
 	})
 
 	b.Run("redispipe", func(b *B) {
-		pipe, err := redisconn.Connect(context.Background(), "127.0.0.1:45678", redisconn.Opts{
+		pipe, err := redisconn.Connect(context.Background(), "127.0.0.1:21070", redisconn.Opts{
 			Logger: redisconn.NoopLogger{},
 		})
 		defer pipe.Close()
@@ -79,7 +79,7 @@ func BenchmarkSerialGetSet(b *B) {
 	})
 
 	b.Run("redispipe_pause0", func(b *B) {
-		pipe, err := redisconn.Connect(context.Background(), "127.0.0.1:45678", redisconn.Opts{
+		pipe, err := redisconn.Connect(context.Background(), "127.0.0.1:21070", redisconn.Opts{
 			Logger:     redisconn.NoopLogger{},
 			WritePause: -1,
 		})
@@ -101,7 +101,7 @@ func BenchmarkSerialGetSet(b *B) {
 }
 
 func BenchmarkParallelGetSet(b *B) {
-	defer benchServer(45678)()
+	defer benchServer(21070)()
 	parallel := runtime.GOMAXPROCS(0) * 2
 
 	do := func(b *B, fn func()) {
@@ -114,7 +114,7 @@ func BenchmarkParallelGetSet(b *B) {
 	}
 
 	b.Run("radix", func(b *B) {
-		rdx2, err := radix.NewPool("tcp", "127.0.0.1:45678", parallel)
+		rdx2, err := radix.NewPool("tcp", "127.0.0.1:21070", parallel)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -152,7 +152,7 @@ func BenchmarkParallelGetSet(b *B) {
 	})
 
 	b.Run("redispipe", func(b *B) {
-		pipe, err := redisconn.Connect(context.Background(), "127.0.0.1:45678", redisconn.Opts{
+		pipe, err := redisconn.Connect(context.Background(), "127.0.0.1:21070", redisconn.Opts{
 			Logger: redisconn.NoopLogger{},
 		})
 		if err != nil {
@@ -173,7 +173,7 @@ func BenchmarkParallelGetSet(b *B) {
 }
 
 func newRedigo() redigo.Conn {
-	c, err := redigo.Dial("tcp", "127.0.0.1:45678")
+	c, err := redigo.Dial("tcp", "127.0.0.1:21070")
 	if err != nil {
 		panic(err)
 	}

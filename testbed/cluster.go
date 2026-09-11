@@ -3,6 +3,7 @@ package testbed
 import (
 	"bytes"
 	"crypto/tls"
+	"fmt"
 	"log"
 	"time"
 
@@ -103,6 +104,13 @@ func RaiseClusterPanic() {
 	panic("cluster didn't stabilize")
 }
 
+func dumpResult(res interface{}) string {
+	if buf, ok := res.([]byte); ok {
+		return string(buf)
+	}
+	return fmt.Sprintf("%v", res)
+}
+
 // DumpState reports what every node thinks about the cluster.
 func (cl *Cluster) DumpState() {
 	for i := range cl.Node {
@@ -118,7 +126,7 @@ func (cl *Cluster) DumpState() {
 			TLSEnabled: n.Conn.TLSEnabled,
 			TLSConfig:  n.Conn.TLSConfig,
 		}
-		log.Printf("node %d (%s): %v\n%v", i, n.Addr(), conn.Do("CLUSTER INFO"), conn.Do("CLUSTER NODES"))
+		log.Printf("node %d (%s): %s\n%s", i, n.Addr(), dumpResult(conn.Do("CLUSTER INFO")), dumpResult(conn.Do("CLUSTER NODES")))
 	}
 }
 

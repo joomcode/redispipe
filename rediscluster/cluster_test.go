@@ -39,7 +39,7 @@ type Suite struct {
 
 func (s *Suite) SetupSuite() {
 	testbed.InitDir(".")
-	s.cl = testbed.NewCluster(43210)
+	s.cl = testbed.NewCluster(21100)
 	s.keys = make([]string, NumSlots)
 	cnt := 0
 	for i := 0; cnt < NumSlots; i++ {
@@ -173,7 +173,7 @@ func TestCluster(t *testing.T) {
 func (s *Suite) TestConnectDisconnected() {
 	s.cl.Stop()
 
-	_, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	_, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().NotNil(err)
 }
 
@@ -236,7 +236,7 @@ func (s *Suite) slotnode(slot int) *testbed.Node {
 }
 
 func (s *Suite) TestBasicOps() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 	scl := redis.SyncCtx{cl}
@@ -266,21 +266,21 @@ func (s *Suite) Test_justToCover() {
 	opts.CheckInterval = 0
 	opts.MovedRetries = 11
 	opts.WaitToMigrate = time.Microsecond
-	cl, err = NewCluster(s.ctx, []string{"no-such-host-xyzzy.invalid:43210"}, opts)
+	cl, err = NewCluster(s.ctx, []string{"no-such-host-xyzzy.invalid:21100"}, opts)
 	s.r().Nil(cl)
 	s.r().Error(err)
 
 	opts.CheckInterval = 11 * time.Minute
 	opts.MovedRetries = 1
 	opts.WaitToMigrate = time.Second
-	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:43200"}, opts)
+	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:21090"}, opts)
 	s.r().Nil(cl)
 	s.r().Error(err)
 
 	opts = clustopts
 	opts.ConnsPerHost = 1
 	opts.Handle = new(struct{})
-	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err = NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -336,7 +336,7 @@ func (c *cancelledFuture) Resolve(res interface{}, n uint64) {
 }
 
 func (s *Suite) TestSendMany() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 	scl := redis.SyncCtx{cl}
@@ -366,7 +366,7 @@ func (s *Suite) TestSendMany() {
 
 func (s *Suite) TestTransactionNormal() {
 	// copy fo connection test
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -417,7 +417,7 @@ func (s *Suite) TestScan() {
 	opts := clustopts
 	opts.HostOpts.IOTimeout = time.Second
 
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -457,7 +457,7 @@ func (a alwaysZero) Current() uint32 {
 func (s *Suite) TestFallbackToSlaveStop() {
 	opts := longcheckopts
 	opts.RoundRobinSeed = alwaysZero{}
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -488,7 +488,7 @@ func (s *Suite) TestFallbackToSlaveStop() {
 func (s *Suite) TestFallbackToSlaveTimeout() {
 	opts := longcheckopts
 	opts.RoundRobinSeed = alwaysZero{}
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -519,7 +519,7 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 }
 
 func (s *Suite) TestGetMoved() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -537,7 +537,7 @@ func (s *Suite) TestGetMoved() {
 }
 
 func (s *Suite) TestSetMoved() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -557,7 +557,7 @@ func (s *Suite) TestSetMoved() {
 }
 
 func (s *Suite) TestMasterOnly() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -577,7 +577,7 @@ func (s *Suite) TestMasterOnly() {
 }
 
 func (s *Suite) TestAsk() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, longcheckopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, longcheckopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -606,7 +606,7 @@ func (s *Suite) TestAskTransaction() {
 	opts := longcheckopts
 	opts.MovedRetries = 4
 
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -673,7 +673,7 @@ func (s *Suite) TestMovedTransaction() {
 	opts := longcheckopts
 	opts.MovedRetries = 4
 
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -718,7 +718,7 @@ func (s *Suite) TestAllReturns_Good() {
 	opts.HostOpts.IOTimeout = 2 * time.Second
 	// ReconnectPause defaults to DialTimeout*2, which follows IOTimeout.
 	opts.HostOpts.ReconnectPause = 100 * time.Millisecond
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -788,7 +788,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 	opts.HostOpts.IOTimeout = 2 * time.Second
 	// ReconnectPause defaults to DialTimeout*2, which follows IOTimeout.
 	opts.HostOpts.ReconnectPause = 100 * time.Millisecond
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -878,7 +878,7 @@ func (s *Suite) TestAllReturns_Bad() {
 	s.ctx, s.ctxcancel = context.WithTimeout(context.Background(), 10*time.Minute)
 	DebugDisable = true
 
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, clustopts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -1034,9 +1034,9 @@ Loop:
 
 func (s *Suite) TestConnectWithDeadAddresses() {
 	addrs := []string{
-		"127.0.0.1:43200", // dead
-		"127.0.0.1:43210", // live
-		"127.0.0.1:43201", // dead
+		"127.0.0.1:21090", // dead
+		"127.0.0.1:21100", // live
+		"127.0.0.1:21091", // dead
 	}
 	cl, err := NewCluster(s.ctx, addrs, clustopts)
 	s.Nil(err)
@@ -1051,7 +1051,7 @@ func (s *Suite) TestConnectWithDeadAddresses() {
 func (s *Suite) TestConnectWithUnresolvableAddresses() {
 	addrs := []string{
 		"no-such-host-xyzzy.invalid:6379", // guaranteed NXDOMAIN
-		"127.0.0.1:43210",                 // live
+		"127.0.0.1:21100",                 // live
 	}
 	cl, err := NewCluster(s.ctx, addrs, clustopts)
 	s.Nil(err)

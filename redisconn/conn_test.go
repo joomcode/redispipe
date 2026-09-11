@@ -29,8 +29,8 @@ type Suite struct {
 
 func (s *Suite) SetupSuite() {
 	testbed.InitDir(".")
-	s.s.Port = 45678
-	s.s.TlsPort = 55678
+	s.s.Port = 21060
+	s.s.TlsPort = 21061
 	s.s.Start()
 }
 

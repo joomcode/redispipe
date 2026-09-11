@@ -119,16 +119,27 @@ func (s *Suite) waitNoDebugEvent(event string, quiet, timeout time.Duration) {
 	}
 }
 
-// waitReplicated waits until master acknowledges that a replica caught up with it.
-func (s *Suite) waitReplicated(master int, timeout time.Duration) {
+// waitReplicated waits until a replica acknowledges writes to the shard serving slot.
+// Node roles are not stable across tests, so the master is the node that accepts a write.
+func (s *Suite) waitReplicated(slot int, timeout time.Duration) {
+	// WAIT only accounts for writes issued by the calling connection, hence the probe.
+	probe := slotkey("replprobe", s.keys[slot])
 	deadline := time.Now().Add(timeout)
 	for {
-		res := s.cl.Node[master].Do("WAIT", 1, 100)
-		if n, ok := res.(int64); ok && n >= 1 {
-			return
+		for i := range s.cl.Node {
+			node := &s.cl.Node[i]
+			if !node.RunningNow() {
+				continue
+			}
+			if redis.AsError(node.Do("SET", probe, "1")) != nil {
+				continue
+			}
+			if n, ok := node.Do("WAIT", 1, 100).(int64); ok && n >= 1 {
+				return
+			}
 		}
 		if time.Now().After(deadline) {
-			s.r().Failf("replica didn't catch up", "node %d: WAIT returned %v", master, res)
+			s.r().Fail("no replica caught up with master of slot " + strconv.Itoa(slot))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -419,7 +430,7 @@ func (s *Suite) TestFallbackToSlaveStop() {
 
 	key := slotkey("toslave", s.keys[1], "stop")
 	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
-	s.waitReplicated(0, 5*time.Second)
+	s.waitReplicated(1, 30*time.Second)
 
 	s.cl.Node[0].Stop()
 	// test read from replica
@@ -450,7 +461,7 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 
 	key := slotkey("toslave", s.keys[1], "timeout")
 	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
-	s.waitReplicated(0, 5*time.Second)
+	s.waitReplicated(1, 30*time.Second)
 
 	s.cl.Node[0].Pause()
 	// test read from replica
@@ -661,11 +672,16 @@ func (s *Suite) fillMany(sconn redis.SyncCtx, prefix string) {
 	for _, res := range ress {
 		s.r().Equal("OK", res)
 	}
-	time.Sleep(10 * time.Millisecond)
+	// Tests read filled keys with MasterAndSlaves policy.
+	for _, slot := range []int{0, 5500, 11000} {
+		s.waitReplicated(slot, 30*time.Second)
+	}
 }
 
 func (s *Suite) TestAllReturns_Good() {
-	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, clustopts)
+	opts := clustopts
+	opts.HostOpts.IOTimeout = 2 * time.Second
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
 
@@ -679,6 +695,7 @@ func (s *Suite) TestAllReturns_Good() {
 
 	for i := 0; i < N; i++ {
 		go func(i int) {
+			defer func() { ch <- struct{}{} }()
 			for j := 0; j < K; j++ {
 				skey := s.keys[(i*N+j)*127%NumSlots]
 				key := slotkey("allgood", skey)
@@ -709,7 +726,6 @@ func (s *Suite) TestAllReturns_Good() {
 					return
 				}
 			}
-			ch <- struct{}{}
 		}(i)
 	}
 

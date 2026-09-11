@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: ["1.19", "1.20", "1.21", "1.22", "1.23", "1.24"]
+        go: ["1.19", "1.20", "1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27"]
         stage: [testredis, testconn, testcluster]
         exclude:
           # Cluster suite spawns a 7-node redis cluster and takes ~7 minutes per
@@ -24,6 +24,9 @@ jobs:
           - {go: "1.21", stage: testcluster}
           - {go: "1.22", stage: testcluster}
           - {go: "1.23", stage: testcluster}
+          - {go: "1.24", stage: testcluster}
+          - {go: "1.25", stage: testcluster}
+          - {go: "1.26", stage: testcluster}
 
     steps:
 

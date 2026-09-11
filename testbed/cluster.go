@@ -266,8 +266,18 @@ func (cl *Cluster) CancelMoveSlot(slot int) {
 
 // FinishMoveSlot finalizes slot migration
 func (cl *Cluster) FinishMoveSlot(slot, from, to int) {
-	cl.Node[to].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
-	cl.Node[from].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	cl.Node[to].DoSure("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	cl.Node[from].DoSure("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	// The rest of the masters would learn the new owner from the epoch bump below,
+	// but a next migration of the same slot may outrun it, and then neither the old
+	// nor the new owner claims the slot and the cluster never agrees again.
+	// Replicas answer with an error, which is why these are not DoSure.
+	for i := range cl.Node {
+		if i == to || i == from || !cl.Node[i].RunningNow() {
+			continue
+		}
+		cl.Node[i].Do("CLUSTER SETSLOT", slot, "NODE", cl.Node[to].NodeId)
+	}
 	cl.Node[to].Do("CLUSTER BUMPEPOCH", "BROADCAST") // proprietary extension
 	cl.Node[to].Do("CLUSTER BUMPEPOCH")
 }

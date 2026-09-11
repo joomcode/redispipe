@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/joomcode/redispipe/rediscluster/redisclusterutil"
+	"github.com/joomcode/redispipe/redisdumb"
 )
 
 // Node is wrapper for Server with its NodeId
@@ -41,7 +42,7 @@ func NewCluster(startport uint16) *Cluster {
 		cl.Node[i].Args = []string{
 			"--cluster-enabled", "yes",
 			"--cluster-config-file", "node-" + cl.Node[i].PortStr(effectivePort) + ".conf",
-			"--cluster-node-timeout", "200",
+			"--cluster-node-timeout", "1000",
 			"--cluster-slave-validity-factor", "1000",
 			"--slave-serve-stale-data", "yes",
 			"--cluster-require-full-coverage", "no",
@@ -102,10 +103,32 @@ func RaiseClusterPanic() {
 	panic("cluster didn't stabilize")
 }
 
+// DumpState reports what every node thinks about the cluster.
+func (cl *Cluster) DumpState() {
+	for i := range cl.Node {
+		n := &cl.Node[i]
+		if !n.RunningNow() {
+			log.Printf("node %d (%s): not running", i, n.Addr())
+			continue
+		}
+		// The node's own connection belongs to the goroutine that polls it.
+		conn := redisdumb.Conn{
+			Addr:       n.Conn.Addr,
+			TlsAddr:    n.Conn.TlsAddr,
+			TLSEnabled: n.Conn.TLSEnabled,
+			TLSConfig:  n.Conn.TLSConfig,
+		}
+		log.Printf("node %d (%s): %v\n%v", i, n.Addr(), conn.Do("CLUSTER INFO"), conn.Do("CLUSTER NODES"))
+	}
+}
+
 // WaitClusterOk wait for cluster configuration to be stable.
 func (cl *Cluster) WaitClusterOk() {
 	i := 0
-	t := time.AfterFunc(60*time.Second, RaiseClusterPanic)
+	t := time.AfterFunc(60*time.Second, func() {
+		cl.DumpState()
+		RaiseClusterPanic()
+	})
 	defer t.Stop()
 	for !cl.ClusterOk() {
 		if i++; i == 10 {
@@ -262,7 +285,7 @@ func (cl *Cluster) StartSeventhNode() {
 	cl.Node[6].Args = []string{
 		"--cluster-enabled", "yes",
 		"--cluster-config-file", "node-" + cl.Node[6].PortStr(effectivePort) + ".conf",
-		"--cluster-node-timeout", "200",
+		"--cluster-node-timeout", "1000",
 		"--cluster-slave-validity-factor", "1000",
 		"--slave-serve-stale-data", "yes",
 		"--cluster-require-full-coverage", "no",

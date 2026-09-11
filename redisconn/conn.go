@@ -46,7 +46,7 @@ type Opts struct {
 	// If IOTimeout < 0, then timeout is disabled
 	IOTimeout time.Duration
 	// DialTimeout is timeout for net.Dialer
-	// If it is <= 0 or >= IOTimeout, then IOTimeout
+	// If it is <= 0, then IOTimeout
 	// If IOTimeout is disabled, then 5 seconds used (but without affect on ReconnectPause)
 	DialTimeout time.Duration
 	// ReconnectPause is a pause after failed connection attempt before next one.
@@ -135,7 +135,7 @@ func Connect(ctx context.Context, addr string, opts Opts) (conn *Connection, err
 		conn.opts.IOTimeout = 0
 	}
 
-	if conn.opts.DialTimeout <= 0 || conn.opts.DialTimeout > conn.opts.IOTimeout {
+	if conn.opts.DialTimeout <= 0 {
 		conn.opts.DialTimeout = conn.opts.IOTimeout
 	}
 
@@ -520,7 +520,7 @@ func (conn *Connection) dial() error {
 	timeout := conn.opts.DialTimeout
 	tlsEnabled := conn.opts.TLSEnabled
 	tlsConfig := conn.opts.TLSConfig
-	if timeout <= 0 || timeout > 5*time.Second {
+	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
 	if address[0] == '.' || address[0] == '/' {

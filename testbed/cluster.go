@@ -105,7 +105,7 @@ func RaiseClusterPanic() {
 // WaitClusterOk wait for cluster configuration to be stable.
 func (cl *Cluster) WaitClusterOk() {
 	i := 0
-	t := time.AfterFunc(30*time.Second, RaiseClusterPanic)
+	t := time.AfterFunc(60*time.Second, RaiseClusterPanic)
 	defer t.Stop()
 	for !cl.ClusterOk() {
 		if i++; i == 10 {

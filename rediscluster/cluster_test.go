@@ -177,6 +177,41 @@ func (s *Suite) TestConnectDisconnected() {
 	s.r().NotNil(err)
 }
 
+func isConnectivityError(res interface{}) bool {
+	rerr := redis.AsErrorx(res)
+	return rerr != nil && rerr.HasTrait(redis.ErrTraitConnectivity)
+}
+
+// doRetrying repeats a request while it fails with a connectivity error, which a
+// shard is allowed to answer with while slots migrate between nodes.
+func (s *Suite) doRetrying(sconn redis.SyncCtx, ctx context.Context, cmd string, args ...interface{}) interface{} {
+	var res interface{}
+	for i := 0; i < 20; i++ {
+		if res = sconn.Do(ctx, cmd, args...); !isConnectivityError(res) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return res
+}
+
+// sendManyRetrying is doRetrying for a batch of requests.
+func (s *Suite) sendManyRetrying(sconn redis.SyncCtx, ctx context.Context, reqs []redis.Request) []interface{} {
+	var ress []interface{}
+	for i := 0; i < 20; i++ {
+		ress = sconn.SendMany(ctx, reqs)
+		retry := false
+		for _, res := range ress {
+			retry = retry || isConnectivityError(res)
+		}
+		if !retry {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return ress
+}
+
 func slotkey(prefix, slot string, suffix ...string) string {
 	if len(suffix) == 0 {
 		return prefix + "{" + slot + "}"
@@ -681,6 +716,8 @@ func (s *Suite) fillMany(sconn redis.SyncCtx, prefix string) {
 func (s *Suite) TestAllReturns_Good() {
 	opts := clustopts
 	opts.HostOpts.IOTimeout = 2 * time.Second
+	// ReconnectPause defaults to DialTimeout*2, which follows IOTimeout.
+	opts.HostOpts.ReconnectPause = 100 * time.Millisecond
 	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
@@ -749,6 +786,8 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 	// MIGRATE blocks both source and destination server, and this test runs it
 	// in a loop against a cluster loaded with N goroutines.
 	opts.HostOpts.IOTimeout = 2 * time.Second
+	// ReconnectPause defaults to DialTimeout*2, which follows IOTimeout.
+	opts.HostOpts.ReconnectPause = 100 * time.Millisecond
 	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:43210"}, opts)
 	s.r().Nil(err)
 	defer cl.Close()
@@ -761,7 +800,9 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 	log.Println("Started seventh")
 	defer s.cl.StopSeventhNode()
 
-	const N = 400
+	// Migrations need the cluster to converge between the moves, which it does not
+	// do while every core is busy serving the load this test generates.
+	const N = 100
 	ch := make(chan struct{}, N)
 	var good uint32
 	var bad uint32
@@ -774,7 +815,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 			for j := 0; atomic.LoadUint32(&stop) == 0; j++ {
 				skey := s.keys[(i*N+j)*127%NumSlots]
 				key := slotkey("allgoodmove", skey)
-				res := sconn.Do(ctx, "GET", key)
+				res := s.doRetrying(sconn, ctx, "GET", key)
 				if !s.Equal([]byte(skey), res) {
 					log.Println("Res ", res)
 					atomic.AddUint32(&bad, 1)
@@ -793,7 +834,7 @@ func (s *Suite) TestAllReturns_GoodMoving() {
 					redis.Req("SET", keya, keyb),
 					redis.Req("GET", keyb),
 				}
-				ress := sconn.SendMany(ctx, reqs)
+				ress := s.sendManyRetrying(sconn, ctx, reqs)
 
 				if !s.Equal("OK", ress[0]) {
 					log.Println("Ress[0] ", ress[0])

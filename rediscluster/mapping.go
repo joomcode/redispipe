@@ -3,6 +3,7 @@ package rediscluster
 import (
 	"crypto/tls"
 	"fmt"
+	"math/bits"
 	"sync/atomic"
 	"unsafe"
 
@@ -278,33 +279,39 @@ func (c *Cluster) connForPolicySlaves(policy ReplicaPolicyEnum, seen []*rediscon
 	weights := c.weightsForPolicySlaves(policy, shard)
 
 	health := atomic.LoadUint32(&shard.good) // load health information
-	healthWeight := c.getHealthWeight(weights, health)
+	all := uint32(1)<<uint(len(weights)) - 1
 	off := c.opts.RoundRobinSeed.Current()
+
+	// Health is a preference, not a veto: a replica reports master_link_status:down
+	// for the whole failover window while it keeps serving reads, and the master's
+	// bit is never cleared, so the health mask alone can exclude every reachable host.
+	for _, mask := range [2]uint32{health, all &^ health} {
+		if conn := c.connForHosts(mask, weights, &off, seen, shard, cfg); conn != nil {
+			return conn
+		}
+	}
+
+	return nil
+}
+
+func (c *Cluster) connForHosts(mask uint32, weights []uint32, off *uint32, seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) *redisconn.Connection {
+	total := uint32(0)
+	for i, w := range weights {
+		if mask&(1<<uint(i)) != 0 {
+			total += w
+		}
+	}
 
 	// First, we try already established connections.
 	// If no one found, then connections thar are connecting at the moment are tried.
 	for _, needState := range []int{needConnected, mayBeConnected} {
-		mask, maskWeight := health, healthWeight
+		m, t := mask, total
 
-		for mask != 0 {
-			r := nextRng(&off, maskWeight)
-			k := uint(0)
-			for i, w := range weights {
-				if mask&(1<<uint(i)) == 0 { // not healthy
-					continue
-				}
-				if r < w {
-					k = uint(i)
-					break
-				}
-				r -= w
-			}
-
-			mask &^= 1 << k
-			maskWeight -= weights[k]
-			addr := shard.addr[k]
-			nodes := cfg.nodes
-			node := nodes[addr]
+		for m != 0 {
+			k := pickHost(weights, m, t, off)
+			m &^= 1 << k
+			t -= weights[k]
+			node := cfg.nodes[shard.addr[k]]
 			if node == nil {
 				// it is strange a bit, but lets ignore
 				continue
@@ -319,15 +326,23 @@ func (c *Cluster) connForPolicySlaves(policy ReplicaPolicyEnum, seen []*rediscon
 	return nil
 }
 
-func (*Cluster) getHealthWeight(weights []uint32, health uint32) uint32 {
-	healthWeight := uint32(0)
+// pickHost picks a host set in mask with probability proportional to its weight;
+// when the remaining hosts carry no weight, the lowest one.
+func pickHost(weights []uint32, mask, total uint32, off *uint32) uint {
+	r := uint32(0)
+	if total > 0 {
+		r = nextRng(off, total)
+	}
 	for i, w := range weights {
-		if health&(1<<uint(i)) == 0 {
+		if mask&(1<<uint(i)) == 0 {
 			continue
 		}
-		healthWeight += w
+		if r < w {
+			return uint(i)
+		}
+		r -= w
 	}
-	return healthWeight
+	return uint(bits.TrailingZeros32(mask))
 }
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {

@@ -278,33 +278,46 @@ func (c *Cluster) connForPolicySlaves(policy ReplicaPolicyEnum, seen []*rediscon
 	weights := c.weightsForPolicySlaves(policy, shard)
 
 	health := atomic.LoadUint32(&shard.good) // load health information
-	healthWeight := c.getHealthWeight(weights, health)
 	off := c.opts.RoundRobinSeed.Current()
 
+	masks, n := hostMasks(health, allHostsMask(weights))
+	for _, mask := range masks[:n] {
+		if conn := c.connForHosts(mask, weights, &off, seen, shard, cfg); conn != nil {
+			return conn
+		}
+	}
+
+	return nil
+}
+
+func allHostsMask(weights []uint32) uint32 {
+	return uint32(1)<<uint(len(weights)) - 1
+}
+
+// hostMasks returns the masks to try, preferred first. Health is a preference,
+// not a veto: a replica reports master_link_status:down for the whole failover
+// window while it keeps serving reads, and the master's bit is never cleared at
+// all, so the health mask alone can exclude every reachable host.
+func hostMasks(health, allHosts uint32) (masks [2]uint32, n int) {
+	masks[0] = health
+	if health == allHosts {
+		return masks, 1
+	}
+	masks[1] = allHosts
+	return masks, 2
+}
+
+func (c *Cluster) connForHosts(mask uint32, weights []uint32, off *uint32, seen []*redisconn.Connection, shard *shard, cfg *clusterConfig) *redisconn.Connection {
 	// First, we try already established connections.
 	// If no one found, then connections thar are connecting at the moment are tried.
 	for _, needState := range []int{needConnected, mayBeConnected} {
-		mask, maskWeight := health, healthWeight
-
-		for mask != 0 {
-			r := nextRng(&off, maskWeight)
-			k := uint(0)
-			for i, w := range weights {
-				if mask&(1<<uint(i)) == 0 { // not healthy
-					continue
-				}
-				if r < w {
-					k = uint(i)
-					break
-				}
-				r -= w
+		walk := newHostWalk(weights, mask, off)
+		for {
+			k, ok := walk.next()
+			if !ok {
+				break
 			}
-
-			mask &^= 1 << k
-			maskWeight -= weights[k]
-			addr := shard.addr[k]
-			nodes := cfg.nodes
-			node := nodes[addr]
+			node := cfg.nodes[shard.addr[k]]
 			if node == nil {
 				// it is strange a bit, but lets ignore
 				continue
@@ -319,15 +332,55 @@ func (c *Cluster) connForPolicySlaves(policy ReplicaPolicyEnum, seen []*rediscon
 	return nil
 }
 
-func (*Cluster) getHealthWeight(weights []uint32, health uint32) uint32 {
-	healthWeight := uint32(0)
+// hostWalk yields the hosts set in mask, in weighted round-robin order.
+type hostWalk struct {
+	weights []uint32
+	off     *uint32
+	mask    uint32
+	weight  uint32
+}
+
+func newHostWalk(weights []uint32, mask uint32, off *uint32) hostWalk {
+	walk := hostWalk{weights: weights, off: off, mask: mask}
 	for i, w := range weights {
-		if health&(1<<uint(i)) == 0 {
-			continue
+		if mask&(1<<uint(i)) != 0 {
+			walk.weight += w
 		}
-		healthWeight += w
 	}
-	return healthWeight
+	return walk
+}
+
+func (w *hostWalk) next() (uint, bool) {
+	if w.mask == 0 {
+		return 0, false
+	}
+
+	k := uint(0)
+	if w.weight == 0 {
+		// Every remaining host carries zero weight, so the wheel cannot pick one.
+		for i := range w.weights {
+			if w.mask&(1<<uint(i)) != 0 {
+				k = uint(i)
+				break
+			}
+		}
+	} else {
+		r := nextRng(w.off, w.weight)
+		for i, weight := range w.weights {
+			if w.mask&(1<<uint(i)) == 0 {
+				continue
+			}
+			if r < weight {
+				k = uint(i)
+				break
+			}
+			r -= weight
+		}
+	}
+
+	w.mask &^= 1 << k
+	w.weight -= w.weights[k]
+	return k, true
 }
 
 func (c *Cluster) weightsForPolicySlaves(policy ReplicaPolicyEnum, shard *shard) []uint32 {

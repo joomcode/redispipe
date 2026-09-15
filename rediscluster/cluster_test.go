@@ -518,6 +518,47 @@ func (s *Suite) TestFallbackToSlaveTimeout() {
 
 }
 
+func (s *Suite) TestReadFromReplicaWhileMasterStaysFailed() {
+	opts := longcheckopts
+	opts.RoundRobinSeed = alwaysZero{}
+	opts.ReplicaLinkDownTolerance = -1
+	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, opts)
+	s.r().Nil(err)
+	defer cl.Close()
+
+	sconn := redis.SyncCtx{cl.WithPolicy(MasterAndSlaves)}
+
+	key := slotkey("frozen", s.keys[1], "read")
+	s.r().Equal("OK", sconn.Do(s.ctx, "SET", key, "1"))
+	s.waitReplicated(1, 30*time.Second)
+
+	s.cl.Node[3].DoSure("CONFIG", "SET", "cluster-replica-no-failover", "yes")
+	defer s.cl.Node[3].DoSure("CONFIG", "SET", "cluster-replica-no-failover", "no")
+	s.cl.Node[0].Stop()
+	defer func() {
+		s.cl.Node[0].Start()
+		s.cl.WaitClusterOk()
+	}()
+
+	// The first failed read forces a reload, which marks the replica down.
+	var res interface{}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if res = sconn.Do(s.ctx, "GET", key); redis.AsError(res) != nil {
+			break
+		}
+	}
+	s.r().True(s.AsError(res).IsOfType(ErrNoAliveConnection), "expected no_alive_connection, got %v", res)
+
+	// The testbed runs with cluster-node-timeout of one second, so the cluster agrees the
+	// master failed within a few seconds and the next reload picks that up.
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		if res = sconn.Do(s.ctx, "GET", key); redis.AsError(res) == nil {
+			break
+		}
+	}
+	s.Equal([]byte("1"), res)
+}
+
 func (s *Suite) TestGetMoved() {
 	cl, err := NewCluster(s.ctx, []string{"127.0.0.1:21100"}, longcheckopts)
 	s.r().Nil(err)

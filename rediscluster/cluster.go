@@ -117,8 +117,10 @@ type Opts struct {
 	// WeightProvider - enables to explicitly set weights of replicas (has higher priority than LatencyOrientedRR)
 	WeightProvider WeightProvider
 	// ReplicaLinkDownTolerance - a replica whose link with its master is down keeps receiving
-	// reads while its master_link_down_since_seconds stays below this value. A replica that
-	// has never synced since it started is never read regardless of it.
+	// reads while its master_link_down_since_seconds stays below this value. Once the cluster
+	// declares the master failed, its replicas are read for as long as it stays failed:
+	// nobody writes to the shard until a new master is elected. A replica that has never
+	// synced since it started is never read regardless of both.
 	// default: 60 seconds; negative: a replica with a broken link is never read
 	ReplicaLinkDownTolerance time.Duration
 	// Enable connection with TLS
@@ -171,10 +173,11 @@ type clusterConfig struct {
 }
 
 type shard struct {
-	rr          uint32
-	good        uint32
-	addr        []string
-	pingWeights []uint32
+	rr           uint32
+	good         uint32
+	masterFailed uint32
+	addr         []string
+	pingWeights  []uint32
 }
 type shardMap map[uint16]*shard
 type masterMap map[string]uint16
@@ -389,11 +392,11 @@ func (c *Cluster) control() {
 }
 
 func (c *Cluster) reloadMapping() error {
-	nodes, err := c.slotRangesAndInternalMasterOnly()
+	nodes, failedMasters, err := c.slotRangesAndInternalMasterOnly()
 	if err != nil {
 		return err
 	}
-	c.updateMappings(nodes)
+	c.updateMappings(nodes, failedMasters)
 	return nil
 }
 

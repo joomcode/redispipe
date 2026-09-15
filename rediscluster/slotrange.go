@@ -13,10 +13,11 @@ import (
 
 const masterOnlyFlag = 0x4000
 
-func (c *Cluster) slotRangesAndInternalMasterOnly() ([]redisclusterutil.SlotsRange, error) {
+func (c *Cluster) slotRangesAndInternalMasterOnly() ([]redisclusterutil.SlotsRange, map[string]struct{}, error) {
 	nodes := c.getConfig().nodes
 
 	var ranges []redisclusterutil.SlotsRange
+	var failedMasters map[string]struct{}
 	var err error
 Outter:
 	for _, node := range nodes {
@@ -24,6 +25,7 @@ Outter:
 			resp := redis.Sync{conn}.Do("CLUSTER SLOTS")
 			ranges, err = redisclusterutil.ParseSlotsInfo(resp)
 			if err == nil {
+				failedMasters = failedMastersOf(redis.Sync{conn}.Do("CLUSTER NODES"))
 				break Outter
 			}
 			c.report(LogClusterSlotsError{Conn: conn, Error: err})
@@ -32,7 +34,7 @@ Outter:
 	}
 	if err != nil {
 		c.report(LogSlotRangeError{})
-		return nil, c.err(ErrClusterSlots)
+		return nil, nil, c.err(ErrClusterSlots)
 	}
 
 	// look for reminder about future migrations
@@ -43,10 +45,28 @@ Outter:
 	}
 	c.m.Unlock()
 
-	return ranges, nil
+	return ranges, failedMasters, nil
 }
 
-func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
+// failedMastersOf lists the masters the cluster agrees are down. A node's own
+// suspicion (fail?) does not count. Without a readable CLUSTER NODES nothing counts,
+// and the link-down tolerance alone decides.
+func failedMastersOf(res interface{}) map[string]struct{} {
+	infos, err := redisclusterutil.ParseClusterNodes(res)
+	if err != nil {
+		return nil
+	}
+	failed := map[string]struct{}{}
+	for i := range infos {
+		ii := &infos[i]
+		if ii.IsMaster() && ii.Fail && !ii.PFail && ii.HasAddr() {
+			failed[ii.Addr] = struct{}{}
+		}
+	}
+	return failed
+}
+
+func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange, failedMasters map[string]struct{}) {
 	shards := make(map[string][]string)
 	for _, r := range slotRanges {
 		shards[r.Addrs[0]] = r.Addrs
@@ -122,19 +142,23 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 			return sh
 		}()
 
-		if oldshard != nil {
-			newConfig.shards[shardno] = oldshard
-		} else {
-			shard := &shard{
+		sh := oldshard
+		if sh == nil {
+			sh = &shard{
 				addr:        addrs,
 				good:        (uint32(1) << uint(len(addrs))) - 1,
 				pingWeights: make([]uint32, len(addrs)),
 			}
-			newConfig.shards[shardno] = shard
-			for i := range shard.pingWeights {
-				shard.pingWeights[i] = 1
+			for i := range sh.pingWeights {
+				sh.pingWeights[i] = 1
 			}
 		}
+		masterFailed := uint32(0)
+		if _, ok := failedMasters[master]; ok {
+			masterFailed = 1
+		}
+		atomic.StoreUint32(&sh.masterFailed, masterFailed)
+		newConfig.shards[shardno] = sh
 		newConfig.masters[addrs[0]] = shardno
 		random = shardno
 	}
@@ -230,7 +254,7 @@ func (s *shard) setReplicaInfo(res interface{}, n uint64, tolerance time.Duratio
 	} else if buf, ok := res.([]byte); !ok {
 		haserr = true
 	} else {
-		haserr = !replicaHealthy(buf, tolerance)
+		haserr = !replicaHealthy(buf, tolerance, atomic.LoadUint32(&s.masterFailed) != 0)
 	}
 	for {
 		oldstate := atomic.LoadUint32(&s.good)
@@ -252,7 +276,9 @@ func (s *shard) setReplicaInfo(res interface{}, n uint64, tolerance time.Duratio
 // replicaHealthy tells whether INFO output describes a replica worth reading from.
 // master_link_down_since_seconds is -1 for a replica that has never synced since it
 // started, and its dataset is then anything from empty to the RDB it booted from.
-func replicaHealthy(info []byte, tolerance time.Duration) bool {
+// A replica cut off from a master the cluster has declared failed cannot fall further
+// behind: nobody accepts writes for the shard until a new master is elected.
+func replicaHealthy(info []byte, tolerance time.Duration, masterFailed bool) bool {
 	if bytes.Contains(info, []byte("loading:1")) {
 		return false
 	}
@@ -263,7 +289,7 @@ func replicaHealthy(info []byte, tolerance time.Duration) bool {
 	if !ok || since < 0 {
 		return false
 	}
-	return time.Duration(since)*time.Second < tolerance
+	return masterFailed || time.Duration(since)*time.Second < tolerance
 }
 
 func infoInt(info []byte, field string) (int64, bool) {

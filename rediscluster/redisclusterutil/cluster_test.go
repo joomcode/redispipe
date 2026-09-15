@@ -269,3 +269,21 @@ func TestParseSlotsInfo_NoHostname(t *testing.T) {
 
 	assert.Equal(t, expectedSlots, slots)
 }
+
+func TestParseClusterNodes_FailFlags(t *testing.T) {
+	nodes := "0000000000000000000000000000000000000001 127.0.0.1:21100@31100 master,fail - 0 1789410223036 34 connected 0-5499\n" +
+		"0000000000000000000000000000000000000002 127.0.0.1:21101@31101 master,fail? - 0 1789410223136 23 connected 5500-10999\n" +
+		"0000000000000000000000000000000000000003 127.0.0.1:21102@31102 myself,master - 0 0 24 connected 11000-16383\n"
+	infos, err := ParseClusterNodes([]byte(nodes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 3 {
+		t.Fatalf("parsed %d nodes, want 3", len(infos))
+	}
+	for i, want := range []struct{ fail, pfail bool }{{true, false}, {true, true}, {false, false}} {
+		if infos[i].Fail != want.fail || infos[i].PFail != want.pfail {
+			t.Errorf("node %d: Fail=%v PFail=%v, want Fail=%v PFail=%v", i, infos[i].Fail, infos[i].PFail, want.fail, want.pfail)
+		}
+	}
+}

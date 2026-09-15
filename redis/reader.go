@@ -54,6 +54,9 @@ func ReadResponse(b *bufio.Reader) (interface{}, int) {
 		if strings.HasPrefix(txt, "LOADING") {
 			return ErrLoading.New(txt), len(line)
 		}
+		if strings.HasPrefix(txt, "MASTERDOWN") {
+			return ErrMasterDown.New(txt), len(line)
+		}
 		if strings.HasPrefix(txt, "EXECABORT") {
 			return ErrExecAbort.New(txt), len(line)
 		}

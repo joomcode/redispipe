@@ -3,6 +3,7 @@ package rediscluster
 import (
 	"bytes"
 	"math"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -142,7 +143,7 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 	c.nodeWait.promises = make(map[string]*[]connThen, 1)
 	c.nodeWait.Unlock()
 
-	go newConfig.setConnRoles()
+	go newConfig.setConnRoles(c.opts.ReplicaLinkDownTolerance)
 
 	var sh uint32
 	for i := 0; i < redisclusterutil.NumSlots; i++ {
@@ -213,7 +214,13 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 	})
 }
 
-func (s *shard) setReplicaInfo(res interface{}, n uint64) {
+func (s *shard) replicaInfoFuture(tolerance time.Duration) redis.FuncFuture {
+	return func(res interface{}, n uint64) {
+		s.setReplicaInfo(res, n, tolerance)
+	}
+}
+
+func (s *shard) setReplicaInfo(res interface{}, n uint64, tolerance time.Duration) {
 	haserr := false
 	if err := redis.AsError(res); err != nil {
 		haserr = true
@@ -222,8 +229,8 @@ func (s *shard) setReplicaInfo(res interface{}, n uint64) {
 		haserr = !(ok && str == "OK")
 	} else if buf, ok := res.([]byte); !ok {
 		haserr = true
-	} else if bytes.Contains(buf, []byte("master_link_status:down")) || bytes.Contains(buf, []byte("loading:1")) {
-		haserr = true
+	} else {
+		haserr = !replicaHealthy(buf, tolerance)
 	}
 	for {
 		oldstate := atomic.LoadUint32(&s.good)
@@ -242,7 +249,38 @@ func (s *shard) setReplicaInfo(res interface{}, n uint64) {
 	}
 }
 
-func (cfg *clusterConfig) setConnRoles() {
+// replicaHealthy tells whether INFO output describes a replica worth reading from.
+// master_link_down_since_seconds is -1 for a replica that has never synced since it
+// started, and its dataset is then anything from empty to the RDB it booted from.
+func replicaHealthy(info []byte, tolerance time.Duration) bool {
+	if bytes.Contains(info, []byte("loading:1")) {
+		return false
+	}
+	if !bytes.Contains(info, []byte("master_link_status:down")) {
+		return true
+	}
+	since, ok := infoInt(info, "master_link_down_since_seconds")
+	if !ok || since < 0 {
+		return false
+	}
+	return time.Duration(since)*time.Second < tolerance
+}
+
+func infoInt(info []byte, field string) (int64, bool) {
+	key := []byte("\n" + field + ":")
+	i := bytes.Index(info, key)
+	if i < 0 {
+		return 0, false
+	}
+	value := info[i+len(key):]
+	if end := bytes.IndexAny(value, "\r\n"); end >= 0 {
+		value = value[:end]
+	}
+	v, err := strconv.ParseInt(string(value), 10, 64)
+	return v, err == nil
+}
+
+func (cfg *clusterConfig) setConnRoles(tolerance time.Duration) {
 	for _, sh := range cfg.shards {
 		for i, addr := range sh.addr {
 			node := cfg.nodes[addr]
@@ -254,7 +292,7 @@ func (cfg *clusterConfig) setConnRoles() {
 					conn.Send(Request{"READWRITE", nil}, nil, 0)
 				} else {
 					conn.SendBatch([]Request{{"READONLY", nil}, {"INFO", nil}},
-						redis.FuncFuture(sh.setReplicaInfo), uint64(i*2))
+						sh.replicaInfoFuture(tolerance), uint64(i*2))
 				}
 			}
 		}

@@ -73,6 +73,8 @@ var (
 	ErrClusterDown = ErrResult.NewSubtype("clusterdown", ErrTraitNotSent)
 	// ErrLoading - redis didn't finish start
 	ErrLoading = ErrResult.NewSubtype("loading", ErrTraitNotSent)
+	// ErrMasterDown - MASTERDOWN response: replica lost its master and replica-serve-stale-data is 'no'
+	ErrMasterDown = ErrResult.NewSubtype("masterdown", ErrTraitNotSent)
 	// ErrExecEmpty - EXEC returns nil (WATCH failed) (it is strange, cause we don't support WATCH)
 	ErrExecEmpty = ErrResult.NewSubtype("exec_empty")
 	// ErrExecAbort - EXEC returns EXECABORT

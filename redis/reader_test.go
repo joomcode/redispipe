@@ -145,6 +145,12 @@ func TestReadResponse_Correct(t *testing.T) {
 		assert.Equal(t, "LOADING", err.Message())
 	}
 
+	res = readLines("-MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to 'no'.\r\n")
+	if checkErrType(t, res, ErrMasterDown) {
+		err := res.(*errorx.Error)
+		assert.True(t, err.HasTrait(ErrTraitNotSent))
+	}
+
 	for i := -1000; i <= 1000; i++ {
 		res = readLines(fmt.Sprintf(":%d\r\n", i))
 		assert.Equal(t, int64(i), res)

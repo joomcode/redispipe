@@ -133,12 +133,14 @@ func parseHostname(metadata []interface{}) string {
 
 // InstanceInfo represents line of CLUSTER NODES result.
 type InstanceInfo struct {
-	Uuid   string
-	Addr   string
-	IP     string
-	Port   int
-	Port2  int
-	Fail   bool
+	Uuid  string
+	Addr  string
+	IP    string
+	Port  int
+	Port2 int
+	Fail  bool
+	// PFail: the reporting node suspects the instance (fail?), the cluster has not agreed yet.
+	PFail  bool
 	MySelf bool
 	// NoAddr means that node were missed due to misconfiguration.
 	// More probably, redis instance with other UUID were started on the same port.
@@ -347,6 +349,7 @@ func ParseClusterNodes(res interface{}) (InstanceInfos, error) {
 		node.Port2, _ = strconv.Atoi(ipp[1])
 
 		node.Fail = strings.Contains(parts[2], "fail")
+		node.PFail = strings.Contains(parts[2], "fail?")
 		if strings.Contains(parts[2], "slave") {
 			node.SlaveOf = parts[3]
 		}

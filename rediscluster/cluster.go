@@ -50,7 +50,11 @@ const (
 
 const (
 	defaultCheckInterval = 5 * time.Second
-	defaultWaitToMigrate = 20 * time.Millisecond
+	// defaultReplicaLinkDownTolerance outlives a failover at cluster-node-timeout of
+	// up to ~50 seconds, and stays well below the ~160 seconds after which redis itself
+	// stops considering the replica's data fresh enough for promotion.
+	defaultReplicaLinkDownTolerance = 60 * time.Second
+	defaultWaitToMigrate            = 20 * time.Millisecond
 
 	forceInterval = 100 * time.Millisecond
 
@@ -112,6 +116,13 @@ type Opts struct {
 	ForceMinLatencyReplica bool
 	// WeightProvider - enables to explicitly set weights of replicas (has higher priority than LatencyOrientedRR)
 	WeightProvider WeightProvider
+	// ReplicaLinkDownTolerance - a replica whose link with its master is down keeps receiving
+	// reads while its master_link_down_since_seconds stays below this value. Once the cluster
+	// declares the master failed, its replicas are read for as long as it stays failed:
+	// nobody writes to the shard until a new master is elected. A replica that has never
+	// synced since it started is never read regardless of both.
+	// default: 60 seconds; negative: a replica with a broken link is never read
+	ReplicaLinkDownTolerance time.Duration
 	// Enable connection with TLS
 	TLSEnabled bool
 	// Config for TLS connection
@@ -162,10 +173,11 @@ type clusterConfig struct {
 }
 
 type shard struct {
-	rr          uint32
-	good        uint32
-	addr        []string
-	pingWeights []uint32
+	rr           uint32
+	good         uint32
+	masterFailed uint32
+	addr         []string
+	pingWeights  []uint32
 }
 type shardMap map[uint16]*shard
 type masterMap map[string]uint16
@@ -239,6 +251,10 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 		cluster.opts.WaitToMigrate = 100 * time.Microsecond
 	} else if cluster.opts.WaitToMigrate > 100*time.Millisecond {
 		cluster.opts.WaitToMigrate = 100 * time.Millisecond
+	}
+
+	if cluster.opts.ReplicaLinkDownTolerance == 0 {
+		cluster.opts.ReplicaLinkDownTolerance = defaultReplicaLinkDownTolerance
 	}
 
 	cluster.latencyAwareness = disabled
@@ -376,11 +392,11 @@ func (c *Cluster) control() {
 }
 
 func (c *Cluster) reloadMapping() error {
-	nodes, err := c.slotRangesAndInternalMasterOnly()
+	nodes, failedMasters, err := c.slotRangesAndInternalMasterOnly()
 	if err != nil {
 		return err
 	}
-	c.updateMappings(nodes)
+	c.updateMappings(nodes, failedMasters)
 	return nil
 }
 

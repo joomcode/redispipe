@@ -214,13 +214,13 @@ func (c *Cluster) updateMappings(slotRanges []redisclusterutil.SlotsRange) {
 	})
 }
 
-func (s *shard) replicaInfoFuture(tolerance time.Duration) redis.FuncFuture {
+func (s *shard) replicaInfoFuture(linkDownTolerance time.Duration) redis.FuncFuture {
 	return func(res interface{}, n uint64) {
-		s.setReplicaInfo(res, n, tolerance)
+		s.setReplicaInfo(res, n, linkDownTolerance)
 	}
 }
 
-func (s *shard) setReplicaInfo(res interface{}, n uint64, tolerance time.Duration) {
+func (s *shard) setReplicaInfo(res interface{}, n uint64, linkDownTolerance time.Duration) {
 	haserr := false
 	if err := redis.AsError(res); err != nil {
 		haserr = true
@@ -230,7 +230,7 @@ func (s *shard) setReplicaInfo(res interface{}, n uint64, tolerance time.Duratio
 	} else if buf, ok := res.([]byte); !ok {
 		haserr = true
 	} else {
-		haserr = !replicaHealthy(buf, tolerance)
+		haserr = !replicaHealthy(buf, linkDownTolerance)
 	}
 	for {
 		oldstate := atomic.LoadUint32(&s.good)
@@ -252,7 +252,7 @@ func (s *shard) setReplicaInfo(res interface{}, n uint64, tolerance time.Duratio
 // replicaHealthy tells whether INFO output describes a replica worth reading from.
 // master_link_down_since_seconds is -1 for a replica that has never synced since it
 // started, and its dataset is then anything from empty to the RDB it booted from.
-func replicaHealthy(info []byte, tolerance time.Duration) bool {
+func replicaHealthy(info []byte, linkDownTolerance time.Duration) bool {
 	if bytes.Contains(info, []byte("loading:1")) {
 		return false
 	}
@@ -263,7 +263,7 @@ func replicaHealthy(info []byte, tolerance time.Duration) bool {
 	if !ok || since < 0 {
 		return false
 	}
-	return time.Duration(since)*time.Second < tolerance
+	return time.Duration(since)*time.Second < linkDownTolerance
 }
 
 func infoInt(info []byte, field string) (int64, bool) {
@@ -280,7 +280,7 @@ func infoInt(info []byte, field string) (int64, bool) {
 	return v, err == nil
 }
 
-func (cfg *clusterConfig) setConnRoles(tolerance time.Duration) {
+func (cfg *clusterConfig) setConnRoles(linkDownTolerance time.Duration) {
 	for _, sh := range cfg.shards {
 		for i, addr := range sh.addr {
 			node := cfg.nodes[addr]
@@ -292,7 +292,7 @@ func (cfg *clusterConfig) setConnRoles(tolerance time.Duration) {
 					conn.Send(Request{"READWRITE", nil}, nil, 0)
 				} else {
 					conn.SendBatch([]Request{{"READONLY", nil}, {"INFO", nil}},
-						sh.replicaInfoFuture(tolerance), uint64(i*2))
+						sh.replicaInfoFuture(linkDownTolerance), uint64(i*2))
 				}
 			}
 		}

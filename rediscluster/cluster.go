@@ -50,9 +50,11 @@ const (
 
 const (
 	defaultCheckInterval = 5 * time.Second
-	// defaultReplicaLinkDownTolerance outlives a failover at cluster-node-timeout of
-	// up to ~50 seconds, and stays well below the ~160 seconds after which redis itself
-	// stops considering the replica's data fresh enough for promotion.
+	// A failover takes cluster-node-timeout plus an election of a second or two, and the
+	// client notices the new master one CheckInterval later; 60 seconds cover the default
+	// 15-second node timeout several times over and stay well below the ~160 seconds
+	// (repl-ping-replica-period + node-timeout × cluster-replica-validity-factor) after
+	// which redis itself stops considering the replica fresh enough for promotion.
 	defaultReplicaLinkDownTolerance = 60 * time.Second
 	defaultWaitToMigrate            = 20 * time.Millisecond
 

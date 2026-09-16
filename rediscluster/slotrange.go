@@ -253,10 +253,10 @@ func (s *shard) setReplicaInfo(res interface{}, n uint64, linkDownTolerance time
 // master_link_down_since_seconds is -1 for a replica that has never synced since it
 // started, and its dataset is then anything from empty to the RDB it booted from.
 func replicaHealthy(info []byte, linkDownTolerance time.Duration) bool {
-	if bytes.Contains(info, []byte("loading:1")) {
+	if infoHas(info, "loading", "1") {
 		return false
 	}
-	if !bytes.Contains(info, []byte("master_link_status:down")) {
+	if !infoHas(info, "master_link_status", "down") {
 		return true
 	}
 	since, ok := infoInt(info, "master_link_down_since_seconds")
@@ -266,15 +266,36 @@ func replicaHealthy(info []byte, linkDownTolerance time.Duration) bool {
 	return time.Duration(since)*time.Second < linkDownTolerance
 }
 
-func infoInt(info []byte, field string) (int64, bool) {
-	key := []byte("\n" + field + ":")
-	i := bytes.Index(info, key)
-	if i < 0 {
-		return 0, false
+// infoField returns the value of a named INFO field. The name is matched as a whole
+// line prefix: `loading` must not be found inside `async_loading`.
+func infoField(info []byte, field string) ([]byte, bool) {
+	key := []byte(field + ":")
+	for off := 0; ; {
+		i := bytes.Index(info[off:], key)
+		if i < 0 {
+			return nil, false
+		}
+		i += off
+		if i == 0 || info[i-1] == '\n' {
+			value := info[i+len(key):]
+			if end := bytes.IndexAny(value, "\r\n"); end >= 0 {
+				value = value[:end]
+			}
+			return value, true
+		}
+		off = i + 1
 	}
-	value := info[i+len(key):]
-	if end := bytes.IndexAny(value, "\r\n"); end >= 0 {
-		value = value[:end]
+}
+
+func infoHas(info []byte, field, value string) bool {
+	got, ok := infoField(info, field)
+	return ok && string(got) == value
+}
+
+func infoInt(info []byte, field string) (int64, bool) {
+	value, ok := infoField(info, field)
+	if !ok {
+		return 0, false
 	}
 	v, err := strconv.ParseInt(string(value), 10, 64)
 	return v, err == nil

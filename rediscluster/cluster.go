@@ -50,7 +50,13 @@ const (
 
 const (
 	defaultCheckInterval = 5 * time.Second
-	defaultWaitToMigrate = 20 * time.Millisecond
+	// A failover takes cluster-node-timeout plus an election of a second or two, and the
+	// client notices the new master one CheckInterval later; 60 seconds cover the default
+	// 15-second node timeout several times over and stay well below the ~160 seconds
+	// (repl-ping-replica-period + node-timeout × cluster-replica-validity-factor) after
+	// which redis itself stops considering the replica fresh enough for promotion.
+	defaultReplicaLinkDownTolerance = 60 * time.Second
+	defaultWaitToMigrate            = 20 * time.Millisecond
 
 	forceInterval = 100 * time.Millisecond
 
@@ -112,6 +118,11 @@ type Opts struct {
 	ForceMinLatencyReplica bool
 	// WeightProvider - enables to explicitly set weights of replicas (has higher priority than LatencyOrientedRR)
 	WeightProvider WeightProvider
+	// ReplicaLinkDownTolerance - a replica whose link with its master is down keeps receiving
+	// reads while its master_link_down_since_seconds stays below this value. A replica that
+	// has never synced since it started is never read regardless of it.
+	// default: 60 seconds; negative: a replica with a broken link is never read
+	ReplicaLinkDownTolerance time.Duration
 	// Enable connection with TLS
 	TLSEnabled bool
 	// Config for TLS connection
@@ -239,6 +250,10 @@ func NewCluster(ctx context.Context, initAddrs []string, opts Opts) (*Cluster, e
 		cluster.opts.WaitToMigrate = 100 * time.Microsecond
 	} else if cluster.opts.WaitToMigrate > 100*time.Millisecond {
 		cluster.opts.WaitToMigrate = 100 * time.Millisecond
+	}
+
+	if cluster.opts.ReplicaLinkDownTolerance == 0 {
+		cluster.opts.ReplicaLinkDownTolerance = defaultReplicaLinkDownTolerance
 	}
 
 	cluster.latencyAwareness = disabled
